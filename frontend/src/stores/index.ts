@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Project, Chapter, Expert, WorkflowStep, ReviewComment, CharacterRelation, ProjectMode, ExpertCreatePayload, WorldEntry, Character, OutlineItem, HiddenThread } from '../api/types'
-import type { ApiProject, ApiChapter, ApiExpert, ApiWorldEntry, ApiCharacter, ApiCharacterRelation, ApiOutline, ApiHiddenThread } from '../api/types'
+import type { Project, Chapter, DocumentUnit, Expert, WorkflowStep, ReviewComment, CharacterRelation, ProjectMode, ExpertCreatePayload, WorldEntry, Character, OutlineItem, HiddenThread, ChapterVersion, DocumentRevision, DiffHunk, GenerationRecord } from '../api/types'
+import type { ApiProject, ApiChapter, ApiDocument, ApiExpert, ApiWorldEntry, ApiCharacter, ApiCharacterRelation, ApiOutline, ApiHiddenThread, ApiChapterVersion, ApiDocumentVersion, ApiGenerationRecordListItem, ApiGenerationRecord } from '../api/types'
 import type { CharacterRelationCreatePayload, CharacterRelationUpdatePayload, OutlineUpdatePayload, HiddenThreadUpdatePayload, WorldEntryCreatePayload, WorldEntryUpdatePayload, CharacterCreatePayload, CharacterUpdatePayload } from '../api/types'
 import { api, ApiError } from '../api/client'
 import { MOCK_PROJECTS, MOCK_CHAPTERS, DEFAULT_EXPERTS, MOCK_REVIEW_COMMENTS, MOCK_CHARACTER_RELATIONS, MOCK_WORLD_ENTRIES, MOCK_CHARACTERS, MOCK_OUTLINE, MOCK_HIDDEN_THREADS } from '../mock/data'
@@ -23,12 +23,13 @@ function apiProjectToProject(ap: ApiProject): Project {
   }
 }
 
-const CHAPTER_STATUS_MAP: Record<string, Chapter['status']> = {
+const DRAFT_STATUS_MAP: Record<string, Chapter['status']> = {
   draft: 'draft',
   writing: 'draft',
   reviewing: 'reviewing',
   revision: 'revision',
   final: 'final',
+  approved: 'final',
   completed: 'final',
 }
 
@@ -41,9 +42,24 @@ function apiChapterToChapter(ac: ApiChapter, projectId: string): Chapter {
     summary: ac.outline ?? '',
     draft: ac.content ?? '',
     final_text: '',
-    status: CHAPTER_STATUS_MAP[ac.status] ?? 'draft',
+    status: DRAFT_STATUS_MAP[ac.status] ?? 'draft',
     review_comment_ids: [],
     review_round: 0,
+  }
+}
+
+function apiDocumentToDocumentUnit(doc: ApiDocument, projectId: string): DocumentUnit {
+  return {
+    id: doc.id,
+    project_id: projectId,
+    position: doc.position,
+    title: doc.title,
+    draft: doc.content ?? '',
+    final_text: '',
+    status: DRAFT_STATUS_MAP[doc.status] ?? 'draft',
+    word_count: doc.word_count,
+    created_at: doc.created_at,
+    updated_at: doc.updated_at,
   }
 }
 
@@ -141,16 +157,6 @@ export const useChapterStore = defineStore('chapter', () => {
     if (ch) ch.draft = text
   }
 
-  async function addChapter(projectId: string, payload: { title: string; chapter_num: number; summary?: string }): Promise<string | null> {
-    try {
-      const ch = await createChapterRemote(projectId, payload)
-      return ch ? null : '创建章节失败'
-    } catch (e: unknown) {
-      if (e instanceof ApiError && e.message.includes('已存在')) return e.message
-      return friendlyError(e, '创建章节失败')
-    }
-  }
-
   function nextChapterNum(projectId: string): number {
     const projectChapters = chaptersForProject(projectId)
     if (!projectChapters.length) return 1
@@ -160,10 +166,10 @@ export const useChapterStore = defineStore('chapter', () => {
   async function loadChapters(projectId: string) {
     loadError.value = ''
     try {
-      const list = await api.listChapters(projectId)
+      const list = (await api.listChapters(projectId)).map(ac => apiChapterToChapter(ac, projectId))
       // Replace chapters for this project, keep others
       const otherChapters = chapters.value.filter(c => c.project_id !== projectId)
-      chapters.value = [...otherChapters, ...list.map(ac => apiChapterToChapter(ac, projectId))]
+      chapters.value = [...otherChapters, ...list]
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : '加载章节失败'
       loadError.value = msg
@@ -171,12 +177,12 @@ export const useChapterStore = defineStore('chapter', () => {
   }
 
   async function createChapterRemote(projectId: string, payload: { title: string; chapter_num: number; summary?: string }): Promise<Chapter | null> {
-    const ac = await api.createChapter(projectId, {
+    const request = {
       title: payload.title,
       outline: payload.summary,
       sequence_number: payload.chapter_num,
-    })
-    const ch = apiChapterToChapter(ac, projectId)
+    }
+    const ch = apiChapterToChapter(await api.createChapter(projectId, request), projectId)
     chapters.value.push(ch)
     return ch
   }
@@ -186,13 +192,13 @@ export const useChapterStore = defineStore('chapter', () => {
     if (!ch) return
     saving.value = true
     try {
-      const ac = await api.updateChapter(projectId, ch.chapter_num, {
+      const request = {
         content: ch.draft,
         outline: ch.summary || undefined,
         status: ch.status,
-      })
+      }
       // Sync local state from response
-      const updated = apiChapterToChapter(ac, projectId)
+      const updated = apiChapterToChapter(await api.updateChapter(projectId, ch.chapter_num, request), projectId)
       const idx = chapters.value.findIndex(c => c.id === ch.id)
       if (idx !== -1) chapters.value[idx] = updated
     } catch (e: unknown) {
@@ -204,21 +210,165 @@ export const useChapterStore = defineStore('chapter', () => {
     }
   }
 
+  async function updateChapterTitle(projectId: string, chapterNum: number, title: string) {
+    const updated = apiChapterToChapter(await api.updateChapter(projectId, chapterNum, { title }), projectId)
+    const idx = chapters.value.findIndex(c => c.chapter_num === chapterNum && c.project_id === projectId)
+    if (idx !== -1) chapters.value[idx] = updated
+  }
+
+  async function deleteChapterRemote(projectId: string, chapterNum: number) {
+    await api.deleteChapter(projectId, chapterNum)
+    chapters.value = chapters.value.filter(c => !(c.chapter_num === chapterNum && c.project_id === projectId))
+    if (currentChapterNum.value === chapterNum) {
+      currentChapterNum.value = 0
+    }
+  }
+
   return {
     chapters, reviewComments, currentChapterNum, loadError, saving,
     chaptersForProject, currentChapterForProject, reviewCommentsForChapter,
-    setCurrentChapter, updateDraft, addChapter, nextChapterNum,
-    loadChapters, createChapterRemote, saveCurrentChapter,
+    setCurrentChapter, updateDraft, nextChapterNum,
+    loadChapters, createChapterRemote, saveCurrentChapter, updateChapterTitle, deleteChapterRemote,
   }
 })
+
+export const useDocumentStore = defineStore('document', () => {
+  const documents = ref<DocumentUnit[]>([])
+  const currentDocumentPosition = ref(1)
+  const loadError = ref('')
+  const saving = ref(false)
+
+  function documentsForProject(projectId: string): DocumentUnit[] {
+    return documents.value.filter(d => d.project_id === projectId)
+  }
+
+  function currentDocumentForProject(projectId: string): DocumentUnit | undefined {
+    return documents.value.find(d => d.project_id === projectId && d.position === currentDocumentPosition.value)
+  }
+
+  function setCurrentDocument(position: number) {
+    currentDocumentPosition.value = position
+  }
+
+  function ensureCurrentDocument(projectId: string) {
+    const projectDocs = documentsForProject(projectId)
+    if (!projectDocs.length) {
+      currentDocumentPosition.value = 0
+      return
+    }
+    const hasCurrent = projectDocs.some(d => d.position === currentDocumentPosition.value)
+    if (!hasCurrent) {
+      currentDocumentPosition.value = projectDocs[0].position
+    }
+  }
+
+  function updateDraft(projectId: string, text: string) {
+    const doc = currentDocumentForProject(projectId)
+    if (doc) doc.draft = text
+  }
+
+  function nextDocumentPosition(projectId: string): number {
+    const projectDocs = documentsForProject(projectId)
+    if (!projectDocs.length) return 1
+    return Math.max(...projectDocs.map(d => d.position)) + 1
+  }
+
+  async function loadDocuments(projectId: string) {
+    loadError.value = ''
+    try {
+      const list = await api.listDocuments(projectId)
+      const otherDocs = documents.value.filter(d => d.project_id !== projectId)
+      documents.value = [...otherDocs, ...list.map(doc => apiDocumentToDocumentUnit(doc, projectId))]
+      ensureCurrentDocument(projectId)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载稿件失败'
+      loadError.value = msg
+    }
+  }
+
+  async function createDocumentRemote(projectId: string, payload: { title: string; position: number }): Promise<DocumentUnit | null> {
+    const doc = apiDocumentToDocumentUnit(await api.createDocument(projectId, {
+      title: payload.title,
+      position: payload.position,
+    }), projectId)
+    documents.value.push(doc)
+    return doc
+  }
+
+  async function saveCurrentDocument(projectId: string) {
+    const doc = currentDocumentForProject(projectId)
+    if (!doc) {
+      const error = new Error('请先选择一个稿件')
+      loadError.value = error.message
+      throw error
+    }
+    saving.value = true
+    try {
+      const updated = apiDocumentToDocumentUnit(await api.updateDocument(projectId, doc.id, {
+        content: doc.draft,
+        status: doc.status,
+      }), projectId)
+      const idx = documents.value.findIndex(d => d.id === doc.id)
+      if (idx !== -1) documents.value[idx] = updated
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '保存失败'
+      loadError.value = msg
+      throw e
+    } finally {
+      saving.value = false
+    }
+  }
+
+  async function updateDocumentTitle(projectId: string, position: number, title: string) {
+    const doc = documents.value.find(d => d.project_id === projectId && d.position === position)
+    if (!doc) throw new Error('稿件不存在')
+    const updated = apiDocumentToDocumentUnit(await api.updateDocument(projectId, doc.id, { title }), projectId)
+    const idx = documents.value.findIndex(d => d.id === doc.id)
+    if (idx !== -1) documents.value[idx] = updated
+  }
+
+  async function deleteDocumentRemote(projectId: string, position: number) {
+    const doc = documents.value.find(d => d.project_id === projectId && d.position === position)
+    if (!doc) throw new Error('稿件不存在')
+    await api.deleteDocument(projectId, doc.id)
+    documents.value = documents.value.filter(d => d.id !== doc.id)
+    if (currentDocumentPosition.value === position) {
+      ensureCurrentDocument(projectId)
+    }
+  }
+
+  return {
+    documents, currentDocumentPosition, loadError, saving,
+    documentsForProject, currentDocumentForProject, setCurrentDocument, updateDraft,
+    nextDocumentPosition, loadDocuments, createDocumentRemote, saveCurrentDocument,
+    updateDocumentTitle, deleteDocumentRemote,
+  }
+})
+
+export interface ExpertProjectState {
+  isGenerating: boolean
+  streamOutput: string
+  finalDraft: string
+  workflowSteps: WorkflowStep[]
+  expertSkills: Record<string, string>
+  revisionCount: number
+  maxRevisions: number
+}
+
+const EMPTY_EXPERT_STATE: ExpertProjectState = {
+  isGenerating: false,
+  streamOutput: '',
+  finalDraft: '',
+  workflowSteps: [],
+  expertSkills: {},
+  revisionCount: 0,
+  maxRevisions: 3,
+}
 
 export const useExpertStore = defineStore('expert', () => {
   const experts = ref<Expert[]>([])
   const activeExpertId = ref<string | null>(null)
-  const isGenerating = ref(false)
-  const streamOutput = ref('')
-  const finalDraft = ref('')
-  const workflowSteps = ref<WorkflowStep[]>([])
+  const states = ref<Record<string, ExpertProjectState>>({})
   const loading = ref(false)
   const loadError = ref('')
 
@@ -232,27 +382,78 @@ export const useExpertStore = defineStore('expert', () => {
     activeExpertId.value = id
   }
 
-  function startGenerating() {
-    isGenerating.value = true
-    streamOutput.value = ''
-    finalDraft.value = ''
+  // ─── Per-project generation state ───
+
+  function getState(pid: string): ExpertProjectState {
+    return states.value[pid] ?? { ...EMPTY_EXPERT_STATE, workflowSteps: [] }
   }
 
-  function appendOutput(text: string) {
-    streamOutput.value += text
+  function ensureState(pid: string): ExpertProjectState {
+    if (!states.value[pid]) {
+      states.value[pid] = { ...EMPTY_EXPERT_STATE, workflowSteps: [] }
+    }
+    return states.value[pid]
   }
 
-  function appendDraft(text: string) {
-    finalDraft.value += text
+  function startGenerating(pid: string) {
+    const s = ensureState(pid)
+    s.isGenerating = true
+    s.streamOutput = ''
+    s.finalDraft = ''
+    s.workflowSteps = []
+    s.expertSkills = {}
+    s.revisionCount = 0
+    s.maxRevisions = 3
   }
 
-  function replaceDraft(text: string) {
-    finalDraft.value = text
+  function stopGenerating(pid: string, cancelled = false) {
+    const s = ensureState(pid)
+    s.isGenerating = false
+    if (cancelled) {
+      for (const step of s.workflowSteps) {
+        if (step.status === 'running') {
+          step.status = 'cancelled'
+        }
+      }
+    }
   }
 
-  function stopGenerating() {
-    isGenerating.value = false
+  function appendOutput(pid: string, text: string) {
+    ensureState(pid).streamOutput += text
   }
+
+  function appendDraft(pid: string, token: string) {
+    ensureState(pid).finalDraft += token
+  }
+
+  function setDraft(pid: string, text: string) {
+    ensureState(pid).finalDraft = text
+  }
+
+  function setWorkflowSteps(pid: string, steps: WorkflowStep[]) {
+    ensureState(pid).workflowSteps = steps
+  }
+
+  function updateStepStatus(pid: string, stepId: string, status: WorkflowStep['status']) {
+    const step = ensureState(pid).workflowSteps.find(s => s.id === stepId)
+    if (step) step.status = status
+  }
+
+  function clearProjectState(pid: string) {
+    delete states.value[pid]
+  }
+
+  function setExpertSkill(pid: string, expert: string, skill: string) {
+    ensureState(pid).expertSkills[expert] = skill
+  }
+
+  function setRevisionInfo(pid: string, revisionCount: number, maxRevisions: number) {
+    const s = ensureState(pid)
+    s.revisionCount = revisionCount
+    s.maxRevisions = maxRevisions
+  }
+
+  // ─── Expert config (shared across projects) ───
 
   /** Load experts from backend API; fall back to DEFAULT_EXPERTS on failure */
   async function loadExperts(projectId: string) {
@@ -264,7 +465,6 @@ export const useExpertStore = defineStore('expert', () => {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : '加载专家失败'
       loadError.value = msg
-      // Fallback to local defaults when backend is unavailable
       if (!experts.value.length) {
         experts.value = [...DEFAULT_EXPERTS]
       }
@@ -306,23 +506,13 @@ export const useExpertStore = defineStore('expert', () => {
     }
   }
 
-  function setWorkflowSteps(steps: WorkflowStep[]) {
-    workflowSteps.value = steps
-  }
-
-  function updateStepStatus(stepId: string, status: WorkflowStep['status'], output?: string) {
-    const step = workflowSteps.value.find(s => s.id === stepId)
-    if (step) {
-      step.status = status
-      if (output) step.output = output
-    }
-  }
-
   return {
-    experts, activeExpertId, activeExpert, isGenerating, streamOutput, finalDraft,
-    workflowSteps, loading, loadError,
-    getExpertName, setActive, startGenerating, appendOutput, appendDraft, replaceDraft, stopGenerating,
-    loadExperts, addExpert, addCustomExpert, toggleExpert, setWorkflowSteps, updateStepStatus,
+    experts, activeExpertId, activeExpert, states, loading, loadError,
+    getExpertName, setActive,
+    getState, startGenerating, stopGenerating, appendOutput, appendDraft, setDraft,
+    setWorkflowSteps, updateStepStatus, clearProjectState,
+      setExpertSkill, setRevisionInfo,
+    loadExperts, addExpert, addCustomExpert, toggleExpert,
   }
 })
 
@@ -738,6 +928,349 @@ export const useHiddenThreadStore = defineStore('hiddenThread', () => {
   }
 
   return { hiddenThreads, loading, loadError, threadsForProject, loadHiddenThreads, createHiddenThreadItem, updateHiddenThreadItem, deleteHiddenThreadItem }
+})
+
+// ─── Chapter Version History store ───
+
+function apiChapterVersionToVersion(av: ApiChapterVersion): ChapterVersion {
+  return {
+    id: av.id,
+    chapterId: av.chapter_id,
+    versionNumber: av.version_number,
+    wordCount: av.word_count,
+    source: av.source,
+    createdAt: av.created_at,
+    content: av.content ?? null,
+  }
+}
+
+export const useChapterVersionStore = defineStore('chapterVersion', () => {
+  const versions = ref<ChapterVersion[]>([])
+  const loading = ref(false)
+  const loadError = ref('')
+  const diffResult = ref<{ versionA: number; versionB: number; leftTitle: string; rightTitle: string; diff: DiffHunk[] } | null>(null)
+
+  async function loadVersions(projectId: string, sequenceNumber: number) {
+    loading.value = true
+    loadError.value = ''
+    try {
+      versions.value = (await api.listChapterVersions(projectId, sequenceNumber)).map(apiChapterVersionToVersion)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载版本历史失败'
+      loadError.value = msg
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function getVersionContent(projectId: string, sequenceNumber: number, versionId: string): Promise<string | null> {
+    try {
+      const av = await api.getChapterVersion(projectId, sequenceNumber, versionId)
+      return av.content ?? null
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载版本内容失败'
+      loadError.value = msg
+      return null
+    }
+  }
+
+  async function loadDiff(projectId: string, sequenceNumber: number, versionIdA: string, versionIdB: string) {
+    loading.value = true
+    loadError.value = ''
+    try {
+      const result = await api.diffChapterVersions(projectId, sequenceNumber, {
+        version_id_a: versionIdA,
+        version_id_b: versionIdB,
+      })
+      diffResult.value = {
+        versionA: result.version_a,
+        versionB: result.version_b,
+        leftTitle: `历史 v${result.version_a}`,
+        rightTitle: result.version_b === 0 ? '当前正文' : `历史 v${result.version_b}`,
+        diff: result.diff,
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载版本对比失败'
+      loadError.value = msg
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function loadDiffWithCurrent(projectId: string, sequenceNumber: number, versionId: string, versionNumber: number, currentContent: string) {
+    loading.value = true
+    loadError.value = ''
+    try {
+      const result = await api.diffChapterVersions(projectId, sequenceNumber, {
+        version_id_a: versionId,
+        current_content: currentContent,
+      })
+      diffResult.value = {
+        versionA: result.version_a,
+        versionB: result.version_b,
+        leftTitle: `历史 v${versionNumber}`,
+        rightTitle: '当前正文',
+        diff: result.diff,
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载版本对比失败'
+      loadError.value = msg
+    } finally {
+      loading.value = false
+    }
+  }
+
+  function clearState() {
+    versions.value = []
+    loading.value = false
+    loadError.value = ''
+    diffResult.value = null
+  }
+
+  return { versions, loading, loadError, diffResult, loadVersions, getVersionContent, loadDiff, loadDiffWithCurrent, clearState }
+})
+
+// ─── Document Revision History store ───
+
+function apiDocumentVersionToRevision(av: ApiDocumentVersion): DocumentRevision {
+  return {
+    id: av.id,
+    documentId: av.document_id,
+    versionNumber: av.version_number,
+    wordCount: av.word_count,
+    source: av.source,
+    createdAt: av.created_at,
+    content: av.content ?? null,
+  }
+}
+
+export const useDocumentRevisionStore = defineStore('documentRevision', () => {
+  const revisions = ref<DocumentRevision[]>([])
+  const loading = ref(false)
+  const loadError = ref('')
+  const diffResult = ref<{ versionA: number; versionB: number; leftTitle: string; rightTitle: string; diff: DiffHunk[] } | null>(null)
+
+  async function loadRevisions(projectId: string, documentId: string) {
+    loading.value = true
+    loadError.value = ''
+    try {
+      revisions.value = (await api.listDocumentVersions(projectId, documentId)).map(apiDocumentVersionToRevision)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载修订历史失败'
+      loadError.value = msg
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function getRevisionContent(projectId: string, documentId: string, revisionId: string): Promise<string | null> {
+    try {
+      const revision = await api.getDocumentVersion(projectId, documentId, revisionId)
+      return revision.content ?? null
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载修订内容失败'
+      loadError.value = msg
+      return null
+    }
+  }
+
+  async function restoreRevision(projectId: string, documentId: string, revisionId: string): Promise<DocumentUnit | null> {
+    try {
+      const doc = await api.restoreDocumentVersion(projectId, documentId, revisionId)
+      return apiDocumentToDocumentUnit(doc, projectId)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '恢复修订失败'
+      loadError.value = msg
+      return null
+    }
+  }
+
+  async function loadDiff(projectId: string, documentId: string, revisionIdA: string, revisionIdB: string) {
+    loading.value = true
+    loadError.value = ''
+    try {
+      const result = await api.diffDocumentVersions(projectId, documentId, {
+        version_id_a: revisionIdA,
+        version_id_b: revisionIdB,
+      })
+      diffResult.value = {
+        versionA: result.version_a,
+        versionB: result.version_b,
+        leftTitle: `修订 v${result.version_a}`,
+        rightTitle: result.version_b === 0 ? '当前正文' : `修订 v${result.version_b}`,
+        diff: result.diff,
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载修订对比失败'
+      loadError.value = msg
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function loadDiffWithCurrent(projectId: string, documentId: string, revisionId: string, revisionNumber: number, currentContent: string) {
+    loading.value = true
+    loadError.value = ''
+    try {
+      const result = await api.diffDocumentVersions(projectId, documentId, {
+        version_id_a: revisionId,
+        current_content: currentContent,
+      })
+      diffResult.value = {
+        versionA: result.version_a,
+        versionB: result.version_b,
+        leftTitle: `修订 v${revisionNumber}`,
+        rightTitle: '当前正文',
+        diff: result.diff,
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载修订对比失败'
+      loadError.value = msg
+    } finally {
+      loading.value = false
+    }
+  }
+
+  function clearState() {
+    revisions.value = []
+    loading.value = false
+    loadError.value = ''
+    diffResult.value = null
+  }
+
+  return { revisions, loading, loadError, diffResult, loadRevisions, getRevisionContent, restoreRevision, loadDiff, loadDiffWithCurrent, clearState }
+})
+
+// ─── AI Generation History store ───
+
+function apiGenerationRecordToRecord(record: ApiGenerationRecordListItem | ApiGenerationRecord): GenerationRecord {
+  return {
+    id: record.id,
+    projectId: record.project_id,
+    chapterId: record.chapter_id,
+    documentId: record.document_id,
+    mode: record.mode,
+    expertId: record.expert_id,
+    direction: record.direction,
+    wordCount: record.word_count,
+    status: record.status,
+    createdAt: record.created_at,
+    content: 'content' in record ? record.content : null,
+  }
+}
+
+export const useGenerationHistoryStore = defineStore('generationHistory', () => {
+  const records = ref<GenerationRecord[]>([])
+  const loading = ref(false)
+  const loadError = ref('')
+  const diffResult = ref<{ versionA: number; versionB: number; leftTitle: string; rightTitle: string; diff: DiffHunk[] } | null>(null)
+
+  async function loadChapterRecords(projectId: string, sequenceNumber: number) {
+    loading.value = true
+    loadError.value = ''
+    try {
+      records.value = (await api.listChapterGenerations(projectId, sequenceNumber)).map(apiGenerationRecordToRecord)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载 AI 生成历史失败'
+      loadError.value = msg
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function loadDocumentRecords(projectId: string, documentId: string) {
+    loading.value = true
+    loadError.value = ''
+    try {
+      records.value = (await api.listDocumentGenerations(projectId, documentId)).map(apiGenerationRecordToRecord)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载 AI 生成历史失败'
+      loadError.value = msg
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function getRecordContent(projectId: string, recordId: string): Promise<string | null> {
+    try {
+      const detail = await api.getGenerationRecord(projectId, recordId)
+      const record = apiGenerationRecordToRecord(detail)
+      const idx = records.value.findIndex(r => r.id === recordId)
+      if (idx !== -1) records.value[idx] = record
+      return record.content
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载生成内容失败'
+      loadError.value = msg
+      return null
+    }
+  }
+
+  async function updateRecordStatus(projectId: string, recordId: string, status: GenerationRecord['status']) {
+    try {
+      const updated = apiGenerationRecordToRecord(await api.updateGenerationRecord(projectId, recordId, { status }))
+      const idx = records.value.findIndex(r => r.id === recordId)
+      if (idx !== -1) records.value[idx] = updated
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '更新生成历史失败'
+      loadError.value = msg
+    }
+  }
+
+  async function markLatestRecord(projectId: string, status: GenerationRecord['status']) {
+    const latest = records.value[0]
+    if (!latest) return
+    await updateRecordStatus(projectId, latest.id, status)
+  }
+
+  async function loadDiffWithCurrent(projectId: string, recordId: string, currentContent: string) {
+    loading.value = true
+    loadError.value = ''
+    try {
+      const result = await api.diffGenerationRecord(projectId, recordId, { current_content: currentContent })
+      diffResult.value = {
+        versionA: 0,
+        versionB: 0,
+        leftTitle: 'AI生成',
+        rightTitle: '当前正文',
+        diff: result.diff,
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载生成对比失败'
+      loadError.value = msg
+    } finally {
+      loading.value = false
+    }
+  }
+
+  function upsertCandidate(projectId: string, recordId: string) {
+    if (records.value.some(r => r.id === recordId)) return
+    records.value.unshift({
+      id: recordId,
+      projectId,
+      chapterId: null,
+      documentId: null,
+      mode: 'full_pipeline',
+      expertId: null,
+      direction: null,
+      wordCount: 0,
+      status: 'candidate',
+      createdAt: new Date().toISOString(),
+      content: null,
+    })
+  }
+
+  function clearState() {
+    records.value = []
+    loading.value = false
+    loadError.value = ''
+    diffResult.value = null
+  }
+
+  return {
+    records, loading, loadError, diffResult,
+    loadChapterRecords, loadDocumentRecords, getRecordContent,
+    updateRecordStatus, markLatestRecord, loadDiffWithCurrent, upsertCandidate, clearState,
+  }
 })
 
 export interface Toast {

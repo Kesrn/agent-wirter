@@ -1,20 +1,39 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import type { ProjectMode } from '../api/types'
 
 const props = defineProps<{
   directions: string[]
+  currentWordCount?: number
+  projectMode?: ProjectMode
 }>()
 
 const emit = defineEmits<{
-  confirm: [direction: string, userNote: string]
+  confirm: [direction: string, userNote: string, targetWords: number]
   cancel: []
 }>()
 
+const MAX_ENHANCE_WORDS = 5000
+const MIN_ENHANCE_WORDS = 20
+
 const selectedDirection = ref(props.directions[0] ?? '')
 const userNote = ref('')
+const isArticle = props.projectMode === 'article'
+const targetWords = ref(
+  Math.min(
+    MAX_ENHANCE_WORDS,
+    Math.max(MIN_ENHANCE_WORDS, props.currentWordCount || 1200),
+  ),
+)
+
+function clampTargetWords(value: number) {
+  if (!Number.isFinite(value)) return 1200
+  return Math.min(MAX_ENHANCE_WORDS, Math.max(MIN_ENHANCE_WORDS, Math.round(value)))
+}
 
 function handleConfirm() {
-  emit('confirm', selectedDirection.value, userNote.value)
+  targetWords.value = clampTargetWords(targetWords.value)
+  emit('confirm', selectedDirection.value, userNote.value, targetWords.value)
 }
 </script>
 
@@ -22,14 +41,14 @@ function handleConfirm() {
   <div class="picker-overlay" @click.self="emit('cancel')">
     <div class="picker-card">
       <div class="picker-header">
-        <h3>选择润色方向</h3>
-        <p class="picker-subtitle">AI 根据当前章节内容给出了以下润色方向，选择一个方向后确认</p>
+        <h3>{{ isArticle ? '选择改写方向' : '选择润色方向' }}</h3>
+        <p class="picker-subtitle">{{ isArticle ? 'AI 根据当前稿件和 brief 给出了以下改写优化方向' : 'AI 根据当前章节内容给出了以下润色方向，选择一个方向后确认' }}</p>
       </div>
 
       <div class="picker-body">
         <div v-if="!directions.length" class="loading-hint">
           <span class="spinner"></span>
-          <span>AI 正在分析章节内容...</span>
+          <span>AI 正在分析{{ isArticle ? '稿件内容' : '章节内容' }}...</span>
         </div>
         <div v-else class="direction-list">
           <div v-for="(dir, i) in directions" :key="i" class="direction-item" :class="{ selected: selectedDirection === dir }" @click="selectedDirection = dir">
@@ -39,14 +58,27 @@ function handleConfirm() {
         </div>
 
         <div v-if="directions.length" class="note-section">
+          <label class="note-label">目标字数</label>
+          <div class="target-row">
+            <input
+              v-model.number="targetWords"
+              class="target-input"
+              type="number"
+              :min="MIN_ENHANCE_WORDS"
+              :max="MAX_ENHANCE_WORDS"
+              step="50"
+              @blur="targetWords = clampTargetWords(targetWords)"
+            />
+            <span class="target-hint">建议接近原{{ isArticle ? '稿件' : '章节' }}字数，最多 {{ MAX_ENHANCE_WORDS }} 字</span>
+          </div>
           <label class="note-label">补充说明</label>
-          <textarea v-model="userNote" class="note-input" rows="2" placeholder="补充你希望润色的重点..."></textarea>
+          <textarea v-model="userNote" class="note-input" rows="2" :placeholder="isArticle ? '补充你希望优化的结构、卖点、语气或 CTA...' : '补充你希望润色的重点...'"></textarea>
         </div>
       </div>
 
       <div class="picker-footer">
         <button class="btn-cancel" @click="emit('cancel')">取消</button>
-        <button class="btn-confirm" :disabled="!selectedDirection" @click="handleConfirm">确认润色</button>
+        <button class="btn-confirm" :disabled="!selectedDirection" @click="handleConfirm">{{ isArticle ? '确认改写' : '确认润色' }}</button>
       </div>
     </div>
   </div>
@@ -171,6 +203,30 @@ function handleConfirm() {
   font-weight: 500;
   color: var(--text-secondary);
 }
+.target-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: var(--sp-2);
+  align-items: center;
+  margin-bottom: var(--sp-2);
+}
+.target-input {
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+  background: var(--bg);
+  color: var(--text);
+  transition: border-color var(--transition);
+}
+.target-input:focus { border-color: var(--border-focus); outline: none; }
+.target-hint {
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
 .note-input {
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--border);
@@ -217,5 +273,14 @@ function handleConfirm() {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+@media (max-width: 520px) {
+  .picker-card {
+    max-width: calc(100vw - 24px);
+  }
+  .target-row {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

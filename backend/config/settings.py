@@ -7,6 +7,8 @@
 import os
 from dataclasses import dataclass, field
 
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -44,6 +46,8 @@ class Settings:
     # --- 应用 ---
     DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:3000")
+    UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
+    MAX_UPLOAD_BYTES: int = int(os.getenv("MAX_UPLOAD_BYTES", str(5 * 1024 * 1024)))
 
 
 settings = Settings()

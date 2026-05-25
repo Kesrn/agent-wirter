@@ -1,10 +1,12 @@
 """FastAPI 应用入口"""
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from config.settings import settings
 from db.session import init_db
@@ -43,6 +45,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+app.mount("/media", StaticFiles(directory=settings.UPLOAD_DIR), name="media")
+
 app.include_router(router)
 app.include_router(auth_router)
 app.include_router(llm_settings_router)
@@ -57,3 +62,8 @@ async def health_check():
         "llm_provider": settings.LLM_PROVIDER,
         "embedding_provider": settings.EMBEDDING_PROVIDER,
     }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

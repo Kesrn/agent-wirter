@@ -1,24 +1,36 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import type { OutlineItem, Character, WorldEntry } from '../api/types'
+import { ref, computed } from 'vue'
+import type { OutlineItem, Character, WorldEntry, HiddenThread, ProjectMode } from '../api/types'
 
 const props = defineProps<{
   projectId: string
   outlines: OutlineItem[]
   characters: Character[]
   worldEntries: WorldEntry[]
+  hiddenThreads: HiddenThread[]
+  currentChapterNum?: number
+  mode?: ProjectMode
 }>()
 
 const emit = defineEmits<{
-  confirm: [outlineIds: string[], characterIds: string[], worldEntryIds: string[], targetWords: number]
+  confirm: [outlineIds: string[], characterIds: string[], worldEntryIds: string[], hiddenThreadIds: string[], targetWords: number]
   cancel: []
 }>()
 
+const isNovel = computed(() => props.mode !== 'article')
+
+const sectionLabels = computed(() => ({
+  outlines: isNovel.value ? '大纲' : '内容结构',
+  characters: isNovel.value ? '角色' : '受众画像',
+  worldEntries: isNovel.value ? '世界观' : '品牌/产品资料',
+  hiddenThreads: isNovel.value ? '暗线' : '内容策略',
+}))
+
 const ROLE_LABELS: Record<string, string> = {
-  protagonist: '主角',
-  antagonist: '反派',
-  supporting: '配角',
-  minor: '路人',
+  protagonist: isNovel.value ? '主角' : '核心受众',
+  antagonist: isNovel.value ? '反派' : '反对人群',
+  supporting: isNovel.value ? '配角' : '影响者',
+  minor: isNovel.value ? '路人' : '泛受众',
 }
 
 const CONFIDENCE_LABELS: Record<string, string> = {
@@ -27,15 +39,29 @@ const CONFIDENCE_LABELS: Record<string, string> = {
   low: '低',
 }
 
+const pickerTitle = computed(() => isNovel.value ? '选择创作素材' : '选择内容素材')
+const pickerSubtitle = computed(() =>
+  isNovel.value
+    ? '选择本次生成要用的大纲、角色和世界观设定'
+    : '选择本次生成要用的内容结构、受众画像和品牌资料'
+)
+const confirmLabel = computed(() => isNovel.value ? '确认生成' : '确认生成内容')
+
 // Default: all selected
 const selectedOutlines = ref<string[]>(props.outlines.map(o => o.id))
 const selectedCharacters = ref<string[]>(props.characters.map(c => c.id))
 const selectedWorldEntries = ref<string[]>(props.worldEntries.map(w => w.id))
+// Hidden threads: default-check those matching current chapter
+const selectedHiddenThreads = ref<string[]>(
+  props.currentChapterNum
+    ? props.hiddenThreads.filter(ht => ht.chapter_nums.includes(props.currentChapterNum!)).map(ht => ht.id)
+    : props.hiddenThreads.map(ht => ht.id),
+)
 const targetWords = ref(2000)
 
-const openSections = ref({ outlines: true, characters: true, worldEntries: true })
+const openSections = ref({ outlines: true, characters: false, worldEntries: false, hiddenThreads: false })
 
-function toggleSection(key: 'outlines' | 'characters' | 'worldEntries') {
+function toggleSection(key: 'outlines' | 'characters' | 'worldEntries' | 'hiddenThreads') {
   openSections.value[key] = !openSections.value[key]
 }
 
@@ -47,6 +73,14 @@ function toggleAllCharacters() {
 }
 function toggleAllWorldEntries() {
   selectedWorldEntries.value = selectedWorldEntries.value.length === props.worldEntries.length ? [] : props.worldEntries.map(w => w.id)
+}
+function toggleAllHiddenThreads() {
+  selectedHiddenThreads.value = selectedHiddenThreads.value.length === props.hiddenThreads.length ? [] : props.hiddenThreads.map(ht => ht.id)
+}
+function toggleHiddenThread(id: string) {
+  const idx = selectedHiddenThreads.value.indexOf(id)
+  if (idx >= 0) selectedHiddenThreads.value.splice(idx, 1)
+  else selectedHiddenThreads.value.push(id)
 }
 
 function toggleOutline(id: string) {
@@ -73,7 +107,7 @@ function truncate(text: string, max: number): string {
 }
 
 function handleConfirm() {
-  emit('confirm', selectedOutlines.value, selectedCharacters.value, selectedWorldEntries.value, targetWords.value)
+  emit('confirm', selectedOutlines.value, selectedCharacters.value, selectedWorldEntries.value, selectedHiddenThreads.value, targetWords.value)
 }
 </script>
 
@@ -81,8 +115,8 @@ function handleConfirm() {
   <div class="picker-overlay" @click.self="emit('cancel')">
     <div class="picker-card">
       <div class="picker-header">
-        <h3>选择创作素材</h3>
-        <p class="picker-subtitle">选择本次生成要用的大纲、角色和世界观设定</p>
+        <h3>{{ pickerTitle }}</h3>
+        <p class="picker-subtitle">{{ pickerSubtitle }}</p>
       </div>
 
       <div class="picker-body">
@@ -90,18 +124,18 @@ function handleConfirm() {
         <div class="section">
           <div class="section-header" @click="toggleSection('outlines')">
             <span class="section-chevron" :class="{ open: openSections.outlines }">▾</span>
-            <span class="section-title">大纲</span>
+            <span class="section-title">{{ sectionLabels.outlines }}</span>
             <label class="select-all" @click.stop>
               <input type="checkbox" :checked="selectedOutlines.length === outlines.length && outlines.length > 0" @change="toggleAllOutlines" />
               <span>全选</span>
             </label>
           </div>
           <div v-if="openSections.outlines" class="section-list">
-            <div v-if="!outlines.length" class="empty-hint">暂无大纲</div>
+            <div v-if="!outlines.length" class="empty-hint">暂无{{ sectionLabels.outlines }}</div>
             <div v-for="o in outlines" :key="o.id" class="item" @click="toggleOutline(o.id)">
               <input type="checkbox" :checked="selectedOutlines.includes(o.id)" class="item-checkbox" />
               <span class="item-main">
-                <span class="item-title">第{{ o.chapter_num }}章 {{ o.title }}</span>
+                <span class="item-title">{{ isNovel ? `第${o.chapter_num}章 ${o.title}` : o.title }}</span>
                 <span v-if="o.summary" class="item-desc">{{ truncate(o.summary, 80) }}</span>
               </span>
             </div>
@@ -112,14 +146,14 @@ function handleConfirm() {
         <div class="section">
           <div class="section-header" @click="toggleSection('characters')">
             <span class="section-chevron" :class="{ open: openSections.characters }">▾</span>
-            <span class="section-title">角色</span>
+            <span class="section-title">{{ sectionLabels.characters }}</span>
             <label class="select-all" @click.stop>
               <input type="checkbox" :checked="selectedCharacters.length === characters.length && characters.length > 0" @change="toggleAllCharacters" />
               <span>全选</span>
             </label>
           </div>
           <div v-if="openSections.characters" class="section-list">
-            <div v-if="!characters.length" class="empty-hint">暂无角色</div>
+            <div v-if="!characters.length" class="empty-hint">暂无{{ sectionLabels.characters }}</div>
             <div v-for="c in characters" :key="c.id" class="item" @click="toggleCharacter(c.id)">
               <input type="checkbox" :checked="selectedCharacters.includes(c.id)" class="item-checkbox" />
               <span class="item-main">
@@ -134,19 +168,41 @@ function handleConfirm() {
         <div class="section">
           <div class="section-header" @click="toggleSection('worldEntries')">
             <span class="section-chevron" :class="{ open: openSections.worldEntries }">▾</span>
-            <span class="section-title">世界观</span>
+            <span class="section-title">{{ sectionLabels.worldEntries }}</span>
             <label class="select-all" @click.stop>
               <input type="checkbox" :checked="selectedWorldEntries.length === worldEntries.length && worldEntries.length > 0" @change="toggleAllWorldEntries" />
               <span>全选</span>
             </label>
           </div>
           <div v-if="openSections.worldEntries" class="section-list">
-            <div v-if="!worldEntries.length" class="empty-hint">暂无世界观设定</div>
+            <div v-if="!worldEntries.length" class="empty-hint">暂无{{ sectionLabels.worldEntries }}</div>
             <div v-for="w in worldEntries" :key="w.id" class="item" @click="toggleWorldEntry(w.id)">
               <input type="checkbox" :checked="selectedWorldEntries.includes(w.id)" class="item-checkbox" />
               <span class="item-main">
                 <span class="item-title">{{ w.title }} <span v-if="w.category" class="badge cat-badge">[{{ w.category }}]</span> <span class="badge conf-badge" :class="w.confidence">{{ CONFIDENCE_LABELS[w.confidence] ?? w.confidence }}</span></span>
                 <span v-if="w.content" class="item-desc">{{ truncate(w.content, 60) }}</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Hidden Threads -->
+        <div class="section">
+          <div class="section-header" @click="toggleSection('hiddenThreads')">
+            <span class="section-chevron" :class="{ open: openSections.hiddenThreads }">▾</span>
+            <span class="section-title">{{ sectionLabels.hiddenThreads }}</span>
+            <label class="select-all" @click.stop>
+              <input type="checkbox" :checked="selectedHiddenThreads.length === hiddenThreads.length && hiddenThreads.length > 0" @change="toggleAllHiddenThreads" />
+              <span>全选</span>
+            </label>
+          </div>
+          <div v-if="openSections.hiddenThreads" class="section-list">
+            <div v-if="!hiddenThreads.length" class="empty-hint">暂无{{ sectionLabels.hiddenThreads }}</div>
+            <div v-for="ht in hiddenThreads" :key="ht.id" class="item" @click="toggleHiddenThread(ht.id)">
+              <input type="checkbox" :checked="selectedHiddenThreads.includes(ht.id)" class="item-checkbox" />
+              <span class="item-main">
+                <span class="item-title">{{ ht.name }} <span v-if="currentChapterNum && ht.chapter_nums.includes(currentChapterNum)" class="badge auto-badge">自动匹配</span></span>
+                <span v-if="ht.description" class="item-desc">{{ truncate(ht.description, 60) }}</span>
               </span>
             </div>
           </div>
@@ -159,7 +215,7 @@ function handleConfirm() {
           <input v-model.number="targetWords" type="number" min="500" max="10000" class="target-input" />
         </div>
         <button class="btn-cancel" @click="emit('cancel')">取消</button>
-        <button class="btn-confirm" @click="handleConfirm">确认生成</button>
+        <button class="btn-confirm" @click="handleConfirm">{{ confirmLabel }}</button>
       </div>
     </div>
   </div>
@@ -173,22 +229,23 @@ function handleConfirm() {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  z-index: 1000;
 }
 .picker-card {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  width: 100%;
+  width: 90vw;
   max-width: 680px;
-  max-height: 85vh;
+  height: 85vh;
   display: flex;
   flex-direction: column;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 .picker-header {
-  padding: var(--sp-4) var(--sp-5);
+  padding: var(--sp-3) var(--sp-5);
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 .picker-header h3 {
   font-size: var(--text-base);
@@ -216,6 +273,7 @@ function handleConfirm() {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
+  flex-shrink: 0;
 }
 .section-header {
   display: flex;
@@ -250,7 +308,7 @@ function handleConfirm() {
 }
 .section-list {
   padding: var(--sp-1) 0;
-  max-height: 200px;
+  max-height: 180px;
   overflow-y: auto;
 }
 
@@ -306,6 +364,7 @@ function handleConfirm() {
 .conf-badge.high { background: var(--status-final-bg); color: var(--status-final); }
 .conf-badge.medium { background: var(--status-reviewing-bg); color: var(--status-reviewing); }
 .conf-badge.low { background: var(--status-draft-bg); color: var(--status-draft); }
+.auto-badge { background: var(--accent-subtle); color: var(--accent); }
 
 .empty-hint {
   padding: var(--sp-3);
@@ -321,6 +380,7 @@ function handleConfirm() {
   gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-5);
   border-top: 1px solid var(--border);
+  flex-shrink: 0;
 }
 .target-words-group {
   display: flex;

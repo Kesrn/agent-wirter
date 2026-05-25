@@ -146,16 +146,24 @@ class ChapterResponse(BaseModel):
 # --- 生成请求 ---
 class GenerateRequest(BaseModel):
     chapter_id: str | None = None
+    document_id: str | None = None
     chapter_num: int | None = Field(default=None, ge=1)
     mode: str = Field(default="continue", pattern=r"^(continue|full_pipeline|enhance|summarize)$")
     expert_id: str | None = None
     selected_outline_ids: list[str] | None = None
     selected_character_ids: list[str] | None = None
     selected_world_entry_ids: list[str] | None = None
+    selected_hidden_thread_ids: list[str] | None = None
     target_words: int | None = None
     enhance_direction: str | None = None
     turn_direction: str | None = None
     user_note: str | None = None
+    content_type: str | None = Field(default=None, max_length=80)
+    platform: str | None = Field(default=None, max_length=80)
+    audience: str | None = Field(default=None, max_length=200)
+    content_goal: str | None = Field(default=None, max_length=200)
+    tone: str | None = Field(default=None, max_length=120)
+    key_points: str | None = Field(default=None, max_length=2000)
 
 
 # --- 专家测试请求 ---
@@ -384,3 +392,155 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: AuthUser
+
+
+# --- 章节版本 ---
+class ChapterVersionListItemResponse(BaseModel):
+    id: uuid.UUID
+    chapter_id: uuid.UUID
+    word_count: int
+    version_number: int
+    source: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ChapterVersionResponse(BaseModel):
+    id: uuid.UUID
+    chapter_id: uuid.UUID
+    content: str | None
+    word_count: int
+    version_number: int
+    source: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ChapterVersionDiffRequest(BaseModel):
+    version_id_a: uuid.UUID
+    version_id_b: uuid.UUID | None = None
+    current_content: str | None = None
+
+    @model_validator(mode="after")
+    def validate_compare_target(self):
+        if self.version_id_b is None and self.current_content is None:
+            raise ValueError("version_id_b 或 current_content 必须提供一个")
+        return self
+
+
+class ChapterVersionDiffResponse(BaseModel):
+    version_a: int
+    version_b: int
+    diff: list[dict]
+
+
+# --- 文档（文章/文案模式） ---
+class DocumentCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    content: str | None = None
+    position: int | None = Field(default=None, ge=0)
+
+
+class DocumentUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    content: str | None = None
+    status: str | None = Field(default=None, pattern=r"^(draft|reviewing|revision|final|approved)$")
+
+
+class DocumentResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    title: str
+    content: str | None
+    position: int
+    word_count: int
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# --- 文档版本 ---
+class DocumentVersionListItemResponse(BaseModel):
+    id: uuid.UUID
+    document_id: uuid.UUID
+    word_count: int
+    version_number: int
+    source: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DocumentVersionResponse(BaseModel):
+    id: uuid.UUID
+    document_id: uuid.UUID
+    content: str | None
+    word_count: int
+    version_number: int
+    source: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DocumentVersionDiffRequest(BaseModel):
+    version_id_a: uuid.UUID
+    version_id_b: uuid.UUID | None = None
+    current_content: str | None = None
+
+    @model_validator(mode="after")
+    def validate_compare_target(self):
+        if self.version_id_b is None and self.current_content is None:
+            raise ValueError("version_id_b 或 current_content 必须提供一个")
+        return self
+
+
+class DocumentVersionDiffResponse(BaseModel):
+    version_a: int
+    version_b: int
+    diff: list[dict]
+
+
+# --- AI 生成历史 ---
+class GenerationRecordListItemResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    chapter_id: uuid.UUID | None
+    document_id: uuid.UUID | None
+    mode: str
+    expert_id: uuid.UUID | None
+    direction: str | None
+    word_count: int
+    status: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GenerationRecordResponse(GenerationRecordListItemResponse):
+    content: str
+    user_note: str | None
+    target_words: int | None
+    accepted_version_id: uuid.UUID | None
+    review_results: dict | None
+    request_params: dict | None
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GenerationRecordUpdate(BaseModel):
+    status: str = Field(pattern=r"^(candidate|applied|discarded)$")
+
+
+class GenerationRecordDiffRequest(BaseModel):
+    current_content: str
+
+
+class GenerationRecordDiffResponse(BaseModel):
+    generation_id: uuid.UUID
+    diff: list[dict]

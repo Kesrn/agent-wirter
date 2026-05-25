@@ -21,12 +21,14 @@ const ui = useUiStore()
 .toast-container {
   position: fixed;
   top: var(--sp-4);
-  right: var(--sp-4);
-  z-index: 1000;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  max-width: 360px;
+  width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
 }
 .toast-item {
   padding: var(--sp-3) var(--sp-4);
@@ -35,6 +37,8 @@ const ui = useUiStore()
   line-height: 1.4;
   box-shadow: var(--shadow);
   animation: toast-in 150ms ease;
+  text-align: center;
+  pointer-events: auto;
 }
 .toast-item.error {
   background: var(--sev-critical-bg);

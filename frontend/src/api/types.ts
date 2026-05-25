@@ -34,6 +34,13 @@ export interface RegisterResponse {
   username: string
 }
 
+export interface ProjectImageUploadResponse {
+  url: string
+  filename: string
+  content_type: string
+  size: number
+}
+
 // ─── Shared domain types (used by UI, stores, mock) ───
 
 /** Agent 角色类型 */
@@ -99,6 +106,8 @@ export interface Project {
   updated_at: string
 }
 
+export type DraftStatus = 'draft' | 'reviewing' | 'revision' | 'final'
+
 /** 章节 (UI / store) — mapped from ApiChapter via apiChapterToChapter */
 export interface Chapter {
   id: string
@@ -113,10 +122,30 @@ export interface Chapter {
   /** Final approved text — not returned by backend; populated client-side when status is 'final' */
   final_text: string
   /** Mapped via CHAPTER_STATUS_MAP from backend status values */
-  status: 'draft' | 'reviewing' | 'revision' | 'final'
+  status: DraftStatus
   review_comment_ids: string[]
   review_round: number
 }
+
+/** 稿件 (UI / store) — mapped from ApiDocument via apiDocumentToDocumentUnit */
+export interface DocumentUnit {
+  id: string
+  project_id: string
+  /** Mapped from ApiDocument.position */
+  position: number
+  title: string
+  /** Current draft content, mapped from ApiDocument.content (null -> '') */
+  draft: string
+  /** Final approved text — not returned by backend; populated client-side when status is 'final' */
+  final_text: string
+  /** Mapped via DRAFT_STATUS_MAP from backend status values */
+  status: DraftStatus
+  word_count: number
+  created_at: string
+  updated_at: string
+}
+
+export type WritingUnit = Chapter | DocumentUnit
 
 /** 审核意见 */
 export interface ReviewComment {
@@ -187,7 +216,7 @@ export interface HiddenThread {
 export interface WorkflowStep {
   id: string
   name: string
-  status: 'pending' | 'running' | 'success' | 'error'
+  status: 'pending' | 'running' | 'success' | 'error' | 'cancelled'
   expert_id: string
   output?: string
   duration_ms?: number
@@ -223,6 +252,19 @@ export interface ApiChapter {
   word_count: number
   status: string
   created_at: string
+  updated_at: string
+}
+
+export interface ApiDocument {
+  id: string
+  project_id: string
+  title: string
+  content: string | null
+  position: number
+  word_count: number
+  status: string
+  created_at: string
+  updated_at: string
 }
 
 export interface ApiExpert {
@@ -318,6 +360,18 @@ export interface ChapterCreatePayload {
   title: string
   outline?: string
   sequence_number?: number
+}
+
+export interface DocumentCreatePayload {
+  title: string
+  content?: string | null
+  position?: number | null
+}
+
+export interface DocumentUpdatePayload {
+  title?: string
+  content?: string | null
+  status?: DraftStatus | 'approved'
 }
 
 export interface ExpertUpdatePayload {
@@ -419,22 +473,40 @@ export type GenerateMode = 'continue' | 'full_pipeline' | 'enhance' | 'summarize
 
 export interface GenerateRequest {
   chapter_id?: string
+  document_id?: string
   chapter_num?: number
   mode?: GenerateMode
   expert_id?: string
   selected_outline_ids?: string[]
   selected_character_ids?: string[]
   selected_world_entry_ids?: string[]
+  selected_hidden_thread_ids?: string[]
   target_words?: number
   enhance_direction?: string
   turn_direction?: string
   user_note?: string
+  content_type?: string
+  platform?: string
+  audience?: string
+  content_goal?: string
+  tone?: string
+  key_points?: string
+}
+
+export interface ArticleGenerateParams {
+  content_type: string
+  platform: string
+  audience: string
+  content_goal: string
+  tone: string
+  key_points: string
+  target_words: number
 }
 
 // ─── SSE types ───
 
 /** SSE event types emitted by the backend generate/test endpoints */
-export type SSEEventType = 'progress' | 'agent_start' | 'agent_output' | 'agent_done' | 'writer_output' | 'critic_output' | 'consistency_check' | 'enhance_directions' | 'turn_suggestions' | 'done' | 'error'
+export type SSEEventType = 'progress' | 'agent_start' | 'agent_output' | 'agent_done' | 'writer_output' | 'content_output' | 'editor_output' | 'critic_output' | 'consistency_check' | 'enhance_directions' | 'turn_suggestions' | 'content_suggestions' | 'article_review' | 'revision_suggestions' | 'skill_pack' | 'generation_record' | 'done' | 'error'
 
 /** SSE envelope parsed from the backend stream */
 export interface SSEEnvelope {
@@ -500,6 +572,150 @@ export interface EnhanceDirectionsPayload {
 /** Payload for turn_suggestions SSE event */
 export interface TurnSuggestionsPayload {
   suggestions: string[]
+}
+
+/** Payload for article_review SSE event */
+export interface ArticleReviewPayload {
+  review_type: 'structure' | 'audience' | 'platform' | 'risk' | string
+  result: Record<string, unknown>
+}
+
+/** Payload for revision_suggestions SSE event */
+export interface RevisionSuggestionsPayload {
+  directions: string[]
+  revision_count: number
+  max_revisions: number
+}
+
+/** Payload for skill_pack SSE event — 当前专家使用了哪个 skill */
+export interface SkillPackPayload {
+  expert: string
+  skill: string
+  skill_dir: string
+}
+
+/** Payload for generation_record SSE event */
+export interface GenerationRecordPayload {
+  id: string
+  status: GenerationRecordStatus
+}
+
+// ─── Chapter Version History ───
+
+export interface ApiChapterVersion {
+  id: string
+  chapter_id: string
+  content?: string | null
+  word_count: number
+  version_number: number
+  source: string
+  created_at: string
+}
+
+export interface ApiDocumentVersion {
+  id: string
+  document_id: string
+  content?: string | null
+  word_count: number
+  version_number: number
+  source: string
+  created_at: string
+}
+
+export interface ChapterVersion {
+  id: string
+  chapterId: string
+  versionNumber: number
+  wordCount: number
+  source: string
+  createdAt: string
+  content: string | null
+}
+
+export interface DocumentRevision {
+  id: string
+  documentId: string
+  versionNumber: number
+  wordCount: number
+  source: string
+  createdAt: string
+  content: string | null
+}
+
+export interface DiffHunk {
+  tag: 'equal' | 'insert' | 'delete' | 'replace'
+  lines?: string[]
+  lines_a?: string[]
+  lines_b?: string[]
+}
+
+export interface ChapterVersionDiffRequest {
+  version_id_a: string
+  version_id_b?: string
+  current_content?: string
+}
+
+export interface ChapterVersionDiffResponse {
+  version_a: number
+  version_b: number
+  diff: DiffHunk[]
+}
+
+export type DocumentVersionDiffRequest = ChapterVersionDiffRequest
+export type DocumentVersionDiffResponse = ChapterVersionDiffResponse
+
+// ─── AI Generation History ───
+
+export type GenerationRecordStatus = 'candidate' | 'applied' | 'discarded'
+
+export interface ApiGenerationRecordListItem {
+  id: string
+  project_id: string
+  chapter_id: string | null
+  document_id: string | null
+  mode: GenerateMode
+  expert_id: string | null
+  direction: string | null
+  word_count: number
+  status: GenerationRecordStatus
+  created_at: string
+}
+
+export interface ApiGenerationRecord extends ApiGenerationRecordListItem {
+  content: string
+  user_note: string | null
+  target_words: number | null
+  accepted_version_id: string | null
+  review_results: Record<string, unknown> | null
+  request_params: Record<string, unknown> | null
+  updated_at: string
+}
+
+export interface GenerationRecord {
+  id: string
+  projectId: string
+  chapterId: string | null
+  documentId: string | null
+  mode: GenerateMode
+  expertId: string | null
+  direction: string | null
+  wordCount: number
+  status: GenerationRecordStatus
+  createdAt: string
+  content: string | null
+}
+
+export interface GenerationRecordUpdatePayload {
+  status: GenerationRecordStatus
+}
+
+export interface GenerationRecordDiffRequest {
+  current_content: string
+}
+
+export interface GenerationRecordDiffResponse {
+  generation_id: string
+  diff: DiffHunk[]
 }
 
 // ─── LLM Settings types ───

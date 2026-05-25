@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import type { ProjectMode } from '../api/types'
 
 const props = defineProps<{
   suggestions: string[]
+  projectMode?: ProjectMode
 }>()
 
 const emit = defineEmits<{
@@ -12,6 +14,7 @@ const emit = defineEmits<{
 
 const selectedDirection = ref(props.suggestions[0] ?? '')
 const userNote = ref('')
+const isArticle = props.projectMode === 'article'
 
 function handleConfirm() {
   emit('confirm', selectedDirection.value, userNote.value)
@@ -22,14 +25,14 @@ function handleConfirm() {
   <div class="picker-overlay" @click.self="emit('cancel')">
     <div class="picker-card">
       <div class="picker-header">
-        <h3>选择转折方向</h3>
-        <p class="picker-subtitle">AI 分析了当前写作情况，给出以下方向建议</p>
+        <h3>{{ isArticle ? '选择内容方向' : '选择转折方向' }}</h3>
+        <p class="picker-subtitle">{{ isArticle ? 'AI 根据稿件和 brief 给出以下标题/内容方向' : 'AI 分析了当前写作情况，给出以下方向建议' }}</p>
       </div>
 
       <div class="picker-body">
         <div v-if="!suggestions.length" class="loading-hint">
           <span class="spinner"></span>
-          <span>AI 正在分析章节内容...</span>
+          <span>AI 正在分析{{ isArticle ? '稿件内容' : '章节内容' }}...</span>
         </div>
         <div v-else class="direction-list">
           <div v-for="(dir, i) in suggestions" :key="i" class="direction-item" :class="{ selected: selectedDirection === dir }" @click="selectedDirection = dir">
@@ -40,13 +43,13 @@ function handleConfirm() {
 
         <div v-if="suggestions.length" class="note-section">
           <label class="note-label">补充说明</label>
-          <textarea v-model="userNote" class="note-input" rows="2" placeholder="补充你希望的走向..."></textarea>
+          <textarea v-model="userNote" class="note-input" rows="2" :placeholder="isArticle ? '补充你希望强调的角度、卖点或标题方向...' : '补充你希望的走向...'"></textarea>
         </div>
       </div>
 
       <div class="picker-footer">
         <button class="btn-cancel" @click="emit('cancel')">取消</button>
-        <button class="btn-confirm" :disabled="!selectedDirection" @click="handleConfirm">确认续写</button>
+        <button class="btn-confirm" :disabled="!selectedDirection" @click="handleConfirm">{{ isArticle ? '确认生成' : '确认续写' }}</button>
       </div>
     </div>
   </div>

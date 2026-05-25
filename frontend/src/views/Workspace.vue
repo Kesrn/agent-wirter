@@ -1,35 +1,53 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { useProjectStore, useChapterStore, useRelationStore, useWorldEntryStore, useCharacterStore, useOutlineStore, useHiddenThreadStore, useUiStore, friendlyError } from '../stores'
-import { API_BASE_URL, type OutlineItem, type HiddenThread, type Character, type WorldEntry } from '../api/types'
-import NovelEditor from '../components/NovelEditor.vue'
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
+import { useProjectStore, useChapterStore, useDocumentStore, useRelationStore, useWorldEntryStore, useCharacterStore, useOutlineStore, useHiddenThreadStore, useExpertStore, useUiStore, friendlyError } from '../stores'
+import { API_BASE_URL, type OutlineItem, type HiddenThread, type Character, type WorldEntry, type WritingUnit } from '../api/types'
+import WritingEditor from '../components/WritingEditor.vue'
 import AgentPanel from '../components/AgentPanel.vue'
+import ConfirmModal from '../components/ConfirmModal.vue'
 
 const route = useRoute()
 const router = useRouter()
 const projectStore = useProjectStore()
 const chapterStore = useChapterStore()
+const documentStore = useDocumentStore()
 const relationStore = useRelationStore()
 const worldEntryStore = useWorldEntryStore()
 const characterStore = useCharacterStore()
 const outlineStore = useOutlineStore()
 const hiddenThreadStore = useHiddenThreadStore()
+const expertStore = useExpertStore()
 const ui = useUiStore()
+
+const agentPanelRef = ref<InstanceType<typeof AgentPanel> | null>(null)
 
 const projectId = computed(() => route.params.id as string)
 const currentProject = computed(() => projectStore.projects.find(p => p.id === projectId.value))
 const projectMode = computed(() => currentProject.value?.mode ?? 'novel')
+const unitLabel = computed(() => projectMode.value === 'article' ? '稿件' : '章节')
+const switchProjectLabel = computed(() => projectMode.value === 'article' ? '切换项目' : '切换小说')
+const unitSequenceLabel = computed(() => `${unitLabel.value}序号`)
+const unitSummaryLabel = computed(() => projectMode.value === 'article' ? '内容摘要' : '章节大纲/摘要')
+const outlineLabel = computed(() => projectMode.value === 'article' ? '内容结构' : '大纲')
+const outlineAddLabel = computed(() => projectMode.value === 'article' ? '添加选题规划' : `添加${unitLabel.value}大纲`)
+const outlineTitleLabel = computed(() => projectMode.value === 'article' ? '选题标题' : '大纲标题')
+const turningPointLabel = computed(() => projectMode.value === 'article' ? '核心角度' : '转折点')
+const hiddenThreadLabel = computed(() => projectMode.value === 'article' ? '内容策略' : '暗线')
+const characterLabel = computed(() => projectMode.value === 'article' ? '受众画像' : '角色')
+const worldLabel = computed(() => projectMode.value === 'article' ? '品牌/产品资料' : '世界观')
+const worldEntryLabel = computed(() => projectMode.value === 'article' ? '资料' : '设定')
+const isGenerating = computed(() => expertStore.getState(projectId.value).isGenerating)
 const sidebarOpen = ref(true)
 const agentOpen = ref(true)
-const activeTab = ref<'chapters' | 'outline' | 'characters' | 'world'>('chapters')
+const activeTab = ref<'units' | 'outline' | 'characters' | 'world'>('units')
+const projectsLoading = ref(false)
 
 // Mobile: which panel to show
-const mobilePanel = ref<'editor' | 'chapters' | 'characters' | 'world' | 'agent'>('editor')
+const mobilePanel = ref<'editor' | 'units' | 'characters' | 'world' | 'agent'>('editor')
 
 watch(projectId, (id) => {
   projectStore.setCurrent(id)
-  chapterStore.loadChapters(id)
   worldEntryStore.loadWorldEntries(id)
   characterStore.loadCharacters(id)
   relationStore.loadRelations(id)
@@ -37,28 +55,100 @@ watch(projectId, (id) => {
   hiddenThreadStore.loadHiddenThreads(id)
 }, { immediate: true })
 
-const chapters = computed(() => chapterStore.chaptersForProject(projectId.value))
-const currentChapter = computed(() => chapterStore.currentChapterForProject(projectId.value))
+async function ensureProjectsLoaded() {
+  if (currentProject.value || projectsLoading.value) return
+  projectsLoading.value = true
+  try {
+    await projectStore.loadProjects()
+  } finally {
+    projectsLoading.value = false
+  }
+}
+
+watch([projectId, currentProject], ([id, project]) => {
+  if (!project) {
+    ensureProjectsLoaded()
+    return
+  }
+  if (project.mode === 'article') {
+    documentStore.loadDocuments(id)
+  } else {
+    chapterStore.loadChapters(id)
+  }
+}, { immediate: true })
+
+const writingUnits = computed(() => projectMode.value === 'article' ? documentStore.documentsForProject(projectId.value) : chapterStore.chaptersForProject(projectId.value))
+const currentWritingUnit = computed(() => projectMode.value === 'article' ? documentStore.currentDocumentForProject(projectId.value) : chapterStore.currentChapterForProject(projectId.value))
+const currentUnitNum = computed(() => projectMode.value === 'article' ? documentStore.currentDocumentPosition : chapterStore.currentChapterNum)
 const characters = computed(() => characterStore.charactersForProject(projectId.value))
 const outline = computed(() => outlineStore.entriesForProject(projectId.value))
 const worldEntries = computed(() => worldEntryStore.entriesForProject(projectId.value))
 const hiddenThreads = computed(() => hiddenThreadStore.threadsForProject(projectId.value))
 
-function selectChapter(num: number) {
-  chapterStore.setCurrentChapter(num)
+function unitPosition(unit: WritingUnit): number {
+  return 'position' in unit ? unit.position : unit.chapter_num
+}
+
+function selectWritingUnit(num: number) {
+  if (projectMode.value === 'article') {
+    documentStore.setCurrentDocument(num)
+  } else {
+    chapterStore.setCurrentChapter(num)
+  }
   mobilePanel.value = 'editor'
 }
 
 const isMobile = ref(window.innerWidth < 900)
 function onResize() { isMobile.value = window.innerWidth < 900 }
-onMounted(() => window.addEventListener('resize', onResize))
+onMounted(() => {
+  window.addEventListener('resize', onResize)
+})
 onUnmounted(() => window.removeEventListener('resize', onResize))
+
+// ─── Generation guard ───
+
+function cancelGenerationAndProceed(callback: () => void) {
+  agentPanelRef.value?.cancelStream()
+  callback()
+}
+
+function confirmLeaveIfGenerating(callback: () => void) {
+  if (!isGenerating.value) {
+    callback()
+    return
+  }
+  showConfirm(`当前正在${projectMode.value === 'article' ? '生成内容' : '生成小说'}，退出将取消生成，是否继续？`, () => cancelGenerationAndProceed(callback), '继续退出', true)
+}
+
+onBeforeRouteLeave(() => {
+  if (isGenerating.value) {
+    showConfirm(`当前正在${projectMode.value === 'article' ? '生成内容' : '生成小说'}，退出将取消生成，是否继续？`, () => {
+      agentPanelRef.value?.cancelStream()
+      router.push('/projects')
+    }, '继续退出', true)
+    return false
+  }
+})
+
+function onBeforeUnload(e: BeforeUnloadEvent) {
+  if (isGenerating.value) {
+    e.preventDefault()
+  }
+}
+onMounted(() => window.addEventListener('beforeunload', onBeforeUnload))
+onUnmounted(() => window.removeEventListener('beforeunload', onBeforeUnload))
+
+function handleSwitchProject() {
+  confirmLeaveIfGenerating(() => router.push('/projects'))
+}
 
 // Navigation
 function handleLogout() {
-  localStorage.removeItem('ai_write_logged_in')
-  localStorage.removeItem('ai_write_token')
-  router.push('/login')
+  confirmLeaveIfGenerating(() => {
+    localStorage.removeItem('ai_write_logged_in')
+    localStorage.removeItem('ai_write_token')
+    router.push('/login')
+  })
 }
 
 // Export
@@ -123,46 +213,141 @@ function exportMarkdown() {
   exportFromBackend('md')
 }
 
-// New chapter form
-const showNewChapter = ref(false)
+// New writing unit form
+const showNewUnit = ref(false)
 const newTitle = ref('')
-const newChapterNum = ref(1)
+const newUnitNum = ref(1)
 const newSummary = ref('')
-const newChapterError = ref('')
+const newUnitError = ref('')
 
-function openNewChapterForm() {
-  newChapterNum.value = chapterStore.nextChapterNum(projectId.value)
+function openNewUnitForm() {
+  newUnitNum.value = projectMode.value === 'article'
+    ? documentStore.nextDocumentPosition(projectId.value)
+    : chapterStore.nextChapterNum(projectId.value)
   newTitle.value = ''
   newSummary.value = ''
-  newChapterError.value = ''
-  showNewChapter.value = true
+  newUnitError.value = ''
+  showNewUnit.value = true
 }
 
-async function submitNewChapter() {
+async function submitNewUnit() {
   if (!newTitle.value.trim()) {
-    newChapterError.value = '章节标题不能为空'
+    newUnitError.value = `${unitLabel.value}标题不能为空`
     return
   }
   const payload = {
     title: newTitle.value.trim(),
-    chapter_num: newChapterNum.value,
+    position: newUnitNum.value,
     summary: newSummary.value.trim() || undefined,
   }
   try {
-    const ch = await chapterStore.createChapterRemote(projectId.value, payload)
-    showNewChapter.value = false
-    if (ch) selectChapter(ch.chapter_num)
-    ui.showToast('章节创建成功', 'success')
+    const ch = projectMode.value === 'article'
+      ? await documentStore.createDocumentRemote(projectId.value, {
+          title: payload.title,
+          position: payload.position,
+        })
+      : await chapterStore.createChapterRemote(projectId.value, {
+          title: payload.title,
+          chapter_num: payload.position,
+          summary: payload.summary,
+        })
+    showNewUnit.value = false
+    if (ch) selectWritingUnit(unitPosition(ch))
+    ui.showToast(`${unitLabel.value}创建成功`, 'success')
   } catch (e: unknown) {
-    const msg = friendlyError(e, '创建章节失败')
+    const msg = friendlyError(e, `创建${unitLabel.value}失败`)
     if (msg.includes('已存在')) {
-      newChapterError.value = '该章节序号已存在'
-      ui.showToast('该章节序号已存在', 'error')
+      newUnitError.value = `该${unitLabel.value}序号已存在`
+      ui.showToast(`该${unitLabel.value}序号已存在`, 'error')
     } else {
-      newChapterError.value = msg
+      newUnitError.value = msg
       ui.showToast(msg, 'error')
     }
   }
+}
+
+// ─── Writing unit title inline edit ───
+const editingUnitId = ref<string | null>(null)
+const editUnitTitle = ref('')
+const unitMenu = ref<{ x: number; y: number; unit: WritingUnit } | null>(null)
+
+// ─── Confirm modal ───
+const confirmState = ref<{ message: string; confirmText: string; danger: boolean; onConfirm: () => void } | null>(null)
+
+function showConfirm(message: string, onConfirm: () => void, confirmText = '确定', danger = false) {
+  confirmState.value = { message, confirmText, danger, onConfirm }
+}
+
+function handleConfirmOk() {
+  if (!confirmState.value) return
+  const cb = confirmState.value.onConfirm
+  confirmState.value = null
+  cb()
+}
+
+function handleConfirmCancel() {
+  confirmState.value = null
+}
+
+function openUnitMenu(e: MouseEvent, unit: WritingUnit) {
+  unitMenu.value = { x: e.clientX, y: e.clientY, unit }
+}
+
+function closeUnitMenu() {
+  unitMenu.value = null
+}
+
+function menuEditUnit() {
+  if (!unitMenu.value) return
+  startEditUnit(unitMenu.value.unit)
+  closeUnitMenu()
+}
+
+function menuDeleteUnit() {
+  if (!unitMenu.value) return
+  const unit = unitMenu.value.unit
+  closeUnitMenu()
+  deleteUnitConfirm(unit)
+}
+
+function startEditUnit(ch: WritingUnit) {
+  editingUnitId.value = ch.id
+  editUnitTitle.value = ch.title
+}
+
+function cancelEditUnit() {
+  editingUnitId.value = null
+}
+
+async function saveEditUnit(ch: WritingUnit) {
+  const title = editUnitTitle.value.trim()
+  if (!title) return
+  const position = unitPosition(ch)
+  try {
+    if (projectMode.value === 'article') {
+      await documentStore.updateDocumentTitle(projectId.value, position, title)
+    } else {
+      await chapterStore.updateChapterTitle(projectId.value, position, title)
+    }
+    editingUnitId.value = null
+  } catch (e: unknown) {
+    ui.showToast(friendlyError(e, '修改标题失败'), 'error')
+  }
+}
+
+function deleteUnitConfirm(ch: WritingUnit) {
+  const position = unitPosition(ch)
+  const label = projectMode.value === 'article'
+    ? `${unitLabel.value} ${ch.title}`
+    : `第${position}${unitLabel.value} ${ch.title}`
+  showConfirm(`确定删除「${label}」吗？`, () => {
+    const deleteTask = projectMode.value === 'article'
+      ? documentStore.deleteDocumentRemote(projectId.value, position)
+      : chapterStore.deleteChapterRemote(projectId.value, position)
+    deleteTask.catch((e: unknown) => {
+      ui.showToast(friendlyError(e, `删除${unitLabel.value}失败`), 'error')
+    })
+  }, '删除', true)
 }
 
 // ─── Outline CRUD ───
@@ -191,7 +376,7 @@ function openNewOutlineForm() {
 
 async function submitNewOutline() {
   if (!newOutlineTitle.value.trim()) {
-    newOutlineError.value = '大纲标题不能为空'
+    newOutlineError.value = `${outlineTitleLabel.value}不能为空`
     return
   }
   try {
@@ -202,10 +387,10 @@ async function submitNewOutline() {
       turning_point: newOutlineTurningPoint.value.trim() || undefined,
     })
     showNewOutline.value = false
-    ui.showToast('大纲创建成功', 'success')
+    ui.showToast(`${outlineLabel.value}创建成功`, 'success')
   } catch (e: unknown) {
-    newOutlineError.value = friendlyError(e, '创建大纲失败')
-    ui.showToast(friendlyError(e, '创建大纲失败'), 'error')
+    newOutlineError.value = friendlyError(e, `创建${outlineLabel.value}失败`)
+    ui.showToast(friendlyError(e, `创建${outlineLabel.value}失败`), 'error')
   }
 }
 
@@ -229,18 +414,18 @@ async function saveEditOutline(item: OutlineItem) {
       turning_point: editOutlineTurningPoint.value.trim() || undefined,
     })
     editingOutlineId.value = null
-    ui.showToast('大纲已更新', 'success')
+    ui.showToast(`${outlineLabel.value}已更新`, 'success')
   } catch (e: unknown) {
-    ui.showToast(friendlyError(e, '更新大纲失败'), 'error')
+    ui.showToast(friendlyError(e, `更新${outlineLabel.value}失败`), 'error')
   }
 }
 
 async function deleteOutlineItemConfirm(item: OutlineItem) {
   try {
     await outlineStore.deleteOutlineItem(projectId.value, item.id)
-    ui.showToast('大纲已删除', 'success')
+    ui.showToast(`${outlineLabel.value}已删除`, 'success')
   } catch (e: unknown) {
-    ui.showToast(friendlyError(e, '删除大纲失败'), 'error')
+    ui.showToast(friendlyError(e, `删除${outlineLabel.value}失败`), 'error')
   }
 }
 
@@ -259,7 +444,7 @@ function openNewHiddenThreadForm() {
 
 async function submitNewHiddenThread() {
   if (!newHTName.value.trim()) {
-    newHTError.value = '暗线名称不能为空'
+    newHTError.value = `${hiddenThreadLabel.value}名称不能为空`
     return
   }
   try {
@@ -268,19 +453,19 @@ async function submitNewHiddenThread() {
       description: newHTDescription.value.trim() || undefined,
     })
     showNewHiddenThread.value = false
-    ui.showToast('暗线创建成功', 'success')
+    ui.showToast(`${hiddenThreadLabel.value}创建成功`, 'success')
   } catch (e: unknown) {
-    newHTError.value = friendlyError(e, '创建暗线失败')
-    ui.showToast(friendlyError(e, '创建暗线失败'), 'error')
+    newHTError.value = friendlyError(e, `创建${hiddenThreadLabel.value}失败`)
+    ui.showToast(friendlyError(e, `创建${hiddenThreadLabel.value}失败`), 'error')
   }
 }
 
 async function deleteHiddenThreadConfirm(ht: HiddenThread) {
   try {
     await hiddenThreadStore.deleteHiddenThreadItem(projectId.value, ht.id)
-    ui.showToast('暗线已删除', 'success')
+    ui.showToast(`${hiddenThreadLabel.value}已删除`, 'success')
   } catch (e: unknown) {
-    ui.showToast(friendlyError(e, '删除暗线失败'), 'error')
+    ui.showToast(friendlyError(e, `删除${hiddenThreadLabel.value}失败`), 'error')
   }
 }
 
@@ -309,21 +494,22 @@ function openNewCharacterForm() {
 
 async function submitNewCharacter() {
   if (!newCharName.value.trim()) {
-    newCharError.value = '角色名称不能为空'
+    newCharError.value = `${characterLabel.value}名称不能为空`
     return
   }
   try {
     await characterStore.addCharacter(projectId.value, {
       name: newCharName.value.trim(),
       role_type: newCharRoleType.value,
-      profile: newCharProfile.value.trim() || undefined,
-      faction: newCharFaction.value.trim() || undefined,
+      profile: newCharProfile.value.trim(),
+      faction: newCharFaction.value.trim(),
     })
+    await characterStore.loadCharacters(projectId.value)
     showNewCharacter.value = false
-    ui.showToast('角色创建成功', 'success')
+    ui.showToast(`${characterLabel.value}创建成功`, 'success')
   } catch (e: unknown) {
-    newCharError.value = friendlyError(e, '创建角色失败')
-    ui.showToast(friendlyError(e, '创建角色失败'), 'error')
+    newCharError.value = friendlyError(e, `创建${characterLabel.value}失败`)
+    ui.showToast(friendlyError(e, `创建${characterLabel.value}失败`), 'error')
   }
 }
 
@@ -345,24 +531,26 @@ async function saveEditCharacter(char: Character) {
     await characterStore.updateCharacter(projectId.value, char.id, {
       name: editCharName.value.trim(),
       role_type: editCharRoleType.value,
-      profile: editCharProfile.value.trim() || undefined,
-      faction: editCharFaction.value.trim() || undefined,
+      profile: editCharProfile.value.trim(),
+      faction: editCharFaction.value.trim(),
     })
+    await characterStore.loadCharacters(projectId.value)
     editingCharId.value = null
-    ui.showToast('角色已更新', 'success')
+    ui.showToast(`${characterLabel.value}已更新`, 'success')
   } catch (e: unknown) {
-    ui.showToast(friendlyError(e, '更新角色失败'), 'error')
+    ui.showToast(friendlyError(e, `更新${characterLabel.value}失败`), 'error')
   }
 }
 
 async function deleteCharacterConfirm(char: Character) {
-  if (!window.confirm(`确定删除角色「${char.name}」？`)) return
-  try {
-    await characterStore.removeCharacter(projectId.value, char.id)
-    ui.showToast('角色已删除', 'success')
-  } catch (e: unknown) {
-    ui.showToast(friendlyError(e, '删除角色失败'), 'error')
-  }
+  showConfirm(`确定删除${characterLabel.value}「${char.name}」？`, async () => {
+    try {
+      await characterStore.removeCharacter(projectId.value, char.id)
+      ui.showToast(`${characterLabel.value}已删除`, 'success')
+    } catch (e: unknown) {
+      ui.showToast(friendlyError(e, `删除${characterLabel.value}失败`), 'error')
+    }
+  }, '删除', true)
 }
 
 // ─── WorldEntry CRUD ───
@@ -390,7 +578,7 @@ function openNewWorldEntryForm() {
 
 async function submitNewWorldEntry() {
   if (!newWETitle.value.trim()) {
-    newWEError.value = '设定标题不能为空'
+    newWEError.value = `${worldEntryLabel.value}标题不能为空`
     return
   }
   try {
@@ -401,10 +589,10 @@ async function submitNewWorldEntry() {
       confidence: newWEConfidence.value,
     })
     showNewWorldEntry.value = false
-    ui.showToast('世界观创建成功', 'success')
+    ui.showToast(`${worldLabel.value}创建成功`, 'success')
   } catch (e: unknown) {
-    newWEError.value = friendlyError(e, '创建世界观失败')
-    ui.showToast(friendlyError(e, '创建世界观失败'), 'error')
+    newWEError.value = friendlyError(e, `创建${worldLabel.value}失败`)
+    ui.showToast(friendlyError(e, `创建${worldLabel.value}失败`), 'error')
   }
 }
 
@@ -430,30 +618,35 @@ async function saveEditWorldEntry(entry: WorldEntry) {
       confidence: editWEConfidence.value,
     })
     editingWEId.value = null
-    ui.showToast('世界观已更新', 'success')
+    ui.showToast(`${worldLabel.value}已更新`, 'success')
   } catch (e: unknown) {
-    ui.showToast(friendlyError(e, '更新世界观失败'), 'error')
+    ui.showToast(friendlyError(e, `更新${worldLabel.value}失败`), 'error')
   }
 }
 
 async function deleteWorldEntryConfirm(entry: WorldEntry) {
-  if (!window.confirm(`确定删除设定「${entry.title}」？`)) return
-  try {
-    await worldEntryStore.removeWorldEntry(projectId.value, entry.id)
-    ui.showToast('世界观已删除', 'success')
-  } catch (e: unknown) {
-    ui.showToast(friendlyError(e, '删除世界观失败'), 'error')
-  }
+  showConfirm(`确定删除${worldEntryLabel.value}「${entry.title}」？`, async () => {
+    try {
+      await worldEntryStore.removeWorldEntry(projectId.value, entry.id)
+      ui.showToast(`${worldLabel.value}已删除`, 'success')
+    } catch (e: unknown) {
+      ui.showToast(friendlyError(e, `删除${worldLabel.value}失败`), 'error')
+    }
+  }, '删除', true)
 }
 </script>
 
 <template>
+  <div v-if="!currentProject" class="workspace-loading">
+    {{ projectsLoading ? '加载项目中...' : '项目不存在或无权访问' }}
+  </div>
+
   <!-- Desktop layout -->
-  <div v-if="!isMobile" class="workspace-wrapper">
+  <div v-else-if="!isMobile" class="workspace-wrapper">
     <!-- Top bar -->
     <header class="top-bar">
       <div class="top-left">
-        <router-link to="/projects" class="top-link">切换小说</router-link>
+        <a class="top-link" @click.prevent="handleSwitchProject">{{ switchProjectLabel }}</a>
         <span class="top-sep">|</span>
         <span class="top-project-name">{{ currentProject?.title ?? '项目' }}</span>
         <span class="mode-badge" :class="projectMode">{{ projectMode === 'novel' ? '小说' : '文章' }}</span>
@@ -478,66 +671,75 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
         </button>
         <div class="sidebar-inner">
         <nav class="sidebar-tabs">
-          <button :class="{ active: activeTab === 'chapters' }" @click="activeTab = 'chapters'">章节</button>
-          <button :class="{ active: activeTab === 'outline' }" @click="activeTab = 'outline'">大纲</button>
-          <button :class="{ active: activeTab === 'characters' }" @click="activeTab = 'characters'">角色</button>
-          <button :class="{ active: activeTab === 'world' }" @click="activeTab = 'world'">世界观</button>
+          <button :class="{ active: activeTab === 'units' }" @click="activeTab = 'units'">{{ unitLabel }}</button>
+          <button :class="{ active: activeTab === 'outline' }" @click="activeTab = 'outline'">{{ outlineLabel }}</button>
+          <button :class="{ active: activeTab === 'characters' }" @click="activeTab = 'characters'">{{ characterLabel }}</button>
+          <button :class="{ active: activeTab === 'world' }" @click="activeTab = 'world'">{{ worldLabel }}</button>
         </nav>
 
         <div class="sidebar-content">
-          <!-- Chapters -->
-          <div v-if="activeTab === 'chapters'" class="tab-pane">
-            <button class="btn-add-chapter" @click="openNewChapterForm">+ 新增章节</button>
-            <div v-if="showNewChapter" class="new-chapter-form">
+          <!-- Writing units -->
+          <div v-if="activeTab === 'units'" class="tab-pane">
+            <button class="btn-add-unit" @click="openNewUnitForm">+ 新增{{ unitLabel }}</button>
+            <div v-if="showNewUnit" class="unit-form">
               <div class="form-row">
-                <label>章节标题 <span class="required">*</span></label>
-                <input v-model="newTitle" type="text" placeholder="输入章节标题" class="form-input" />
+                <label>{{ unitLabel }}标题 <span class="required">*</span></label>
+                <input v-model="newTitle" type="text" :placeholder="`输入${unitLabel}标题`" class="form-input" />
               </div>
               <div class="form-row">
-                <label>章节序号</label>
-                <input v-model.number="newChapterNum" type="number" min="1" class="form-input form-input-sm" />
+                <label>{{ unitSequenceLabel }}</label>
+                <input v-model.number="newUnitNum" type="number" min="1" class="form-input form-input-sm" />
               </div>
               <div class="form-row">
-                <label>章节大纲/摘要</label>
+                <label>{{ unitSummaryLabel }}</label>
                 <textarea v-model="newSummary" placeholder="可选" class="form-textarea" rows="2"></textarea>
               </div>
-              <div v-if="newChapterError" class="form-error">{{ newChapterError }}</div>
+              <div v-if="newUnitError" class="form-error">{{ newUnitError }}</div>
               <div class="form-actions">
-                <button class="btn-submit" @click="submitNewChapter">确定</button>
-                <button class="btn-cancel" @click="showNewChapter = false">取消</button>
+                <button class="btn-submit" @click="submitNewUnit">确定</button>
+                <button class="btn-cancel" @click="showNewUnit = false">取消</button>
               </div>
             </div>
             <div
-              v-for="ch in chapters"
+              v-for="ch in writingUnits"
               :key="ch.id"
-              class="chapter-item"
-              :class="{ active: ch.chapter_num === chapterStore.currentChapterNum }"
-              @click="selectChapter(ch.chapter_num)"
+              class="unit-item"
+              :class="{ active: unitPosition(ch) === currentUnitNum }"
+              @click="selectWritingUnit(unitPosition(ch))"
+              @contextmenu.prevent="openUnitMenu($event, ch)"
             >
-              <span class="ch-num">{{ ch.chapter_num }}</span>
-              <span class="ch-title">{{ ch.title }}</span>
-              <span class="ch-status" :class="ch.status">{{ ch.status === 'final' ? '终稿' : ch.status === 'reviewing' ? '审核' : ch.status === 'revision' ? '修订' : '草稿' }}</span>
+              <template v-if="editingUnitId === ch.id">
+                <span class="unit-num">{{ unitPosition(ch) }}</span>
+                <input v-model="editUnitTitle" type="text" class="form-input unit-edit-input" @click.stop @keyup.enter="saveEditUnit(ch)" @keyup.escape="cancelEditUnit" />
+                <button class="icon-btn" title="保存" @click.stop="saveEditUnit(ch)">&#10003;</button>
+                <button class="icon-btn icon-btn-danger" title="取消" @click.stop="cancelEditUnit">&#10005;</button>
+              </template>
+              <template v-else>
+                <span class="unit-num">{{ unitPosition(ch) }}</span>
+                <span class="unit-title">{{ ch.title }}</span>
+                <span class="unit-status" :class="ch.status">{{ ch.status === 'final' ? '终稿' : ch.status === 'reviewing' ? '审核' : ch.status === 'revision' ? '修订' : '草稿' }}</span>
+              </template>
             </div>
           </div>
 
           <!-- Outline -->
           <div v-if="activeTab === 'outline'" class="tab-pane">
-            <button class="btn-add-chapter" @click="openNewOutlineForm">+ 添加章节大纲</button>
-            <div v-if="showNewOutline" class="new-chapter-form">
+            <button class="btn-add-unit" @click="openNewOutlineForm">+ {{ outlineAddLabel }}</button>
+            <div v-if="showNewOutline" class="unit-form">
               <div class="form-row">
-                <label>大纲标题 <span class="required">*</span></label>
-                <input v-model="newOutlineTitle" type="text" placeholder="输入大纲标题" class="form-input" />
+                <label>{{ outlineTitleLabel }} <span class="required">*</span></label>
+                <input v-model="newOutlineTitle" type="text" :placeholder="`输入${outlineTitleLabel}`" class="form-input" />
               </div>
               <div class="form-row">
-                <label>章节序号</label>
+                <label>{{ unitLabel }}序号</label>
                 <input v-model.number="newOutlineSeq" type="number" min="1" class="form-input form-input-sm" />
               </div>
               <div class="form-row">
-                <label>摘要</label>
+                <label>{{ projectMode === 'article' ? '内容摘要' : '摘要' }}</label>
                 <textarea v-model="newOutlineSummary" placeholder="可选" class="form-textarea" rows="2"></textarea>
               </div>
               <div class="form-row">
-                <label>转折点</label>
+                <label>{{ turningPointLabel }}</label>
                 <input v-model="newOutlineTurningPoint" type="text" placeholder="可选" class="form-input" />
               </div>
               <div v-if="newOutlineError" class="form-error">{{ newOutlineError }}</div>
@@ -548,17 +750,17 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
             </div>
             <div v-for="item in outline" :key="item.chapter_num" class="outline-item">
               <template v-if="editingOutlineId === item.id">
-                <div class="new-chapter-form" style="margin: 0;">
+                <div class="unit-form" style="margin: 0;">
                   <div class="form-row">
                     <label>标题 <span class="required">*</span></label>
                     <input v-model="editOutlineTitle" type="text" class="form-input" />
                   </div>
                   <div class="form-row">
-                    <label>摘要</label>
+                    <label>{{ projectMode === 'article' ? '内容摘要' : '摘要' }}</label>
                     <textarea v-model="editOutlineSummary" class="form-textarea" rows="2"></textarea>
                   </div>
                   <div class="form-row">
-                    <label>转折点</label>
+                    <label>{{ turningPointLabel }}</label>
                     <input v-model="editOutlineTurningPoint" type="text" class="form-input" />
                   </div>
                   <div class="form-actions">
@@ -591,13 +793,13 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
             <!-- Hidden threads sub-section within outline tab -->
             <div class="hidden-thread-section">
               <div class="section-header">
-                <span class="section-title">暗线</span>
-                <button class="btn-add-inline" @click="openNewHiddenThreadForm">+ 添加暗线</button>
+                <span class="section-title">{{ hiddenThreadLabel }}</span>
+                <button class="btn-add-inline" @click="openNewHiddenThreadForm">+ 添加{{ hiddenThreadLabel }}</button>
               </div>
-              <div v-if="showNewHiddenThread" class="new-chapter-form">
+              <div v-if="showNewHiddenThread" class="unit-form">
                 <div class="form-row">
-                  <label>暗线名称 <span class="required">*</span></label>
-                  <input v-model="newHTName" type="text" placeholder="输入暗线名称" class="form-input" />
+                  <label>{{ hiddenThreadLabel }}名称 <span class="required">*</span></label>
+                  <input v-model="newHTName" type="text" :placeholder="`输入${hiddenThreadLabel}名称`" class="form-input" />
                 </div>
                 <div class="form-row">
                   <label>描述</label>
@@ -616,34 +818,34 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 </div>
                 <p v-if="ht.description" class="ht-desc">{{ ht.description }}</p>
               </div>
-              <div v-if="!hiddenThreads.length && !showNewHiddenThread" class="empty-hint" style="padding: var(--sp-4) 0;">暂无暗线</div>
+              <div v-if="!hiddenThreads.length && !showNewHiddenThread" class="empty-hint" style="padding: var(--sp-4) 0;">暂无{{ hiddenThreadLabel }}</div>
             </div>
           </div>
 
           <!-- Characters -->
           <div v-if="activeTab === 'characters'" class="tab-pane">
-            <button class="btn-add-chapter" @click="openNewCharacterForm">+ 新增角色</button>
-            <div v-if="showNewCharacter" class="new-chapter-form" style="margin: 0;">
+            <button class="btn-add-unit" @click="openNewCharacterForm">+ 新增{{ characterLabel }}</button>
+            <div v-if="showNewCharacter" class="unit-form" style="margin: 0;">
               <div class="form-row">
-                <label>角色名称 <span class="required">*</span></label>
-                <input v-model="newCharName" type="text" placeholder="输入角色名称" class="form-input" />
+                <label>{{ characterLabel }}名称 <span class="required">*</span></label>
+                <input v-model="newCharName" type="text" :placeholder="`输入${characterLabel}名称`" class="form-input" />
               </div>
               <div class="form-row">
-                <label>角色类型</label>
+                <label>{{ characterLabel }}类型</label>
                 <select v-model="newCharRoleType" class="form-input">
-                  <option value="protagonist">主角</option>
-                  <option value="antagonist">反派</option>
-                  <option value="supporting">配角</option>
-                  <option value="minor">路人</option>
+                  <option value="protagonist">{{ projectMode === 'article' ? '核心受众' : '主角' }}</option>
+                  <option value="antagonist">{{ projectMode === 'article' ? '反对人群' : '反派' }}</option>
+                  <option value="supporting">{{ projectMode === 'article' ? '影响者' : '配角' }}</option>
+                  <option value="minor">{{ projectMode === 'article' ? '泛受众' : '路人' }}</option>
                 </select>
               </div>
               <div class="form-row">
-                <label>阵营</label>
+                <label>{{ projectMode === 'article' ? '细分人群' : '阵营' }}</label>
                 <input v-model="newCharFaction" type="text" placeholder="可选" class="form-input" />
               </div>
               <div class="form-row">
                 <label>简介</label>
-                <textarea v-model="newCharProfile" class="form-textarea" rows="3" placeholder="角色描述"></textarea>
+                <textarea v-model="newCharProfile" class="form-textarea" rows="3" :placeholder="projectMode === 'article' ? '受众痛点、需求、决策顾虑' : '角色描述'"></textarea>
               </div>
               <div v-if="newCharError" class="form-error">{{ newCharError }}</div>
               <div class="form-actions">
@@ -653,22 +855,22 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
             </div>
             <div v-for="char in characters" :key="char.id" class="character-card">
               <template v-if="editingCharId === char.id">
-                <div class="new-chapter-form" style="margin: 0;">
+                <div class="unit-form" style="margin: 0;">
                   <div class="form-row">
-                    <label>角色名称 <span class="required">*</span></label>
+                    <label>{{ characterLabel }}名称 <span class="required">*</span></label>
                     <input v-model="editCharName" type="text" class="form-input" />
                   </div>
                   <div class="form-row">
-                    <label>角色类型</label>
+                    <label>{{ characterLabel }}类型</label>
                     <select v-model="editCharRoleType" class="form-input">
-                      <option value="protagonist">主角</option>
-                      <option value="antagonist">反派</option>
-                      <option value="supporting">配角</option>
-                      <option value="minor">路人</option>
+                      <option value="protagonist">{{ projectMode === 'article' ? '核心受众' : '主角' }}</option>
+                      <option value="antagonist">{{ projectMode === 'article' ? '反对人群' : '反派' }}</option>
+                      <option value="supporting">{{ projectMode === 'article' ? '影响者' : '配角' }}</option>
+                      <option value="minor">{{ projectMode === 'article' ? '泛受众' : '路人' }}</option>
                     </select>
                   </div>
                   <div class="form-row">
-                    <label>阵营</label>
+                    <label>{{ projectMode === 'article' ? '细分人群' : '阵营' }}</label>
                     <input v-model="editCharFaction" type="text" class="form-input" />
                   </div>
                   <div class="form-row">
@@ -684,35 +886,35 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
               <template v-else>
                 <div class="char-name">
                   {{ char.name }}
-                  <span class="char-role-type" :class="char.role_type">{{ { protagonist: '主角', antagonist: '反派', supporting: '配角', minor: '路人' }[char.role_type] }}</span>
+                  <span class="char-role-type" :class="char.role_type">{{ projectMode === 'article' ? { protagonist: '核心受众', antagonist: '反对人群', supporting: '影响者', minor: '泛受众' }[char.role_type] : { protagonist: '主角', antagonist: '反派', supporting: '配角', minor: '路人' }[char.role_type] }}</span>
                   <span class="outline-actions">
                     <button class="icon-btn" title="编辑" @click.stop="startEditCharacter(char)">&#9998;</button>
                     <button class="icon-btn icon-btn-danger" title="删除" @click.stop="deleteCharacterConfirm(char)">&#10005;</button>
                   </span>
                 </div>
-                <p v-if="char.faction" class="char-faction">阵营: {{ char.faction }}</p>
+                <p v-if="char.faction" class="char-faction">{{ projectMode === 'article' ? '细分人群' : '阵营' }}: {{ char.faction }}</p>
                 <p class="char-profile">{{ char.profile }}</p>
-                <div v-if="char.appearance_count" class="char-appearance">出场次数: {{ char.appearance_count }}</div>
+                <div v-if="projectMode === 'novel' && char.appearance_count" class="char-appearance">出场次数: {{ char.appearance_count }}</div>
               </template>
             </div>
-            <div v-if="!characters.length && !showNewCharacter" class="empty-hint">暂无角色</div>
+            <div v-if="!characters.length && !showNewCharacter" class="empty-hint">暂无{{ characterLabel }}</div>
           </div>
 
           <!-- World -->
           <div v-if="activeTab === 'world'" class="tab-pane">
-            <button class="btn-add-chapter" @click="openNewWorldEntryForm">+ 新增设定</button>
-            <div v-if="showNewWorldEntry" class="new-chapter-form" style="margin: 0;">
+            <button class="btn-add-unit" @click="openNewWorldEntryForm">+ 新增{{ worldEntryLabel }}</button>
+            <div v-if="showNewWorldEntry" class="unit-form" style="margin: 0;">
               <div class="form-row">
-                <label>设定标题 <span class="required">*</span></label>
-                <input v-model="newWETitle" type="text" placeholder="输入设定标题" class="form-input" />
+                <label>{{ worldEntryLabel }}标题 <span class="required">*</span></label>
+                <input v-model="newWETitle" type="text" :placeholder="`输入${worldEntryLabel}标题`" class="form-input" />
               </div>
               <div class="form-row">
                 <label>分类</label>
-                <input v-model="newWECategory" type="text" placeholder="可选，如：地理、历史、魔法" class="form-input" />
+                <input v-model="newWECategory" type="text" :placeholder="projectMode === 'article' ? '可选，如：品牌、产品、案例、数据' : '可选，如：地理、历史、魔法'" class="form-input" />
               </div>
               <div class="form-row">
                 <label>内容</label>
-                <textarea v-model="newWEContent" class="form-textarea" rows="3" placeholder="世界观设定内容"></textarea>
+                <textarea v-model="newWEContent" class="form-textarea" rows="3" :placeholder="projectMode === 'article' ? '品牌/产品资料、案例、数据或参考材料' : '世界观设定内容'"></textarea>
               </div>
               <div class="form-row">
                 <label>可信度</label>
@@ -730,9 +932,9 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
             </div>
             <div v-for="entry in worldEntries" :key="entry.id" class="world-block">
               <template v-if="editingWEId === entry.id">
-                <div class="new-chapter-form" style="margin: 0;">
+                <div class="unit-form" style="margin: 0;">
                   <div class="form-row">
-                    <label>设定标题 <span class="required">*</span></label>
+                    <label>{{ worldEntryLabel }}标题 <span class="required">*</span></label>
                     <input v-model="editWETitle" type="text" class="form-input" />
                   </div>
                   <div class="form-row">
@@ -770,7 +972,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 <p class="world-text">{{ entry.content }}</p>
               </template>
             </div>
-            <div v-if="!worldEntries.length && !showNewWorldEntry" class="empty-hint">暂无世界观设定</div>
+            <div v-if="!worldEntries.length && !showNewWorldEntry" class="empty-hint">暂无{{ worldLabel }}</div>
           </div>
         </div>
         </div>
@@ -778,8 +980,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 
       <!-- Center: editor -->
       <main class="editor-area">
-        <NovelEditor v-if="currentChapter" :project-id="projectId" :mode="projectMode" />
-        <div v-else class="empty-hint" style="padding-top: 120px;">选择一个章节开始写作</div>
+        <WritingEditor v-if="currentWritingUnit" :project-id="projectId" :mode="projectMode" />
+        <div v-else class="empty-hint" style="padding-top: 120px;">选择一个{{ unitLabel }}开始写作</div>
       </main>
 
       <!-- Right: agent panel (always in DOM for grid integrity) -->
@@ -788,7 +990,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
           {{ agentOpen ? '›' : '‹' }}
         </button>
         <div class="agent-content">
-          <AgentPanel :project-id="projectId" />
+          <AgentPanel ref="agentPanelRef" :project-id="projectId" :mode="projectMode" />
         </div>
       </aside>
     </div>
@@ -798,7 +1000,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   <div v-else class="workspace-mobile">
     <!-- Mobile top bar -->
     <header class="mobile-top-bar">
-      <router-link to="/projects" class="top-link">切换小说</router-link>
+      <a class="top-link" @click.prevent="handleSwitchProject">{{ switchProjectLabel }}</a>
       <span class="mode-badge" :class="projectMode">{{ projectMode === 'novel' ? '小说' : '文章' }}</span>
       <div class="export-group">
         <button class="top-btn" @click="showExportMenu = !showExportMenu">导出</button>
@@ -811,56 +1013,83 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
     </header>
 
     <nav class="mobile-nav">
-      <button :class="{ active: mobilePanel === 'chapters' }" @click="mobilePanel = 'chapters'">章节</button>
-      <button :class="{ active: mobilePanel === 'characters' }" @click="mobilePanel = 'characters'">角色</button>
-      <button :class="{ active: mobilePanel === 'world' }" @click="mobilePanel = 'world'">世界观</button>
+      <button :class="{ active: mobilePanel === 'units' }" @click="mobilePanel = 'units'">{{ unitLabel }}</button>
+      <button :class="{ active: mobilePanel === 'characters' }" @click="mobilePanel = 'characters'">{{ characterLabel }}</button>
+      <button :class="{ active: mobilePanel === 'world' }" @click="mobilePanel = 'world'">{{ worldLabel }}</button>
       <button :class="{ active: mobilePanel === 'editor' }" @click="mobilePanel = 'editor'">编辑</button>
       <button :class="{ active: mobilePanel === 'agent' }" @click="mobilePanel = 'agent'">Agent</button>
     </nav>
 
-    <div v-if="mobilePanel === 'chapters'" class="mobile-pane">
-      <button class="btn-add-chapter" @click="openNewChapterForm">+ 新增章节</button>
-      <div v-if="showNewChapter" class="new-chapter-form">
+    <div v-if="mobilePanel === 'units'" class="mobile-pane">
+      <button class="btn-add-unit" @click="openNewUnitForm">+ 新增{{ unitLabel }}</button>
+      <div v-if="showNewUnit" class="unit-form">
         <div class="form-row">
-          <label>章节标题 <span class="required">*</span></label>
-          <input v-model="newTitle" type="text" placeholder="输入章节标题" class="form-input" />
+          <label>{{ unitLabel }}标题 <span class="required">*</span></label>
+          <input v-model="newTitle" type="text" :placeholder="`输入${unitLabel}标题`" class="form-input" />
         </div>
         <div class="form-row">
-          <label>章节序号</label>
-          <input v-model.number="newChapterNum" type="number" min="1" class="form-input form-input-sm" />
+          <label>{{ unitSequenceLabel }}</label>
+          <input v-model.number="newUnitNum" type="number" min="1" class="form-input form-input-sm" />
         </div>
         <div class="form-row">
-          <label>章节大纲/摘要</label>
+          <label>{{ unitSummaryLabel }}</label>
           <textarea v-model="newSummary" placeholder="可选" class="form-textarea" rows="2"></textarea>
         </div>
-        <div v-if="newChapterError" class="form-error">{{ newChapterError }}</div>
+        <div v-if="newUnitError" class="form-error">{{ newUnitError }}</div>
         <div class="form-actions">
-          <button class="btn-submit" @click="submitNewChapter">确定</button>
-          <button class="btn-cancel" @click="showNewChapter = false">取消</button>
+          <button class="btn-submit" @click="submitNewUnit">确定</button>
+          <button class="btn-cancel" @click="showNewUnit = false">取消</button>
         </div>
       </div>
       <div
-        v-for="ch in chapters"
+        v-for="ch in writingUnits"
         :key="ch.id"
-        class="chapter-item"
-        :class="{ active: ch.chapter_num === chapterStore.currentChapterNum }"
-        @click="selectChapter(ch.chapter_num)"
+        class="unit-item"
+        :class="{ active: unitPosition(ch) === currentUnitNum }"
+        @click="selectWritingUnit(unitPosition(ch))"
+        @contextmenu.prevent="openUnitMenu($event, ch)"
       >
-        <span class="ch-num">{{ ch.chapter_num }}</span>
-        <span class="ch-title">{{ ch.title }}</span>
-        <span class="ch-status" :class="ch.status">{{ ch.status === 'final' ? '终稿' : '草稿' }}</span>
+        <template v-if="editingUnitId === ch.id">
+          <span class="unit-num">{{ unitPosition(ch) }}</span>
+          <input v-model="editUnitTitle" type="text" class="form-input unit-edit-input" @click.stop @keyup.enter="saveEditUnit(ch)" @keyup.escape="cancelEditUnit" />
+          <button class="icon-btn" title="保存" @click.stop="saveEditUnit(ch)">&#10003;</button>
+          <button class="icon-btn icon-btn-danger" title="取消" @click.stop="cancelEditUnit">&#10005;</button>
+        </template>
+        <template v-else>
+          <span class="unit-num">{{ unitPosition(ch) }}</span>
+          <span class="unit-title">{{ ch.title }}</span>
+          <span class="unit-status" :class="ch.status">{{ ch.status === 'final' ? '终稿' : '草稿' }}</span>
+        </template>
       </div>
     </div>
 
     <div v-if="mobilePanel === 'editor'" class="mobile-pane mobile-editor">
-      <NovelEditor v-if="currentChapter" :project-id="projectId" :mode="projectMode" />
-      <div v-else class="empty-hint">选择一个章节开始写作</div>
+      <WritingEditor v-if="currentWritingUnit" :project-id="projectId" :mode="projectMode" />
+      <div v-else class="empty-hint">选择一个{{ unitLabel }}开始写作</div>
     </div>
 
     <div v-if="mobilePanel === 'agent'" class="mobile-pane">
-      <AgentPanel :project-id="projectId" />
+      <AgentPanel ref="agentPanelRef" :project-id="projectId" :mode="projectMode" />
     </div>
   </div>
+
+  <!-- Writing unit context menu -->
+  <Teleport to="body">
+    <div v-if="unitMenu" class="ctx-overlay" @click="closeUnitMenu" @contextmenu.prevent="closeUnitMenu"></div>
+    <div v-if="unitMenu" class="ctx-menu" :style="{ left: unitMenu.x + 'px', top: unitMenu.y + 'px' }">
+      <button class="ctx-item" @click="menuEditUnit">&#9998; 编辑标题</button>
+      <button class="ctx-item ctx-item-danger" @click="menuDeleteUnit">&#10005; 删除{{ unitLabel }}</button>
+    </div>
+  </Teleport>
+
+  <ConfirmModal
+    v-if="confirmState"
+    :message="confirmState.message"
+    :confirm-text="confirmState.confirmText"
+    :danger="confirmState.danger"
+    @confirm="handleConfirmOk"
+    @cancel="handleConfirmCancel"
+  />
 </template>
 
 <style scoped>
@@ -952,6 +1181,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   background: var(--bg);
 }
 .workspace {
@@ -1056,8 +1286,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 }
 .tab-pane { display: flex; flex-direction: column; gap: var(--sp-1); }
 
-/* Chapter items */
-.chapter-item {
+/* Writing unit items */
+.unit-item {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -1067,32 +1297,38 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   font-size: var(--text-sm);
   transition: background var(--transition);
 }
-.chapter-item:hover { background: var(--bg-hover); }
-.chapter-item.active {
+.unit-item:hover { background: var(--bg-hover); }
+.unit-item.active {
   background: var(--accent-subtle);
   color: var(--accent);
   font-weight: 600;
 }
-.ch-num {
+.unit-num {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
   min-width: 18px;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
-.chapter-item.active .ch-num { color: var(--accent); }
-.ch-title { flex: 1; }
-.ch-status {
+.unit-item.active .unit-num { color: var(--accent); }
+.unit-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.unit-edit-input {
+  flex: 1;
+  padding: 2px 6px;
+  font-size: var(--text-sm);
+  height: 26px;
+}
+.unit-status {
   font-size: 10px;
   font-weight: 500;
   padding: 1px 6px;
   border-radius: 8px;
   white-space: nowrap;
 }
-.ch-status.draft { background: var(--status-draft-bg); color: var(--status-draft); }
-.ch-status.reviewing { background: var(--status-reviewing-bg); color: var(--status-reviewing); }
-.ch-status.revision { background: var(--status-revision-bg); color: var(--status-revision); }
-.ch-status.final { background: var(--status-final-bg); color: var(--status-final); }
+.unit-status.draft { background: var(--status-draft-bg); color: var(--status-draft); }
+.unit-status.reviewing { background: var(--status-reviewing-bg); color: var(--status-reviewing); }
+.unit-status.revision { background: var(--status-revision-bg); color: var(--status-revision); }
+.unit-status.final { background: var(--status-final-bg); color: var(--status-final); }
 
 /* Outline */
 .outline-item {
@@ -1228,8 +1464,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   padding: var(--sp-8) var(--sp-4);
 }
 
-/* New chapter form */
-.btn-add-chapter {
+/* Reusable sidebar form */
+.btn-add-unit {
   width: 100%;
   padding: var(--sp-2) var(--sp-3);
   background: none;
@@ -1240,11 +1476,11 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   cursor: pointer;
   transition: border-color var(--transition), color var(--transition);
 }
-.btn-add-chapter:hover {
+.btn-add-unit:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
-.new-chapter-form {
+.unit-form {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1314,9 +1550,12 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 
 /* Editor area */
 .editor-area {
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--bg-panel);
   min-width: 0;
+  min-height: 0;
 }
 
 /* Agent area */
@@ -1351,6 +1590,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   background: var(--bg);
 }
 .mobile-nav {
@@ -1378,9 +1618,13 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   flex: 1;
   overflow-y: auto;
   padding: var(--sp-3);
+  min-height: 0;
 }
 .mobile-editor {
+  display: flex;
+  flex-direction: column;
   padding: 0;
+  overflow: hidden;
 }
 
 /* Outline actions (edit/delete icons) */
@@ -1470,4 +1714,38 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   margin: var(--sp-1) 0 0;
   line-height: 1.5;
 }
+
+/* Context menu */
+.ctx-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+}
+.ctx-menu {
+  position: fixed;
+  z-index: 2001;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: var(--sp-1) 0;
+  min-width: 140px;
+}
+.ctx-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border: none;
+  background: none;
+  font-size: var(--text-sm);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition);
+}
+.ctx-item:hover { background: var(--bg-hover); }
+.ctx-item-danger { color: var(--status-error); }
+.ctx-item-danger:hover { background: var(--sev-critical-bg); }
 </style>

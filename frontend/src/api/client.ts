@@ -1,19 +1,24 @@
 import {
   API_BASE_URL,
-  type ApiProject, type ApiChapter, type ApiExpert, type ApiWorldEntry, type ApiCharacter,
+  type ApiProject, type ApiChapter, type ApiDocument, type ApiDocumentVersion, type ApiExpert, type ApiWorldEntry, type ApiCharacter,
   type ApiCharacterRelation, type ApiOutline, type ApiHiddenThread,
-  type ProjectCreatePayload, type ChapterCreatePayload, type ExpertCreatePayload,
+  type ProjectCreatePayload, type ChapterCreatePayload, type DocumentCreatePayload, type DocumentUpdatePayload, type ExpertCreatePayload,
   type WorldEntryCreatePayload, type WorldEntryUpdatePayload,
   type CharacterCreatePayload, type CharacterUpdatePayload,
   type CharacterRelationCreatePayload, type CharacterRelationUpdatePayload,
   type OutlineCreatePayload, type OutlineUpdatePayload,
   type HiddenThreadCreatePayload, type HiddenThreadUpdatePayload,
   type GenerateRequest, type SSEEnvelope,
-  type ExpertUpdatePayload,
+  type ExpertUpdatePayload, type ProjectMode,
   type LLMConfigCreatePayload, type ModelListRequest,
   type LLMConfigResponse, type LLMStatusResponse, type ModelInfo,
   type LoginRequest, type LoginResponse, type MeResponse,
   type RegisterRequest, type RegisterResponse,
+  type ProjectImageUploadResponse,
+  type ApiChapterVersion, type ChapterVersionDiffRequest, type ChapterVersionDiffResponse,
+  type DocumentVersionDiffRequest, type DocumentVersionDiffResponse,
+  type ApiGenerationRecordListItem, type ApiGenerationRecord,
+  type GenerationRecordUpdatePayload, type GenerationRecordDiffRequest, type GenerationRecordDiffResponse,
 } from './types'
 
 function getToken(): string | null {
@@ -22,6 +27,13 @@ function getToken(): string | null {
 
 function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const token = getToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  return headers
+}
+
+function binaryAuthHeaders(contentType: string): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': contentType }
   const token = getToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
   return headers
@@ -156,13 +168,41 @@ export const api = {
   getProject: (id: string) => request<ApiProject>(`/projects/${id}`),
   createProject: (data: ProjectCreatePayload) =>
     request<ApiProject>('/projects', { method: 'POST', body: JSON.stringify(data) }),
+  uploadProjectImage: async (projectId: string, file: File) => {
+    const res = await fetch(`${API_BASE_URL}/projects/${projectId}/assets/images`, {
+      method: 'POST',
+      headers: binaryAuthHeaders(file.type || 'application/octet-stream'),
+      body: file,
+    })
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      if (res.status === 401) {
+        localStorage.removeItem('ai_write_token')
+        localStorage.removeItem('ai_write_logged_in')
+        window.location.href = '/login'
+      }
+      throw new ApiError(res.status, parseApiError(res.status, body))
+    }
+    return res.json() as Promise<ProjectImageUploadResponse>
+  },
 
   // ─── Chapters ───
   listChapters: (projectId: string) => request<ApiChapter[]>(`/projects/${projectId}/chapters`),
   createChapter: (projectId: string, data: ChapterCreatePayload) =>
     request<ApiChapter>(`/projects/${projectId}/chapters`, { method: 'POST', body: JSON.stringify(data) }),
-  updateChapter: (projectId: string, sequenceNumber: number, data: { content?: string; outline?: string; status?: string }) =>
+  updateChapter: (projectId: string, sequenceNumber: number, data: { title?: string; content?: string; outline?: string; status?: string }) =>
     request<ApiChapter>(`/projects/${projectId}/chapters/${sequenceNumber}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteChapter: (projectId: string, sequenceNumber: number) =>
+    request<{ ok: boolean }>(`/projects/${projectId}/chapters/${sequenceNumber}`, { method: 'DELETE' }),
+
+  // ─── Documents ───
+  listDocuments: (projectId: string) => request<ApiDocument[]>(`/projects/${projectId}/documents`),
+  createDocument: (projectId: string, data: DocumentCreatePayload) =>
+    request<ApiDocument>(`/projects/${projectId}/documents`, { method: 'POST', body: JSON.stringify(data) }),
+  updateDocument: (projectId: string, documentId: string, data: DocumentUpdatePayload) =>
+    request<ApiDocument>(`/projects/${projectId}/documents/${documentId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteDocument: (projectId: string, documentId: string) =>
+    request<{ ok: boolean }>(`/projects/${projectId}/documents/${documentId}`, { method: 'DELETE' }),
 
   // ─── Experts ───
   listExperts: (projectId: string) => request<ApiExpert[]>(`/projects/${projectId}/experts`),
@@ -217,6 +257,32 @@ export const api = {
     request<void>(`/projects/${projectId}/hidden-threads/${threadId}`, { method: 'DELETE' }),
 
   // ─── SSE ───
+  resumeGeneration: (
+    projectId: string,
+    threadId: string,
+    action: 'approve' | 'reject' | 'review' | 'revise',
+    onEvent: (envelope: SSEEnvelope) => void,
+    feedback?: string,
+    signal?: AbortSignal,
+    mode: ProjectMode = 'novel',
+  ) => {
+    const params = new URLSearchParams({ thread_id: threadId, action })
+    if (feedback) params.set('feedback', feedback)
+    const unitPath = mode === 'article' ? 'documents' : 'chapters'
+    const url = `${API_BASE_URL}/projects/${projectId}/${unitPath}/resume?${params.toString()}`
+    return fetch(url, {
+      method: 'POST',
+      headers: sseHeaders(),
+      signal,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new ApiError(res.status, parseApiError(res.status, text))
+      }
+      return parseSSEStream(res.body!.getReader(), onEvent)
+    })
+  },
+
   testExpertStream: (
     projectId: string,
     expertId: string,
@@ -244,8 +310,10 @@ export const api = {
     params: GenerateRequest,
     onEvent: (envelope: SSEEnvelope) => void,
     signal?: AbortSignal,
+    mode: ProjectMode = 'novel',
   ) => {
-    const url = `${API_BASE_URL}/projects/${projectId}/chapters/generate`
+    const unitPath = mode === 'article' ? 'documents' : 'chapters'
+    const url = `${API_BASE_URL}/projects/${projectId}/${unitPath}/generate`
     return fetch(url, {
       method: 'POST',
       headers: sseHeaders(),
@@ -259,6 +327,36 @@ export const api = {
       return parseSSEStream(res.body!.getReader(), onEvent)
     })
   },
+
+  // ─── Chapter Versions ───
+  listChapterVersions: (projectId: string, sequenceNumber: number) =>
+    request<ApiChapterVersion[]>(`/projects/${projectId}/chapters/${sequenceNumber}/versions`),
+  getChapterVersion: (projectId: string, sequenceNumber: number, versionId: string) =>
+    request<ApiChapterVersion>(`/projects/${projectId}/chapters/${sequenceNumber}/versions/${versionId}`),
+  diffChapterVersions: (projectId: string, sequenceNumber: number, data: ChapterVersionDiffRequest) =>
+    request<ChapterVersionDiffResponse>(`/projects/${projectId}/chapters/${sequenceNumber}/versions/diff`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // ─── Document Versions ───
+  listDocumentVersions: (projectId: string, documentId: string) =>
+    request<ApiDocumentVersion[]>(`/projects/${projectId}/documents/${documentId}/versions`),
+  getDocumentVersion: (projectId: string, documentId: string, versionId: string) =>
+    request<ApiDocumentVersion>(`/projects/${projectId}/documents/${documentId}/versions/${versionId}`),
+  restoreDocumentVersion: (projectId: string, documentId: string, versionId: string) =>
+    request<ApiDocument>(`/projects/${projectId}/documents/${documentId}/versions/${versionId}/restore`, { method: 'POST' }),
+  diffDocumentVersions: (projectId: string, documentId: string, data: DocumentVersionDiffRequest) =>
+    request<DocumentVersionDiffResponse>(`/projects/${projectId}/documents/${documentId}/versions/diff`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // ─── AI Generation History ───
+  listChapterGenerations: (projectId: string, sequenceNumber: number) =>
+    request<ApiGenerationRecordListItem[]>(`/projects/${projectId}/chapters/${sequenceNumber}/generations`),
+  listDocumentGenerations: (projectId: string, documentId: string) =>
+    request<ApiGenerationRecordListItem[]>(`/projects/${projectId}/documents/${documentId}/generations`),
+  getGenerationRecord: (projectId: string, generationId: string) =>
+    request<ApiGenerationRecord>(`/projects/${projectId}/generations/${generationId}`),
+  updateGenerationRecord: (projectId: string, generationId: string, data: GenerationRecordUpdatePayload) =>
+    request<ApiGenerationRecord>(`/projects/${projectId}/generations/${generationId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  diffGenerationRecord: (projectId: string, generationId: string, data: GenerationRecordDiffRequest) =>
+    request<GenerationRecordDiffResponse>(`/projects/${projectId}/generations/${generationId}/diff`, { method: 'POST', body: JSON.stringify(data) }),
 
   // ─── LLM Settings ───
   getLLMConfig: () => request<LLMConfigResponse>('/llm-settings'),

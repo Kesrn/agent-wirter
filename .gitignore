@@ -26,5 +26,8 @@ Thumbs.db
 # CCB agent state
 .ccb/
 
+# Runtime uploads
+backend/uploads/
+
 # Build
 *.pyc
