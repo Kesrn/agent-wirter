@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useProjectStore, useChapterStore, useDocumentStore, useRelationStore, useWorldEntryStore, useCharacterStore, useOutlineStore, useHiddenThreadStore, useExpertStore, useUiStore, friendlyError } from '../stores'
-import { API_BASE_URL, type OutlineItem, type HiddenThread, type Character, type WorldEntry, type WritingUnit } from '../api/types'
+import { API_BASE_URL, type OutlineItem, type HiddenThread, type Character, type WorldEntry, type WritingUnit, type StructureExtractPayload } from '../api/types'
+import { api } from '../api/client'
 import WritingEditor from '../components/WritingEditor.vue'
 import AgentPanel from '../components/AgentPanel.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
+import StructureExtractPreview from '../components/StructureExtractPreview.vue'
+import { displayChapterNumber, stripChapterNumber } from '../utils/chapterTitle'
 
 const route = useRoute()
 const router = useRouter()
@@ -37,6 +40,7 @@ const hiddenThreadLabel = computed(() => projectMode.value === 'article' ? '内�
 const characterLabel = computed(() => projectMode.value === 'article' ? '受众画像' : '角色')
 const worldLabel = computed(() => projectMode.value === 'article' ? '品牌/产品资料' : '世界观')
 const worldEntryLabel = computed(() => projectMode.value === 'article' ? '资料' : '设定')
+const searchPlaceholder = computed(() => projectMode.value === 'article' ? '搜索稿件正文、受众、资料' : '搜索章节正文、角色、设定')
 const isGenerating = computed(() => expertStore.getState(projectId.value).isGenerating)
 const sidebarOpen = ref(true)
 const agentOpen = ref(true)
@@ -85,8 +89,35 @@ const outline = computed(() => outlineStore.entriesForProject(projectId.value))
 const worldEntries = computed(() => worldEntryStore.entriesForProject(projectId.value))
 const hiddenThreads = computed(() => hiddenThreadStore.threadsForProject(projectId.value))
 
+type SearchTab = 'units' | 'outline' | 'characters' | 'world'
+type SearchResult = {
+  id: string
+  targetId: string
+  label: string
+  detail: string
+  badge: string
+  tab: SearchTab
+  unitNum?: number
+}
+
+const searchQuery = ref('')
+const searchOpen = ref(false)
+const highlightedSearchTarget = ref<string | null>(null)
+let searchHighlightTimer: ReturnType<typeof setTimeout> | null = null
+
 function unitPosition(unit: WritingUnit): number {
   return 'position' in unit ? unit.position : unit.chapter_num
+}
+
+function unitDisplayTitle(unit: WritingUnit): string {
+  if (projectMode.value === 'article') return unit.title
+  return stripChapterNumber(unit.title) || unit.title
+}
+
+function unitDisplayNum(unit: WritingUnit): number {
+  const position = unitPosition(unit)
+  if (projectMode.value === 'article') return position
+  return displayChapterNumber(position, unit.title)
 }
 
 function selectWritingUnit(num: number) {
@@ -98,12 +129,185 @@ function selectWritingUnit(num: number) {
   mobilePanel.value = 'editor'
 }
 
+function normalizedSearchText(text: string | null | undefined): string {
+  return (text ?? '').trim().toLocaleLowerCase()
+}
+
+function matchesSearch(text: string | null | undefined, query: string): boolean {
+  return normalizedSearchText(text).includes(query)
+}
+
+function compactSearchText(text: string | null | undefined): string {
+  return (text ?? '').replace(/\s+/g, ' ').trim()
+}
+
+function searchSnippet(text: string | null | undefined, query: string): string | null {
+  const source = compactSearchText(text)
+  if (!source) return null
+
+  const index = source.toLocaleLowerCase().indexOf(query)
+  if (index === -1) return null
+
+  const radius = 34
+  const start = Math.max(0, index - radius)
+  const end = Math.min(source.length, index + query.length + radius)
+  const prefix = start > 0 ? '...' : ''
+  const suffix = end < source.length ? '...' : ''
+  return `${prefix}${source.slice(start, end)}${suffix}`
+}
+
+function unitOrdinalText(unit: WritingUnit): string {
+  return unitOrdinalNumberText(unitDisplayNum(unit))
+}
+
+function unitOrdinalNumberText(num: number): string {
+  return projectMode.value === 'article' ? `${unitLabel.value} ${num}` : `第 ${num} 章`
+}
+
+const projectSearchResults = computed<SearchResult[]>(() => {
+  const query = normalizedSearchText(searchQuery.value)
+  if (!query) return []
+
+  const results: SearchResult[] = []
+  for (const unit of writingUnits.value) {
+    const title = unitDisplayTitle(unit)
+    const titleMatched = matchesSearch(title, query) || matchesSearch(unit.title, query)
+    const summarySnippet = 'summary' in unit ? searchSnippet(unit.summary, query) : null
+    const draftSnippet = searchSnippet(unit.draft, query) ?? searchSnippet(unit.final_text, query)
+    if (titleMatched || summarySnippet || draftSnippet) {
+      results.push({
+        id: `unit-${unit.id}`,
+        targetId: `unit-${unit.id}`,
+        label: title,
+        detail: titleMatched ? unitOrdinalText(unit) : `${unitOrdinalText(unit)} · ${summarySnippet ?? draftSnippet}`,
+        badge: titleMatched ? unitLabel.value : summarySnippet ? '摘要' : '正文',
+        tab: 'units',
+        unitNum: unitPosition(unit),
+      })
+    }
+  }
+
+  for (const item of outline.value) {
+    const titleMatched = matchesSearch(item.title, query)
+    const summarySnippet = searchSnippet(item.summary, query)
+    const turningPointSnippet = searchSnippet(item.turning_point, query)
+    if (titleMatched || summarySnippet || turningPointSnippet) {
+      results.push({
+        id: `outline-${item.id}`,
+        targetId: `outline-${item.id}`,
+        label: item.title,
+        detail: titleMatched ? `${unitOrdinalNumberText(item.chapter_num)} · ${outlineLabel.value}` : `${outlineLabel.value} · ${summarySnippet ?? turningPointSnippet}`,
+        badge: outlineLabel.value,
+        tab: 'outline',
+      })
+    }
+  }
+
+  for (const char of characters.value) {
+    const nameMatched = matchesSearch(char.name, query)
+    const factionSnippet = searchSnippet(char.faction, query)
+    const profileSnippet = searchSnippet(char.profile, query)
+    if (nameMatched || factionSnippet || profileSnippet) {
+      results.push({
+        id: `character-${char.id}`,
+        targetId: `character-${char.id}`,
+        label: char.name,
+        detail: nameMatched ? (char.faction || `${characterLabel.value}档案`) : `${characterLabel.value} · ${factionSnippet ?? profileSnippet}`,
+        badge: characterLabel.value,
+        tab: 'characters',
+      })
+    }
+  }
+
+  for (const entry of worldEntries.value) {
+    const titleMatched = matchesSearch(entry.title, query)
+    const categorySnippet = searchSnippet(entry.category, query)
+    const contentSnippet = searchSnippet(entry.content, query)
+    if (titleMatched || categorySnippet || contentSnippet) {
+      results.push({
+        id: `world-${entry.id}`,
+        targetId: `world-${entry.id}`,
+        label: entry.title,
+        detail: titleMatched ? (entry.category || `${worldLabel.value}${worldEntryLabel.value}`) : `${worldLabel.value} · ${categorySnippet ?? contentSnippet}`,
+        badge: worldEntryLabel.value,
+        tab: 'world',
+      })
+    }
+  }
+
+  for (const thread of hiddenThreads.value) {
+    const nameMatched = matchesSearch(thread.name, query)
+    const descriptionSnippet = searchSnippet(thread.description, query)
+    if (nameMatched || descriptionSnippet) {
+      results.push({
+        id: `hidden-${thread.id}`,
+        targetId: `hidden-${thread.id}`,
+        label: thread.name,
+        detail: nameMatched ? hiddenThreadLabel.value : `${hiddenThreadLabel.value} · ${descriptionSnippet}`,
+        badge: hiddenThreadLabel.value,
+        tab: 'outline',
+      })
+    }
+  }
+
+  return results.slice(0, 20)
+})
+
+function closeSearchSoon() {
+  window.setTimeout(() => { searchOpen.value = false }, 120)
+}
+
+function clearSearch() {
+  searchQuery.value = ''
+  searchOpen.value = false
+}
+
+function highlightSearchTarget(targetId: string) {
+  highlightedSearchTarget.value = targetId
+  if (searchHighlightTimer) clearTimeout(searchHighlightTimer)
+  searchHighlightTimer = setTimeout(() => {
+    highlightedSearchTarget.value = null
+    searchHighlightTimer = null
+  }, 1800)
+}
+
+function scrollSearchTarget(targetId: string) {
+  const target = document.querySelector(`[data-search-target="${targetId}"]`) as HTMLElement | null
+  target?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
+
+function openSearchResult(result: SearchResult) {
+  sidebarOpen.value = true
+  activeTab.value = result.tab
+  if (result.tab === 'characters') mobilePanel.value = 'characters'
+  else if (result.tab === 'world') mobilePanel.value = 'world'
+  else if (result.tab === 'outline') mobilePanel.value = 'units'
+
+  if (typeof result.unitNum === 'number') {
+    selectWritingUnit(result.unitNum)
+  }
+
+  searchOpen.value = false
+  nextTick(() => {
+    scrollSearchTarget(result.targetId)
+    highlightSearchTarget(result.targetId)
+  })
+}
+
+function openFirstSearchResult() {
+  const first = projectSearchResults.value[0]
+  if (first) openSearchResult(first)
+}
+
 const isMobile = ref(window.innerWidth < 900)
 function onResize() { isMobile.value = window.innerWidth < 900 }
 onMounted(() => {
   window.addEventListener('resize', onResize)
 })
 onUnmounted(() => window.removeEventListener('resize', onResize))
+onUnmounted(() => {
+  if (searchHighlightTimer) clearTimeout(searchHighlightTimer)
+})
 
 // ─── Generation guard ───
 
@@ -211,6 +415,72 @@ function exportTxt() {
 
 function exportMarkdown() {
   exportFromBackend('md')
+}
+
+// Structure extraction
+const extractingStructure = ref(false)
+const applyingStructure = ref(false)
+const showStructurePreview = ref(false)
+const structurePayload = ref<StructureExtractPayload | null>(null)
+
+const canExtractStructure = computed(() => {
+  const unit = currentWritingUnit.value
+  return projectMode.value === 'novel' && !!unit && !!unit.draft?.trim() && !extractingStructure.value && !applyingStructure.value
+})
+
+async function extractCurrentChapterStructure() {
+  const unit = currentWritingUnit.value
+  if (projectMode.value !== 'novel' || !unit) {
+    ui.showToast('请先选择一个小说章节', 'error')
+    return
+  }
+  if (!unit.draft.trim()) {
+    ui.showToast('当前章节正文为空，无法提炼', 'error')
+    return
+  }
+
+  extractingStructure.value = true
+  try {
+    const result = await api.extractChapterStructure(projectId.value, unitPosition(unit), {
+      mode: 'preview',
+      targets: ['outlines', 'characters', 'world_entries', 'hidden_threads', 'character_relations'],
+      include_existing_context: true,
+    })
+    structurePayload.value = result.extraction
+    showStructurePreview.value = true
+  } catch (e: unknown) {
+    ui.showToast(friendlyError(e, '结构提炼失败'), 'error')
+  } finally {
+    extractingStructure.value = false
+  }
+}
+
+async function applyExtractedStructure(payload: StructureExtractPayload) {
+  const unit = currentWritingUnit.value
+  if (!unit) return
+
+  applyingStructure.value = true
+  try {
+    const result = await api.extractChapterStructure(projectId.value, unitPosition(unit), {
+      mode: 'apply',
+      extraction: payload,
+    })
+    await Promise.all([
+      outlineStore.loadOutlines(projectId.value),
+      characterStore.loadCharacters(projectId.value),
+      worldEntryStore.loadWorldEntries(projectId.value),
+      hiddenThreadStore.loadHiddenThreads(projectId.value),
+      relationStore.loadRelations(projectId.value),
+    ])
+    showStructurePreview.value = false
+    structurePayload.value = null
+    const count = Object.values(result.applied?.counts ?? {}).reduce((sum, value) => sum + value, 0)
+    ui.showToast(`已写入 ${count} 项结构资料`, 'success')
+  } catch (e: unknown) {
+    ui.showToast(friendlyError(e, '写入结构资料失败'), 'error')
+  } finally {
+    applyingStructure.value = false
+  }
 }
 
 // New writing unit form
@@ -651,6 +921,44 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
         <span class="top-project-name">{{ currentProject?.title ?? '项目' }}</span>
         <span class="mode-badge" :class="projectMode">{{ projectMode === 'novel' ? '小说' : '文章' }}</span>
       </div>
+      <div class="project-search">
+        <span class="search-prefix">搜</span>
+        <input
+          v-model="searchQuery"
+          class="project-search-input"
+          type="text"
+          :placeholder="searchPlaceholder"
+          @focus="searchOpen = true"
+          @blur="closeSearchSoon"
+          @keydown.enter.prevent="openFirstSearchResult"
+          @keydown.esc="searchOpen = false"
+        />
+        <button
+          v-if="searchQuery"
+          class="search-clear"
+          type="button"
+          aria-label="清空搜索"
+          @mousedown.prevent="clearSearch"
+        >
+          清空
+        </button>
+        <div v-if="searchOpen && searchQuery.trim()" class="search-panel">
+          <button
+            v-for="result in projectSearchResults"
+            :key="result.id"
+            class="search-result"
+            type="button"
+            @mousedown.prevent="openSearchResult(result)"
+          >
+            <span class="search-badge">{{ result.badge }}</span>
+            <span class="search-result-main">
+              <span class="search-result-title">{{ result.label }}</span>
+              <span class="search-result-detail">{{ result.detail }}</span>
+            </span>
+          </button>
+          <div v-if="!projectSearchResults.length" class="search-empty">没有匹配的内容</div>
+        </div>
+      </div>
       <div class="top-right">
         <div class="export-group">
           <button class="top-btn" :disabled="exporting" @click="showExportMenu = !showExportMenu">{{ exporting ? '导出中...' : '导出' }}</button>
@@ -680,7 +988,17 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
         <div class="sidebar-content">
           <!-- Writing units -->
           <div v-if="activeTab === 'units'" class="tab-pane">
-            <button class="btn-add-unit" @click="openNewUnitForm">+ 新增{{ unitLabel }}</button>
+            <div class="unit-toolbar">
+              <button class="btn-add-unit" @click="openNewUnitForm">+ 新增{{ unitLabel }}</button>
+              <button
+                v-if="projectMode === 'novel'"
+                class="btn-extract-structure"
+                :disabled="!canExtractStructure"
+                @click="extractCurrentChapterStructure"
+              >
+                {{ extractingStructure ? '提炼中...' : '提炼结构' }}
+              </button>
+            </div>
             <div v-if="showNewUnit" class="unit-form">
               <div class="form-row">
                 <label>{{ unitLabel }}标题 <span class="required">*</span></label>
@@ -704,19 +1022,20 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
               v-for="ch in writingUnits"
               :key="ch.id"
               class="unit-item"
-              :class="{ active: unitPosition(ch) === currentUnitNum }"
+              :class="{ active: unitPosition(ch) === currentUnitNum, 'search-highlight': highlightedSearchTarget === `unit-${ch.id}` }"
+              :data-search-target="`unit-${ch.id}`"
               @click="selectWritingUnit(unitPosition(ch))"
               @contextmenu.prevent="openUnitMenu($event, ch)"
             >
               <template v-if="editingUnitId === ch.id">
-                <span class="unit-num">{{ unitPosition(ch) }}</span>
+                <span class="unit-num">{{ unitDisplayNum(ch) }}</span>
                 <input v-model="editUnitTitle" type="text" class="form-input unit-edit-input" @click.stop @keyup.enter="saveEditUnit(ch)" @keyup.escape="cancelEditUnit" />
                 <button class="icon-btn" title="保存" @click.stop="saveEditUnit(ch)">&#10003;</button>
                 <button class="icon-btn icon-btn-danger" title="取消" @click.stop="cancelEditUnit">&#10005;</button>
               </template>
               <template v-else>
-                <span class="unit-num">{{ unitPosition(ch) }}</span>
-                <span class="unit-title">{{ ch.title }}</span>
+                <span class="unit-num">{{ unitDisplayNum(ch) }}</span>
+                <span class="unit-title">{{ unitDisplayTitle(ch) }}</span>
                 <span class="unit-status" :class="ch.status">{{ ch.status === 'final' ? '终稿' : ch.status === 'reviewing' ? '审核' : ch.status === 'revision' ? '修订' : '草稿' }}</span>
               </template>
             </div>
@@ -748,7 +1067,13 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 <button class="btn-cancel" @click="showNewOutline = false">取消</button>
               </div>
             </div>
-            <div v-for="item in outline" :key="item.chapter_num" class="outline-item">
+            <div
+              v-for="item in outline"
+              :key="item.chapter_num"
+              class="outline-item"
+              :class="{ 'search-highlight': highlightedSearchTarget === `outline-${item.id}` }"
+              :data-search-target="`outline-${item.id}`"
+            >
               <template v-if="editingOutlineId === item.id">
                 <div class="unit-form" style="margin: 0;">
                   <div class="form-row">
@@ -811,7 +1136,13 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                   <button class="btn-cancel" @click="showNewHiddenThread = false">取消</button>
                 </div>
               </div>
-              <div v-for="ht in hiddenThreads" :key="ht.id" class="ht-item">
+              <div
+                v-for="ht in hiddenThreads"
+                :key="ht.id"
+                class="ht-item"
+                :class="{ 'search-highlight': highlightedSearchTarget === `hidden-${ht.id}` }"
+                :data-search-target="`hidden-${ht.id}`"
+              >
                 <div class="ht-header">
                   <span class="ht-name">{{ ht.name }}</span>
                   <button class="icon-btn icon-btn-danger" title="删除" @click.stop="deleteHiddenThreadConfirm(ht)">&#10005;</button>
@@ -853,7 +1184,13 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 <button class="btn-cancel" @click="showNewCharacter = false">取消</button>
               </div>
             </div>
-            <div v-for="char in characters" :key="char.id" class="character-card">
+            <div
+              v-for="char in characters"
+              :key="char.id"
+              class="character-card"
+              :class="{ 'search-highlight': highlightedSearchTarget === `character-${char.id}` }"
+              :data-search-target="`character-${char.id}`"
+            >
               <template v-if="editingCharId === char.id">
                 <div class="unit-form" style="margin: 0;">
                   <div class="form-row">
@@ -930,7 +1267,13 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 <button class="btn-cancel" @click="showNewWorldEntry = false">取消</button>
               </div>
             </div>
-            <div v-for="entry in worldEntries" :key="entry.id" class="world-block">
+            <div
+              v-for="entry in worldEntries"
+              :key="entry.id"
+              class="world-block"
+              :class="{ 'search-highlight': highlightedSearchTarget === `world-${entry.id}` }"
+              :data-search-target="`world-${entry.id}`"
+            >
               <template v-if="editingWEId === entry.id">
                 <div class="unit-form" style="margin: 0;">
                   <div class="form-row">
@@ -1021,7 +1364,17 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
     </nav>
 
     <div v-if="mobilePanel === 'units'" class="mobile-pane">
-      <button class="btn-add-unit" @click="openNewUnitForm">+ 新增{{ unitLabel }}</button>
+      <div class="unit-toolbar">
+        <button class="btn-add-unit" @click="openNewUnitForm">+ 新增{{ unitLabel }}</button>
+        <button
+          v-if="projectMode === 'novel'"
+          class="btn-extract-structure"
+          :disabled="!canExtractStructure"
+          @click="extractCurrentChapterStructure"
+        >
+          {{ extractingStructure ? '提炼中...' : '提炼结构' }}
+        </button>
+      </div>
       <div v-if="showNewUnit" class="unit-form">
         <div class="form-row">
           <label>{{ unitLabel }}标题 <span class="required">*</span></label>
@@ -1045,19 +1398,20 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
         v-for="ch in writingUnits"
         :key="ch.id"
         class="unit-item"
-        :class="{ active: unitPosition(ch) === currentUnitNum }"
+        :class="{ active: unitPosition(ch) === currentUnitNum, 'search-highlight': highlightedSearchTarget === `unit-${ch.id}` }"
+        :data-search-target="`unit-${ch.id}`"
         @click="selectWritingUnit(unitPosition(ch))"
         @contextmenu.prevent="openUnitMenu($event, ch)"
       >
         <template v-if="editingUnitId === ch.id">
-          <span class="unit-num">{{ unitPosition(ch) }}</span>
+          <span class="unit-num">{{ unitDisplayNum(ch) }}</span>
           <input v-model="editUnitTitle" type="text" class="form-input unit-edit-input" @click.stop @keyup.enter="saveEditUnit(ch)" @keyup.escape="cancelEditUnit" />
           <button class="icon-btn" title="保存" @click.stop="saveEditUnit(ch)">&#10003;</button>
           <button class="icon-btn icon-btn-danger" title="取消" @click.stop="cancelEditUnit">&#10005;</button>
         </template>
         <template v-else>
-          <span class="unit-num">{{ unitPosition(ch) }}</span>
-          <span class="unit-title">{{ ch.title }}</span>
+          <span class="unit-num">{{ unitDisplayNum(ch) }}</span>
+          <span class="unit-title">{{ unitDisplayTitle(ch) }}</span>
           <span class="unit-status" :class="ch.status">{{ ch.status === 'final' ? '终稿' : '草稿' }}</span>
         </template>
       </div>
@@ -1090,40 +1444,63 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
     @confirm="handleConfirmOk"
     @cancel="handleConfirmCancel"
   />
+  <StructureExtractPreview
+    :show="showStructurePreview"
+    :payload="structurePayload"
+    :confirm-text="applyingStructure ? '写入中...' : '确认写入'"
+    @close="showStructurePreview = false"
+    @confirm="applyExtractedStructure"
+  />
 </template>
 
 <style scoped>
 /* ─── Top bar ─── */
 .top-bar, .mobile-top-bar {
+  position: relative;
+  z-index: 1200;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--sp-2) var(--sp-4);
-  background: var(--bg-panel);
+  gap: var(--sp-4);
+  padding: 10px var(--sp-5);
+  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  box-shadow: 0 1px 0 rgba(17, 24, 39, 0.03);
+  backdrop-filter: blur(12px);
 }
 .top-left, .top-right {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
 }
+.top-left {
+  min-width: 0;
+  flex: 1 1 260px;
+}
+.top-right {
+  flex: 0 0 auto;
+}
 .top-link {
   font-size: var(--text-sm);
   color: var(--accent);
+  font-weight: 650;
   white-space: nowrap;
 }
 .top-link:hover { text-decoration: none; opacity: 0.85; }
 .top-sep { color: var(--text-tertiary); font-size: var(--text-xs); }
 .top-project-name {
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .mode-badge {
   font-size: 10px;
-  font-weight: 500;
-  padding: 2px 8px;
+  font-weight: 700;
+  padding: 3px 8px;
   border-radius: 10px;
   white-space: nowrap;
 }
@@ -1131,17 +1508,20 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 .mode-badge.article { background: var(--status-reviewing-bg); color: var(--status-reviewing); }
 .top-btn {
   padding: var(--sp-2) var(--sp-3);
-  background: none;
+  background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: var(--text-xs);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background var(--transition), border-color var(--transition);
+  box-shadow: var(--shadow-sm);
+  transition: background var(--transition), border-color var(--transition), color var(--transition), transform var(--transition);
 }
 .top-btn:hover {
   background: var(--bg-hover);
   border-color: var(--border-focus);
+  color: var(--text);
+  transform: translateY(-1px);
 }
 .top-btn-logout { color: var(--text-tertiary); }
 .export-group { position: relative; }
@@ -1153,9 +1533,10 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  z-index: 20;
+  box-shadow: var(--shadow-lg);
+  z-index: 1201;
   min-width: 140px;
+  overflow: hidden;
 }
 .export-option {
   display: block;
@@ -1170,6 +1551,128 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 }
 .export-option:hover { background: var(--bg-hover); }
 
+.project-search {
+  position: relative;
+  flex: 0 1 420px;
+  min-width: 260px;
+  z-index: 1300;
+}
+.search-prefix {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  pointer-events: none;
+}
+.project-search-input {
+  width: 100%;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: var(--text-sm);
+  padding: 0 64px 0 36px;
+  outline: none;
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
+}
+.project-search-input:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+  background: var(--bg-panel);
+}
+.project-search-input::placeholder {
+  color: var(--text-tertiary);
+}
+.search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.search-clear:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+.search-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 8px);
+  max-height: 330px;
+  overflow-y: auto;
+  padding: var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-lg);
+}
+.search-result {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: 9px var(--sp-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.search-result:hover {
+  background: var(--bg-hover);
+}
+.search-badge {
+  flex: 0 0 auto;
+  min-width: 42px;
+  padding: 3px 7px;
+  border-radius: 8px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+.search-result-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.search-result-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+.search-result-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.search-empty {
+  padding: var(--sp-4) var(--sp-3);
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
 .mobile-top-bar {
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
@@ -1182,18 +1685,20 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   flex-direction: column;
   height: 100vh;
   height: 100dvh;
-  background: var(--bg);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 88%, white) 0%, var(--bg) 180px),
+    var(--bg);
 }
 .workspace {
   display: grid;
-  grid-template-columns: 220px 1fr 300px;
+  grid-template-columns: 248px minmax(0, 1fr) 324px;
   flex: 1;
   min-height: 0;
   overflow: hidden;
   transition: grid-template-columns 220ms ease;
 }
-.workspace.sidebar-collapsed { grid-template-columns: 0px 1fr 300px; }
-.workspace.agent-collapsed { grid-template-columns: 220px 1fr 0px; }
+.workspace.sidebar-collapsed { grid-template-columns: 0px minmax(0, 1fr) 324px; }
+.workspace.agent-collapsed { grid-template-columns: 248px minmax(0, 1fr) 0px; }
 .workspace.sidebar-collapsed.agent-collapsed { grid-template-columns: 0px 1fr 0px; }
 
 /* Sidebar & agent toggle buttons */
@@ -1204,7 +1709,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   z-index: 10;
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
   width: 24px;
   height: 40px;
   display: flex;
@@ -1215,6 +1720,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   cursor: pointer;
   transition: background var(--transition), color var(--transition), opacity 220ms ease;
   padding: 0;
+  box-shadow: var(--shadow);
 }
 .sidebar-toggle {
   right: -12px; /* overlap the border */
@@ -1230,13 +1736,14 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 
 /* Sidebar */
 .sidebar {
-  background: var(--bg-sidebar);
+  background: color-mix(in srgb, var(--bg-sidebar) 86%, var(--bg-panel));
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: visible;
   position: relative;
   min-width: 0;
+  min-height: 0;
 }
 .sidebar.sidebar-hidden {
   border-right: none;
@@ -1247,11 +1754,12 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 }
 .sidebar-inner {
   flex: 1;
-  overflow-y: auto;
+  overflow: hidden;
   overflow-x: hidden;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 .sidebar.sidebar-hidden .sidebar-inner {
   visibility: hidden;
@@ -1260,48 +1768,73 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   display: flex;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  gap: 2px;
+  padding: var(--sp-2);
 }
 .sidebar-tabs button {
   flex: 1;
   padding: var(--sp-2) var(--sp-1);
   border: none;
-  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-sm);
   background: none;
   font-size: var(--text-xs);
-  font-weight: 500;
+  font-weight: 650;
   color: var(--text-tertiary);
   cursor: pointer;
   transition: color var(--transition), border-color var(--transition);
 }
 .sidebar-tabs button:hover { color: var(--text-secondary); }
 .sidebar-tabs button.active {
+  background: var(--bg-panel);
   color: var(--text);
-  border-bottom-color: var(--accent);
+  box-shadow: var(--shadow-sm);
 }
 .sidebar-content {
   flex: 1;
   overflow-y: auto;
-  padding: var(--sp-2);
+  padding: var(--sp-3);
   min-width: 0;
+  min-height: 0;
+  overscroll-behavior: contain;
 }
-.tab-pane { display: flex; flex-direction: column; gap: var(--sp-1); }
+.tab-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: min-content;
+}
 
 /* Writing unit items */
 .unit-item {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3);
+  padding: 9px var(--sp-3);
   border-radius: var(--radius);
   cursor: pointer;
   font-size: var(--text-sm);
-  transition: background var(--transition);
+  border: 1px solid transparent;
+  transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
 }
-.unit-item:hover { background: var(--bg-hover); }
+.unit-item:hover {
+  background: color-mix(in srgb, var(--bg-hover) 72%, var(--bg-panel));
+  border-color: var(--border);
+}
 .unit-item.active {
-  background: var(--accent-subtle);
+  background: var(--bg-panel);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  box-shadow: var(--shadow-sm);
   color: var(--accent);
   font-weight: 600;
+}
+.unit-item.search-highlight,
+.outline-item.search-highlight,
+.character-card.search-highlight,
+.world-block.search-highlight,
+.ht-item.search-highlight {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  background: color-mix(in srgb, var(--accent-subtle) 52%, var(--bg-panel));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent), var(--shadow-sm);
 }
 .unit-num {
   color: var(--text-tertiary);
@@ -1320,8 +1853,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 }
 .unit-status {
   font-size: 10px;
-  font-weight: 500;
-  padding: 1px 6px;
+  font-weight: 700;
+  padding: 2px 7px;
   border-radius: 8px;
   white-space: nowrap;
 }
@@ -1332,9 +1865,11 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 
 /* Outline */
 .outline-item {
-  padding: var(--sp-2) var(--sp-3);
+  padding: var(--sp-3);
   border-radius: var(--radius);
-  border-left: 2px solid var(--border);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-sm);
 }
 .outline-header {
   display: flex;
@@ -1368,9 +1903,9 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 }
 .thread-tag {
   font-size: 10px;
-  background: #f5f0ff;
-  color: #7c3aed;
-  padding: 1px 6px;
+  background: color-mix(in srgb, var(--accent-subtle) 72%, var(--bg-panel));
+  color: var(--accent);
+  padding: 2px 7px;
   border-radius: 8px;
 }
 
@@ -1380,6 +1915,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
 }
 .char-name {
   font-size: var(--text-sm);
@@ -1455,6 +1991,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
 }
 
 .empty-hint {
@@ -1465,20 +2002,45 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 }
 
 /* Reusable sidebar form */
+.unit-toolbar {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--sp-2);
+}
 .btn-add-unit {
   width: 100%;
-  padding: var(--sp-2) var(--sp-3);
-  background: none;
-  border: 1px dashed var(--border);
+  padding: 10px var(--sp-3);
+  background: color-mix(in srgb, var(--bg-panel) 68%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--accent) 34%, var(--border));
   border-radius: var(--radius);
   font-size: var(--text-sm);
-  color: var(--text-secondary);
+  font-weight: 650;
+  color: var(--accent);
   cursor: pointer;
   transition: border-color var(--transition), color var(--transition);
 }
 .btn-add-unit:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  background: var(--accent-subtle);
+}
+.btn-extract-structure {
+  width: 100%;
+  padding: 9px var(--sp-3);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  color: var(--text-inverse);
+  font-size: var(--text-sm);
+  font-weight: 650;
+  transition: background var(--transition), border-color var(--transition), opacity var(--transition);
+}
+.btn-extract-structure:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.btn-extract-structure:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 .unit-form {
   background: var(--bg-panel);
@@ -1488,6 +2050,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
+  box-shadow: var(--shadow-sm);
 }
 .form-row {
   display: flex;
@@ -1505,13 +2068,14 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: var(--text-sm);
-  background: var(--bg);
+  background: var(--bg-input);
   color: var(--text);
-  transition: border-color var(--transition);
+  transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
 }
 .form-input:focus, .form-textarea:focus {
   border-color: var(--border-focus);
   outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .form-input-sm { width: 80px; }
 .form-textarea { resize: vertical; }
@@ -1531,14 +2095,14 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   border: none;
   border-radius: var(--radius);
   font-size: var(--text-sm);
-  font-weight: 500;
+  font-weight: 650;
   cursor: pointer;
   transition: background var(--transition);
 }
 .btn-submit:hover { background: var(--accent-hover); }
 .btn-cancel {
   padding: var(--sp-2) var(--sp-3);
-  background: none;
+  background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: var(--text-sm);
@@ -1553,7 +2117,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg-panel);
+  background: var(--paper-stage);
   min-width: 0;
   min-height: 0;
 }
@@ -1561,7 +2125,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 /* Agent area */
 .agent-area {
   border-left: 1px solid var(--border);
-  background: var(--bg-sidebar);
+  background: color-mix(in srgb, var(--bg-sidebar) 86%, var(--bg-panel));
   overflow: visible;
   position: relative;
   display: flex;
@@ -1598,21 +2162,23 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
   flex-shrink: 0;
+  gap: 2px;
+  padding: var(--sp-2);
 }
 .mobile-nav button {
   flex: 1;
-  padding: var(--sp-3);
+  padding: var(--sp-2);
   border: none;
-  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-sm);
   background: none;
   font-size: var(--text-sm);
-  font-weight: 500;
+  font-weight: 650;
   color: var(--text-tertiary);
   cursor: pointer;
 }
 .mobile-nav button.active {
+  background: var(--accent-subtle);
   color: var(--accent);
-  border-bottom-color: var(--accent);
 }
 .mobile-pane {
   flex: 1;
@@ -1696,7 +2262,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 .ht-item {
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--radius);
-  border-left: 2px solid #7c3aed;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  background: var(--bg-panel);
 }
 .ht-header {
   display: flex;
@@ -1706,7 +2273,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 .ht-name {
   font-size: var(--text-sm);
   font-weight: 600;
-  color: #7c3aed;
+  color: var(--accent);
 }
 .ht-desc {
   font-size: var(--text-xs);

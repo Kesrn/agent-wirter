@@ -15,6 +15,7 @@ import {
   type LoginRequest, type LoginResponse, type MeResponse,
   type RegisterRequest, type RegisterResponse,
   type ProjectImageUploadResponse,
+  type TxtImportResponse, type ChapterStructureExtractRequest, type ChapterStructureExtractResponse,
   type ApiChapterVersion, type ChapterVersionDiffRequest, type ChapterVersionDiffResponse,
   type DocumentVersionDiffRequest, type DocumentVersionDiffResponse,
   type ApiGenerationRecordListItem, type ApiGenerationRecord,
@@ -34,6 +35,13 @@ function authHeaders(): Record<string, string> {
 
 function binaryAuthHeaders(contentType: string): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': contentType }
+  const token = getToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  return headers
+}
+
+function formAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {}
   const token = getToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
   return headers
@@ -168,6 +176,31 @@ export const api = {
   getProject: (id: string) => request<ApiProject>(`/projects/${id}`),
   createProject: (data: ProjectCreatePayload) =>
     request<ApiProject>('/projects', { method: 'POST', body: JSON.stringify(data) }),
+  deleteProject: (id: string) =>
+    request<void>(`/projects/${id}`, { method: 'DELETE' }),
+  importTxtProject: async (data: { file: File; title?: string; description?: string; target_words?: number }) => {
+    const formData = new FormData()
+    formData.append('file', data.file)
+    if (data.title) formData.append('title', data.title)
+    if (data.description) formData.append('description', data.description)
+    if (data.target_words !== undefined) formData.append('target_words', String(data.target_words))
+
+    const res = await fetch(`${API_BASE_URL}/projects/import-txt`, {
+      method: 'POST',
+      headers: formAuthHeaders(),
+      body: formData,
+    })
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      if (res.status === 401) {
+        localStorage.removeItem('ai_write_token')
+        localStorage.removeItem('ai_write_logged_in')
+        window.location.href = '/login'
+      }
+      throw new ApiError(res.status, parseApiError(res.status, body))
+    }
+    return res.json() as Promise<TxtImportResponse>
+  },
   uploadProjectImage: async (projectId: string, file: File) => {
     const res = await fetch(`${API_BASE_URL}/projects/${projectId}/assets/images`, {
       method: 'POST',
@@ -194,6 +227,8 @@ export const api = {
     request<ApiChapter>(`/projects/${projectId}/chapters/${sequenceNumber}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteChapter: (projectId: string, sequenceNumber: number) =>
     request<{ ok: boolean }>(`/projects/${projectId}/chapters/${sequenceNumber}`, { method: 'DELETE' }),
+  extractChapterStructure: (projectId: string, sequenceNumber: number, data: ChapterStructureExtractRequest) =>
+    request<ChapterStructureExtractResponse>(`/projects/${projectId}/chapters/${sequenceNumber}/extract-structure`, { method: 'POST', body: JSON.stringify(data) }),
 
   // ─── Documents ───
   listDocuments: (projectId: string) => request<ApiDocument[]>(`/projects/${projectId}/documents`),

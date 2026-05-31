@@ -3,6 +3,8 @@ import { ref, onMounted } from 'vue'
 import { useProjectStore, useUiStore, friendlyError } from '../stores'
 import { useRouter } from 'vue-router'
 import type { ProjectMode } from '../api/types'
+import { api } from '../api/client'
+import ConfirmModal from '../components/ConfirmModal.vue'
 
 const store = useProjectStore()
 const ui = useUiStore()
@@ -46,6 +48,17 @@ const newDescription = ref('')
 const newTargetWords = ref<number | null>(null)
 const newProjectError = ref('')
 
+const importFileInput = ref<HTMLInputElement | null>(null)
+const showTxtImport = ref(false)
+const txtImportFile = ref<File | null>(null)
+const txtImportTitle = ref('')
+const txtImportDescription = ref('')
+const txtImportTargetWords = ref<number | null>(null)
+const txtImportError = ref('')
+const importingTxt = ref(false)
+const deletingProjectId = ref<string | null>(null)
+const projectPendingDelete = ref<{ id: string; title: string } | null>(null)
+
 function openNewProjectForm() {
   newTitle.value = ''
   newMode.value = 'novel'
@@ -81,16 +94,101 @@ async function submitNewProject() {
     ui.showToast(msg, 'error')
   }
 }
+
+function openTxtImportPicker() {
+  txtImportError.value = ''
+  importFileInput.value?.click()
+}
+
+function onTxtFileSelected(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0] ?? null
+  input.value = ''
+  if (!file) return
+  if (!file.name.toLowerCase().endsWith('.txt')) {
+    ui.showToast('请选择 TXT 文件', 'error')
+    return
+  }
+  txtImportFile.value = file
+  txtImportTitle.value = file.name.replace(/\.txt$/i, '').trim() || '导入小说'
+  txtImportDescription.value = ''
+  txtImportTargetWords.value = null
+  txtImportError.value = ''
+  showNewProject.value = false
+  showTxtImport.value = true
+}
+
+async function submitTxtImport() {
+  if (!txtImportFile.value) {
+    txtImportError.value = '请选择 TXT 文件'
+    return
+  }
+  if (!txtImportTitle.value.trim()) {
+    txtImportError.value = '项目标题不能为空'
+    return
+  }
+  importingTxt.value = true
+  txtImportError.value = ''
+  try {
+    const result = await api.importTxtProject({
+      file: txtImportFile.value,
+      title: txtImportTitle.value.trim(),
+      description: txtImportDescription.value.trim() || undefined,
+      target_words: txtImportTargetWords.value ?? undefined,
+    })
+    showTxtImport.value = false
+    await store.loadProjects()
+    ui.showToast(`导入成功：${result.import_meta.chapter_count} 个章节`, 'success')
+    router.push(`/projects/${result.project.id}`)
+  } catch (e: unknown) {
+    const msg = friendlyError(e, '导入 TXT 失败')
+    txtImportError.value = msg
+    ui.showToast(msg, 'error')
+  } finally {
+    importingTxt.value = false
+  }
+}
+
+function requestDeleteProject(projectId: string, title: string) {
+  if (deletingProjectId.value) return
+  projectPendingDelete.value = { id: projectId, title }
+}
+
+async function confirmDeleteProject() {
+  const target = projectPendingDelete.value
+  if (!target || deletingProjectId.value) return
+  projectPendingDelete.value = null
+  await deleteProject(target.id)
+}
+
+async function deleteProject(projectId: string) {
+  if (deletingProjectId.value) return
+
+  deletingProjectId.value = projectId
+  try {
+    await store.deleteProjectRemote(projectId)
+    ui.showToast('项目已删除', 'success')
+  } catch (e: unknown) {
+    ui.showToast(friendlyError(e, '删除项目失败'), 'error')
+  } finally {
+    deletingProjectId.value = null
+  }
+}
 </script>
 
 <template>
   <div class="project-list-page">
     <header class="page-header">
-      <h1>AI 小说创作平台</h1>
+      <div class="page-heading">
+        <span class="page-kicker">Creative Workspace</span>
+        <h1>AI 创作平台</h1>
+      </div>
       <div class="header-actions">
         <router-link to="/settings" class="btn-settings">设置</router-link>
+        <button class="btn-secondary-action" @click="openTxtImportPicker">导入 TXT</button>
         <button class="btn-primary" @click="openNewProjectForm">+ 新建项目</button>
         <button class="btn-logout" @click="handleLogout">退出登录</button>
+        <input ref="importFileInput" class="hidden-file-input" type="file" accept=".txt,text/plain" @change="onTxtFileSelected" />
       </div>
     </header>
 
@@ -131,6 +229,31 @@ async function submitNewProject() {
       </div>
     </div>
 
+    <div v-if="showTxtImport" class="new-project-form">
+      <h3>导入 TXT 小说</h3>
+      <div class="import-file-row">
+        <span class="import-file-name">{{ txtImportFile?.name }}</span>
+        <button class="btn-cancel" :disabled="importingTxt" @click="openTxtImportPicker">重新选择</button>
+      </div>
+      <div class="form-row">
+        <label>项目标题 <span class="required">*</span></label>
+        <input v-model="txtImportTitle" type="text" placeholder="导入后显示的小说标题" class="form-input" />
+      </div>
+      <div class="form-row">
+        <label>简介</label>
+        <textarea v-model="txtImportDescription" placeholder="可选" class="form-textarea" rows="2"></textarea>
+      </div>
+      <div class="form-row">
+        <label>目标字数</label>
+        <input v-model.number="txtImportTargetWords" type="number" placeholder="可选" class="form-input form-input-sm" />
+      </div>
+      <div v-if="txtImportError" class="form-error">{{ txtImportError }}</div>
+      <div class="form-actions">
+        <button class="btn-submit" :disabled="importingTxt" @click="submitTxtImport">{{ importingTxt ? '导入中...' : '导入为小说项目' }}</button>
+        <button class="btn-cancel" :disabled="importingTxt" @click="showTxtImport = false">取消</button>
+      </div>
+    </div>
+
     <div class="project-grid">
       <div
         v-for="project in store.projects"
@@ -140,38 +263,76 @@ async function submitNewProject() {
       >
         <div class="card-header">
           <h3 class="card-title">{{ project.title }}</h3>
-          <span class="status-badge" :class="project.status">{{ statusLabel(project.status) }}</span>
+          <div class="card-actions" @click.stop>
+            <span class="status-badge" :class="project.status">{{ statusLabel(project.status) }}</span>
+            <button
+              class="btn-card-delete"
+              :disabled="deletingProjectId === project.id"
+              title="删除项目"
+              @click.stop="requestDeleteProject(project.id, project.title)"
+            >
+              {{ deletingProjectId === project.id ? '删除中' : '删除' }}
+            </button>
+          </div>
         </div>
         <div class="card-meta">
           <span class="mode-badge" :class="project.mode">{{ modeLabel(project.mode) }}</span>
-          <span class="meta-sep">·</span>
-          <span class="meta-genre">{{ project.genre }}</span>
-          <span class="meta-sep">·</span>
-          <span class="meta-style">{{ project.style }}</span>
+          <template v-if="project.genre">
+            <span class="meta-sep">·</span>
+            <span class="meta-genre">{{ project.genre }}</span>
+          </template>
+          <template v-if="project.style">
+            <span class="meta-sep">·</span>
+            <span class="meta-style">{{ project.style }}</span>
+          </template>
         </div>
         <div class="card-footer">
           <span class="meta-time">更新于 {{ formatDate(project.updated_at) }}</span>
         </div>
       </div>
     </div>
+
+    <ConfirmModal
+      v-if="projectPendingDelete"
+      :message="`确定删除项目「${projectPendingDelete.title}」吗？此操作会删除项目下的章节、角色、大纲、世界观和生成历史，且无法恢复。`"
+      confirm-text="删除项目"
+      danger
+      @confirm="confirmDeleteProject"
+      @cancel="projectPendingDelete = null"
+    />
   </div>
 </template>
 
 <style scoped>
 .project-list-page {
-  max-width: 960px;
+  max-width: 1120px;
   margin: 0 auto;
-  padding: var(--sp-8) var(--sp-6);
+  padding: 40px var(--sp-6) 56px;
 }
 .page-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: var(--sp-6);
+  gap: var(--sp-5);
+  margin-bottom: var(--sp-8);
+}
+.page-heading {
+  min-width: 0;
+}
+.page-kicker {
+  display: block;
+  margin-bottom: var(--sp-1);
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 .page-header h1 {
-  font-size: var(--text-xl);
-  font-weight: 700;
+  margin: 0;
+  font-size: 1.85rem;
+  font-weight: 760;
+  letter-spacing: 0;
   color: var(--text);
 }
 .header-actions {
@@ -181,60 +342,110 @@ async function submitNewProject() {
 }
 .btn-logout {
   padding: var(--sp-2) var(--sp-3);
-  background: none;
+  background: color-mix(in srgb, var(--bg-panel) 78%, transparent);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: var(--text-xs);
   color: var(--text-secondary);
-  transition: background var(--transition), border-color var(--transition);
+  box-shadow: var(--shadow-sm);
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
 }
 .btn-logout:hover {
   background: var(--bg-hover);
   border-color: var(--border-focus);
+  color: var(--text);
 }
 .btn-settings {
   padding: var(--sp-2) var(--sp-3);
-  background: none;
+  background: color-mix(in srgb, var(--bg-panel) 78%, transparent);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: var(--text-xs);
   color: var(--text-secondary);
   text-decoration: none;
-  transition: background var(--transition), border-color var(--transition);
+  box-shadow: var(--shadow-sm);
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
 }
 .btn-settings:hover {
   background: var(--bg-hover);
   border-color: var(--border-focus);
   color: var(--accent);
 }
+.btn-secondary-action {
+  padding: var(--sp-2) var(--sp-3);
+  background: color-mix(in srgb, var(--bg-panel) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: var(--radius);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  color: var(--accent);
+  box-shadow: var(--shadow-sm);
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+.btn-secondary-action:hover {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+}
+.hidden-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
 .btn-primary {
   padding: var(--sp-2) var(--sp-4);
   background: var(--accent);
   color: var(--text-inverse);
-  border: none;
+  border: 1px solid var(--accent);
   border-radius: var(--radius);
   font-size: var(--text-sm);
-  font-weight: 500;
-  transition: background var(--transition);
+  font-weight: 650;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 24%, transparent);
+  transition: background var(--transition), transform var(--transition), box-shadow var(--transition);
 }
-.btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 14px 32px color-mix(in srgb, var(--accent) 28%, transparent);
+}
 
 /* New project form */
 .new-project-form {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: var(--sp-5);
-  margin-bottom: var(--sp-6);
+  padding: var(--sp-6);
+  margin-bottom: var(--sp-8);
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
+  box-shadow: var(--shadow);
 }
 .new-project-form h3 {
   font-size: var(--text-lg);
   font-weight: 600;
   color: var(--text);
   margin: 0;
+}
+.import-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-sidebar);
+}
+.import-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 650;
 }
 .form-row {
   display: flex;
@@ -252,13 +463,14 @@ async function submitNewProject() {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: var(--text-sm);
-  background: var(--bg);
+  background: var(--bg-input);
   color: var(--text);
-  transition: border-color var(--transition);
+  transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
 }
 .form-input:focus, .form-textarea:focus {
   border-color: var(--border-focus);
   outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .form-input-sm { width: 120px; }
 .form-textarea { resize: vertical; }
@@ -278,44 +490,55 @@ async function submitNewProject() {
   border: none;
   border-radius: var(--radius);
   font-size: var(--text-sm);
-  font-weight: 500;
+  font-weight: 650;
   cursor: pointer;
-  transition: background var(--transition);
+  transition: background var(--transition), transform var(--transition);
 }
-.btn-submit:hover { background: var(--accent-hover); }
+.btn-submit:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
 .btn-cancel {
   padding: var(--sp-2) var(--sp-3);
-  background: none;
+  background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: var(--text-sm);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background var(--transition);
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
 }
-.btn-cancel:hover { background: var(--bg-hover); }
+.btn-cancel:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-focus);
+  color: var(--text);
+}
 
 /* Mode segmented buttons */
 .mode-segmented {
   display: flex;
   gap: 0;
+  width: fit-content;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-sidebar);
 }
 .mode-segmented button {
   padding: var(--sp-2) var(--sp-4);
-  border: 1px solid var(--border);
-  background: var(--bg);
+  border: 1px solid transparent;
+  background: transparent;
   font-size: var(--text-sm);
-  font-weight: 500;
+  font-weight: 650;
   color: var(--text-secondary);
   cursor: pointer;
   transition: background var(--transition), color var(--transition), border-color var(--transition);
 }
 .mode-segmented button:first-child {
-  border-radius: var(--radius) 0 0 var(--radius);
+  border-radius: var(--radius-sm);
 }
 .mode-segmented button:last-child {
-  border-radius: 0 var(--radius) var(--radius) 0;
-  border-left: none;
+  border-radius: var(--radius-sm);
 }
 .mode-segmented button.active {
   background: var(--accent);
@@ -328,20 +551,32 @@ async function submitNewProject() {
 
 .project-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: var(--sp-4);
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--sp-5);
 }
 .project-card {
+  position: relative;
+  overflow: hidden;
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: var(--sp-5);
+  padding: var(--sp-6);
   cursor: pointer;
-  transition: box-shadow var(--transition), border-color var(--transition);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--transition), border-color var(--transition), transform var(--transition);
+}
+.project-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 40%, var(--status-final)));
+  opacity: 0.75;
 }
 .project-card:hover {
   border-color: var(--border-focus);
   box-shadow: var(--shadow);
+  transform: translateY(-2px);
 }
 .card-header {
   display: flex;
@@ -350,9 +585,15 @@ async function submitNewProject() {
   gap: var(--sp-2);
   margin-bottom: var(--sp-2);
 }
+.card-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
 .card-title {
-  font-size: var(--text-lg);
-  font-weight: 600;
+  font-size: 1.05rem;
+  font-weight: 700;
   color: var(--text);
   margin: 0;
   line-height: 1.3;
@@ -360,8 +601,8 @@ async function submitNewProject() {
 .status-badge {
   flex-shrink: 0;
   font-size: var(--text-xs);
-  font-weight: 500;
-  padding: 2px 8px;
+  font-weight: 650;
+  padding: 3px 9px;
   border-radius: 10px;
   white-space: nowrap;
 }
@@ -377,18 +618,38 @@ async function submitNewProject() {
   background: var(--status-final-bg);
   color: var(--status-final);
 }
+.btn-card-delete {
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--status-error, #ef4444) 36%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--status-error-bg, #fef2f2) 72%, transparent);
+  color: var(--status-error, #ef4444);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  transition: opacity var(--transition), background var(--transition), border-color var(--transition);
+}
+.btn-card-delete:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-error, #ef4444) 12%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--status-error, #ef4444) 64%, var(--border));
+}
+.btn-card-delete:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
 .card-meta {
   font-size: var(--text-sm);
   color: var(--text-secondary);
-  margin-bottom: var(--sp-3);
+  margin-bottom: var(--sp-5);
   display: flex;
   align-items: center;
   gap: 0;
+  min-height: 24px;
+  flex-wrap: wrap;
 }
 .mode-badge {
   font-size: 10px;
-  font-weight: 500;
-  padding: 2px 8px;
+  font-weight: 700;
+  padding: 3px 8px;
   border-radius: 10px;
   white-space: nowrap;
 }
@@ -397,10 +658,24 @@ async function submitNewProject() {
 .meta-sep { margin: 0 var(--sp-1); color: var(--text-tertiary); }
 .card-footer {
   border-top: 1px solid var(--border);
-  padding-top: var(--sp-2);
+  padding-top: var(--sp-3);
 }
 .meta-time {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
+}
+
+@media (max-width: 720px) {
+  .project-list-page {
+    padding: var(--sp-6) var(--sp-4) var(--sp-8);
+  }
+  .page-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
 }
 </style>

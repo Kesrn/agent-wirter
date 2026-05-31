@@ -26,6 +26,24 @@ class ProjectResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TxtImportChapterPreview(BaseModel):
+    sequence_number: int
+    title: str
+    word_count: int
+    preview: str
+
+
+class TxtImportMeta(BaseModel):
+    filename: str | None = None
+    encoding: str | None = None
+    had_bom: bool | None = None
+    bytes: int | None = None
+    chars: int
+    word_count: int
+    chapter_count: int
+    chapters: list[TxtImportChapterPreview]
+
+
 # --- 专家 ---
 class ExpertCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -141,6 +159,30 @@ class ChapterResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class TxtImportResponse(BaseModel):
+    project: ProjectResponse
+    chapters: list[TxtImportChapterPreview]
+    import_meta: TxtImportMeta
+
+
+class ChapterStructureExtractRequest(BaseModel):
+    targets: list[str] = Field(default_factory=lambda: ["outlines", "characters", "world_entries", "hidden_threads"])
+    mode: str = Field(default="preview", pattern=r"^(preview|apply)$")
+    merge_strategy: str = Field(default="upsert", pattern=r"^(upsert|create_only)$")
+    include_existing_context: bool = True
+    extraction: dict | None = None
+
+
+class ChapterStructureApplyResult(BaseModel):
+    counts: dict[str, int]
+
+
+class ChapterStructureExtractResponse(BaseModel):
+    extraction: dict
+    preview: dict
+    applied: ChapterStructureApplyResult | None = None
 
 
 # --- 生成请求 ---

@@ -124,7 +124,16 @@ export const useProjectStore = defineStore('project', () => {
     return p
   }
 
-  return { projects, currentProjectId, currentProject, loadError, setCurrent, addProject, createProject, loadProjects, createProjectRemote }
+  async function deleteProjectRemote(projectId: string): Promise<void> {
+    await api.deleteProject(projectId)
+    projects.value = projects.value.filter(p => p.id !== projectId)
+    if (currentProjectId.value === projectId) currentProjectId.value = null
+  }
+
+  return {
+    projects, currentProjectId, currentProject, loadError,
+    setCurrent, addProject, createProject, loadProjects, createProjectRemote, deleteProjectRemote,
+  }
 })
 
 export const useChapterStore = defineStore('chapter', () => {

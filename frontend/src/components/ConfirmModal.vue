@@ -14,6 +14,7 @@ const emit = defineEmits<{
 <template>
   <div class="confirm-overlay" @click.self="emit('cancel')">
     <div class="confirm-modal">
+      <div class="confirm-mark" :class="{ danger }">!</div>
       <p class="confirm-message">{{ message }}</p>
       <div class="confirm-actions">
         <button class="btn-cancel" @click="emit('cancel')">取消</button>
@@ -27,19 +28,39 @@ const emit = defineEmits<{
 .confirm-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: color-mix(in srgb, #020617 58%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: var(--sp-4);
   z-index: 3000;
+  backdrop-filter: blur(6px);
 }
 .confirm-modal {
   background: var(--bg-panel);
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   padding: var(--sp-6);
-  max-width: 400px;
-  width: 90%;
+  max-width: 440px;
+  width: 100%;
+}
+.confirm-mark {
+  width: 36px;
+  height: 36px;
+  margin-bottom: var(--sp-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-weight: 800;
+  font-size: var(--text-lg);
+}
+.confirm-mark.danger {
+  background: color-mix(in srgb, var(--status-error) 14%, transparent);
+  color: var(--status-error);
 }
 .confirm-message {
   font-size: var(--text-base);
@@ -54,7 +75,7 @@ const emit = defineEmits<{
 }
 .btn-cancel {
   padding: var(--sp-2) var(--sp-4);
-  background: none;
+  background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: var(--text-sm);
@@ -78,5 +99,7 @@ const emit = defineEmits<{
 .btn-confirm.danger {
   background: var(--status-error);
 }
-.btn-confirm.danger:hover { background: #b91c1c; }
+.btn-confirm.danger:hover {
+  background: color-mix(in srgb, var(--status-error) 82%, #000);
+}
 </style>

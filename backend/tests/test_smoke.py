@@ -216,6 +216,107 @@ def test_project_mode_invalid():
     assert resp.status_code == 422
 
 
+def test_delete_project_removes_project_and_children():
+    headers = _auth_headers("deleteproject", "deletepass")
+    project_resp = client.post("/api/projects", json={"title": "待删除项目"}, headers=headers)
+    assert project_resp.status_code == 200
+    project_id = project_resp.json()["id"]
+
+    chapter_resp = client.post(
+        f"/api/projects/{project_id}/chapters",
+        json={"title": "第一章", "sequence_number": 1},
+        headers=headers,
+    )
+    assert chapter_resp.status_code == 200
+    patch_resp = client.patch(
+        f"/api/projects/{project_id}/chapters/1",
+        json={"content": "需要一起删除的正文"},
+        headers=headers,
+    )
+    assert patch_resp.status_code == 200
+
+    world_resp = client.post(
+        f"/api/projects/{project_id}/world-entries",
+        json={"title": "设定", "content": "需要一起删除的世界观"},
+        headers=headers,
+    )
+    assert world_resp.status_code == 200
+    character_resp = client.post(
+        f"/api/projects/{project_id}/characters",
+        json={"name": "角色", "profile": "需要一起删除的角色"},
+        headers=headers,
+    )
+    assert character_resp.status_code == 200
+
+    other_headers = _auth_headers("otherdeleter", "deletepass")
+    forbidden_resp = client.delete(f"/api/projects/{project_id}", headers=other_headers)
+    assert forbidden_resp.status_code == 404
+
+    delete_resp = client.delete(f"/api/projects/{project_id}", headers=headers)
+    assert delete_resp.status_code == 204
+
+    assert client.get(f"/api/projects/{project_id}", headers=headers).status_code == 404
+    list_resp = client.get("/api/projects", headers=headers)
+    assert all(item["id"] != project_id for item in list_resp.json())
+    assert client.get(f"/api/projects/{project_id}/chapters", headers=headers).status_code == 404
+
+
+def test_import_txt_project_creates_novel_chapters():
+    headers = _auth_headers("txtimporter", "txtpass")
+    content = "导入小说\n作者：佚名\n\n第1章 开端\n林澈来到旧城。\n\n第二章 转折\n档案突然出现。"
+    resp = client.post(
+        "/api/projects/import-txt",
+        headers=headers,
+        data={"title": "导入小说"},
+        files={"file": ("demo.txt", content.encode("utf-8"), "text/plain")},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["project"]["mode"] == "novel"
+    assert data["project"]["title"] == "导入小说"
+    assert data["import_meta"]["chapter_count"] == 2
+    assert len(data["chapters"]) == 2
+    assert data["chapters"][0]["title"] == "开端"
+    assert "content" not in data["chapters"][0]
+
+    project_id = data["project"]["id"]
+    chapters_resp = client.get(f"/api/projects/{project_id}/chapters", headers=headers)
+    assert chapters_resp.status_code == 200
+    assert len(chapters_resp.json()) == 2
+    assert chapters_resp.json()[0]["content"] == "林澈来到旧城。"
+
+
+def test_import_txt_project_allows_many_chapters_with_txt_limit():
+    old_upload_limit = settings.MAX_UPLOAD_BYTES
+    old_txt_limit = settings.MAX_TXT_IMPORT_BYTES
+    object.__setattr__(settings, "MAX_UPLOAD_BYTES", 32)
+    object.__setattr__(settings, "MAX_TXT_IMPORT_BYTES", 128 * 1024)
+    try:
+        headers = _auth_headers("longtxtimporter", "txtpass")
+        content = "\n".join(
+            f"第{i}章 标题{i}\n这是第{i}章的正文，包含足够的导入内容。"
+            for i in range(1, 81)
+        )
+        assert len(content.encode("utf-8")) > settings.MAX_UPLOAD_BYTES
+
+        resp = client.post(
+            "/api/projects/import-txt",
+            headers=headers,
+            data={"title": "长篇导入小说"},
+            files={"file": ("long-demo.txt", content.encode("utf-8"), "text/plain")},
+        )
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["import_meta"]["chapter_count"] == 80
+        assert len(data["chapters"]) == 80
+        assert data["chapters"][0]["title"] == "标题1"
+        assert data["chapters"][-1]["sequence_number"] == 80
+    finally:
+        object.__setattr__(settings, "MAX_UPLOAD_BYTES", old_upload_limit)
+        object.__setattr__(settings, "MAX_TXT_IMPORT_BYTES", old_txt_limit)
+
+
 def test_project_not_found_detail():
     headers = _auth_headers()
     fake_id = "00000000-0000-0000-0000-000000000000"
@@ -267,6 +368,60 @@ def test_duplicate_sequence_number_same_project():
         "title": "又一个第一章", "sequence_number": 1,
     }, headers=headers)
     assert resp3.status_code == 400
+
+
+def test_extract_chapter_structure_preview_and_apply():
+    headers = _auth_headers("extractor", "extractpass")
+    project_resp = client.post("/api/projects", json={"title": "提炼测试"}, headers=headers)
+    project_id = project_resp.json()["id"]
+
+    chapter_resp = client.post(
+        f"/api/projects/{project_id}/chapters",
+        json={"title": "第一章", "sequence_number": 1},
+        headers=headers,
+    )
+    assert chapter_resp.status_code == 200
+
+    patch_resp = client.patch(
+        f"/api/projects/{project_id}/chapters/1",
+        json={"content": "林澈在旧城档案馆发现了失踪档案。"},
+        headers=headers,
+    )
+    assert patch_resp.status_code == 200
+
+    preview_resp = client.post(
+        f"/api/projects/{project_id}/chapters/1/extract-structure",
+        json={"mode": "preview"},
+        headers=headers,
+    )
+    assert preview_resp.status_code == 200, preview_resp.text
+    extraction = preview_resp.json()["extraction"]
+    assert extraction["outlines"]
+    assert extraction["characters"]
+    assert extraction["world_entries"]
+
+    apply_resp = client.post(
+        f"/api/projects/{project_id}/chapters/1/extract-structure",
+        json={"mode": "apply", "extraction": extraction},
+        headers=headers,
+    )
+    assert apply_resp.status_code == 200, apply_resp.text
+    counts = apply_resp.json()["applied"]["counts"]
+    assert counts["outlines"] >= 1
+    assert counts["characters"] >= 1
+
+    outlines_resp = client.get(f"/api/projects/{project_id}/outlines", headers=headers)
+    chars_resp = client.get(f"/api/projects/{project_id}/characters", headers=headers)
+    world_resp = client.get(f"/api/projects/{project_id}/world-entries", headers=headers)
+    hidden_resp = client.get(f"/api/projects/{project_id}/hidden-threads", headers=headers)
+    assert outlines_resp.status_code == 200
+    assert chars_resp.status_code == 200
+    assert world_resp.status_code == 200
+    assert hidden_resp.status_code == 200
+    assert len(outlines_resp.json()) >= 1
+    assert len(chars_resp.json()) >= 1
+    assert len(world_resp.json()) >= 1
+    assert len(hidden_resp.json()) >= 1
 
 
 def test_same_sequence_number_different_projects():

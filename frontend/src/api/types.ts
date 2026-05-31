@@ -356,6 +356,30 @@ export interface ProjectCreatePayload {
   mode?: ProjectMode
 }
 
+export interface TxtImportChapterPreview {
+  sequence_number: number
+  title: string
+  word_count: number
+  preview: string
+}
+
+export interface TxtImportMeta {
+  filename: string | null
+  encoding: string | null
+  had_bom: boolean | null
+  bytes: number | null
+  chars: number
+  word_count: number
+  chapter_count: number
+  chapters: TxtImportChapterPreview[]
+}
+
+export interface TxtImportResponse {
+  project: ApiProject
+  chapters: TxtImportChapterPreview[]
+  import_meta: TxtImportMeta
+}
+
 export interface ChapterCreatePayload {
   title: string
   outline?: string
@@ -467,6 +491,70 @@ export interface HiddenThreadUpdatePayload {
   name?: string
   description?: string
   chapter_nums?: number[]
+}
+
+export type StructureExtractMode = 'preview' | 'apply'
+export type StructureConfidence = 'low' | 'medium' | 'high'
+export type StructureRoleType = 'protagonist' | 'antagonist' | 'supporting' | 'minor'
+
+export interface ExtractedOutline {
+  sequence_number: number
+  title: string
+  summary?: string | null
+  turning_point?: string | null
+}
+
+export interface ExtractedCharacter {
+  name: string
+  role_type: StructureRoleType
+  profile?: string | null
+  faction?: string | null
+  appearance_count?: number
+  metadata?: Record<string, unknown> | null
+}
+
+export interface ExtractedWorldEntry {
+  title: string
+  category?: string
+  content: string
+  rules?: Record<string, unknown> | null
+  confidence?: StructureConfidence
+}
+
+export interface ExtractedHiddenThread {
+  name: string
+  description?: string | null
+  chapter_nums?: number[] | null
+}
+
+export interface ExtractedCharacterRelation {
+  source: string
+  target: string
+  description: string
+}
+
+export interface StructureExtractPayload {
+  outlines?: ExtractedOutline[]
+  characters?: ExtractedCharacter[]
+  world_entries?: ExtractedWorldEntry[]
+  hidden_threads?: ExtractedHiddenThread[]
+  character_relations?: ExtractedCharacterRelation[]
+}
+
+export interface ChapterStructureExtractRequest {
+  targets?: string[]
+  mode?: StructureExtractMode
+  merge_strategy?: 'upsert' | 'create_only'
+  include_existing_context?: boolean
+  extraction?: StructureExtractPayload
+}
+
+export interface ChapterStructureExtractResponse {
+  extraction: StructureExtractPayload
+  preview: Record<string, unknown>
+  applied?: {
+    counts: Record<string, number>
+  } | null
 }
 
 export type GenerateMode = 'continue' | 'full_pipeline' | 'enhance' | 'summarize'

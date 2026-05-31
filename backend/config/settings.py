@@ -48,6 +48,7 @@ class Settings:
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:3000")
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
     MAX_UPLOAD_BYTES: int = int(os.getenv("MAX_UPLOAD_BYTES", str(5 * 1024 * 1024)))
+    MAX_TXT_IMPORT_BYTES: int = int(os.getenv("MAX_TXT_IMPORT_BYTES", str(50 * 1024 * 1024)))
 
 
 settings = Settings()

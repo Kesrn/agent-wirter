@@ -848,10 +848,12 @@ defineExpose({ testExpert, cancelStream })
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--sp-3);
 }
 .panel-header h3 {
   font-size: var(--text-base);
-  font-weight: 600;
+  font-weight: 760;
+  margin: 0;
 }
 .panel-actions {
   display: flex;
@@ -871,26 +873,40 @@ defineExpose({ testExpert, cancelStream })
   padding: var(--sp-2) var(--sp-4);
   background: var(--accent);
   color: var(--text-inverse);
-  border: none;
+  border: 1px solid var(--accent);
   border-radius: var(--radius);
   font-size: var(--text-sm);
-  font-weight: 500;
-  transition: background var(--transition);
+  font-weight: 700;
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 22%, transparent);
+  transition: background var(--transition), transform var(--transition), box-shadow var(--transition);
 }
-.btn-generate:disabled { background: var(--status-pending); cursor: not-allowed; }
-.btn-generate:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-generate:disabled {
+  background: var(--status-pending);
+  border-color: var(--status-pending);
+  box-shadow: none;
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.btn-generate:hover:not(:disabled) {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px color-mix(in srgb, var(--accent) 28%, transparent);
+}
 .btn-cancel-stream {
   padding: var(--sp-2) var(--sp-4);
   background: var(--status-error);
   color: var(--text-inverse);
-  border: none;
+  border: 1px solid var(--status-error);
   border-radius: var(--radius);
   font-size: var(--text-sm);
-  font-weight: 500;
-  transition: background var(--transition);
+  font-weight: 700;
+  transition: opacity var(--transition), transform var(--transition);
   cursor: pointer;
 }
-.btn-cancel-stream:hover { opacity: 0.9; }
+.btn-cancel-stream:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
 
 .quick-actions {
   display: flex;
@@ -898,17 +914,20 @@ defineExpose({ testExpert, cancelStream })
 }
 .quick-actions button {
   flex: 1;
-  padding: var(--sp-2);
+  padding: 9px var(--sp-2);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-panel);
   font-size: var(--text-xs);
+  font-weight: 650;
   color: var(--text-secondary);
-  transition: background var(--transition), border-color var(--transition);
+  box-shadow: var(--shadow-sm);
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
 }
 .quick-actions button:hover {
-  background: var(--bg-hover);
+  background: var(--accent-subtle);
   border-color: var(--border-focus);
+  color: var(--accent);
 }
 
 .section-label {
@@ -946,18 +965,20 @@ defineExpose({ testExpert, cancelStream })
   flex-direction: column;
 }
 .stream-output {
-  background: var(--bg-panel);
+  background: var(--code-block-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: var(--sp-3);
   max-height: 280px;
   overflow-y: auto;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--bg-panel) 72%, transparent);
 }
 .stream-output pre {
   font-size: var(--text-xs);
-  line-height: 1.6;
+  line-height: 1.65;
   white-space: pre-wrap;
   color: var(--text);
+  font-family: var(--font-mono);
 }
 
 .draft-section {
@@ -965,17 +986,19 @@ defineExpose({ testExpert, cancelStream })
   flex-direction: column;
 }
 .draft-preview {
-  background: var(--bg-hover);
-  border: 1px solid var(--border-focus);
+  background: var(--paper-bg);
+  border: 1px solid var(--paper-border);
   border-radius: var(--radius);
-  padding: var(--sp-3);
+  padding: var(--sp-4);
   max-height: 320px;
   overflow-y: auto;
+  box-shadow: var(--shadow-sm);
 }
 .draft-preview pre {
-  font-size: var(--text-sm);
-  line-height: 1.8;
+  font-family: var(--font-serif);
+  font-size: var(--text-base);
+  line-height: 2;
   white-space: pre-wrap;
-  color: var(--text-primary);
+  color: var(--text);
 }
 </style>

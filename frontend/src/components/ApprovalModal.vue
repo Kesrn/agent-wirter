@@ -111,7 +111,7 @@ function modsLabel(): string {
   line-height: 1.7;
   margin: 0;
   font-family: inherit;
-  color: var(--text-primary, #111827);
+  color: var(--text);
 }
 
 .modal-actions {
@@ -121,7 +121,7 @@ function modsLabel(): string {
   gap: var(--sp-3, 12px);
   padding: var(--sp-3, 12px) var(--sp-4, 16px);
   border-top: 1px solid var(--border, #e5e7eb);
-  background: color-mix(in srgb, var(--bg-sidebar, #f7f7f8) 72%, #fff);
+  background: var(--bg-sidebar);
 }
 
 .modal-action-group {

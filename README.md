@@ -132,6 +132,8 @@ cp .env.example .env
 | `EMBEDDING_API_KEY` | embedding API Key | 空 |
 | `JWT_SECRET` | JWT 和 API Key 加密相关密钥 | 空，开发环境会自动生成 |
 | `CORS_ORIGINS` | 允许的前端源 | `http://localhost:5173,http://localhost:3000` |
+| `MAX_UPLOAD_BYTES` | 图片等通用上传大小上限 | `5242880` |
+| `MAX_TXT_IMPORT_BYTES` | TXT 小说导入大小上限，不限制章节数量 | `52428800` |
 
 默认 `mock` 模式不需要 API Key，适合本地演示和开发。
 

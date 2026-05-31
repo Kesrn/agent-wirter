@@ -9,6 +9,7 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from typing import AsyncIterator
+import json
 import re
 
 from config.settings import settings
@@ -52,6 +53,14 @@ class MockProvider(LLMProvider):
             ("给出3个" in prompt_lower or "给出5个" in prompt_lower or "json数组" in prompt_lower or "json字符串数组" in prompt_lower)
             and ("方向" in prompt_lower or "建议" in prompt_lower or "direction" in prompt_lower or "suggestion" in prompt_lower)
         )
+        is_structure_extraction_request = (
+            "结构提炼" in prompt_lower
+            or ("只输出严格 json" in prompt_lower and "character_relations" in prompt_lower)
+            or ("world_entries" in prompt_lower and "hidden_threads" in prompt_lower)
+        )
+        if is_structure_extraction_request:
+            return self._mock_structure_extraction(user_prompt)
+
         if is_direction_request:
             # Direction/suggestion generation requests (step 1 only)
             if is_article_request:
@@ -141,6 +150,58 @@ class MockProvider(LLMProvider):
             "建议先用一句话点出核心问题，再用三到四个小段落展开价值、证据和使用场景。"
             "表达上保持具体，少用空泛形容词，多给读者能立刻理解的例子。\n\n"
             "如果目标是转化，结尾不要停在总结，而要给出明确行动：了解更多、预约咨询、下载资料或开始试用。"
+        )
+
+    def _mock_structure_extraction(self, user_prompt: str) -> str:
+        title_match = re.search(r"###\s*第?(\d+|\?)章\s+(.+)", user_prompt)
+        sequence = 1
+        title = "导入章节"
+        if title_match:
+            try:
+                sequence = int(title_match.group(1))
+            except ValueError:
+                sequence = 1
+            title = title_match.group(2).strip()[:80] or title
+
+        return json.dumps(
+            {
+                "outlines": [
+                    {
+                        "sequence_number": sequence,
+                        "title": title,
+                        "summary": "主角在关键场景中面对新的信息与选择。",
+                        "turning_point": "隐藏线索浮出水面。",
+                    }
+                ],
+                "characters": [
+                    {
+                        "name": "林澈",
+                        "role_type": "protagonist",
+                        "profile": "冷静敏锐的主角，正在追查事件真相。",
+                        "faction": None,
+                        "appearance_count": 1,
+                        "metadata": {},
+                    }
+                ],
+                "world_entries": [
+                    {
+                        "title": "旧城档案馆",
+                        "category": "地点",
+                        "content": "保存旧城历史记录的场所，可能藏有关键资料。",
+                        "rules": {},
+                        "confidence": "medium",
+                    }
+                ],
+                "hidden_threads": [
+                    {
+                        "name": "失踪档案",
+                        "description": "多年前遗失的档案与当前事件存在关联。",
+                        "chapter_nums": [sequence],
+                    }
+                ],
+                "character_relations": [],
+            },
+            ensure_ascii=False,
         )
 
     async def generate_stream(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> AsyncIterator[str]:

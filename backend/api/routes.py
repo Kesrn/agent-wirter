@@ -4,15 +4,16 @@ import json
 import logging
 import os
 import re
+import shutil
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel, Field
 from urllib.parse import quote
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import delete, select, func
 
 from db.session import get_db
 from models.project import Project
@@ -29,8 +30,10 @@ from models.outline import Outline
 from models.hidden_thread import HiddenThread
 from schemas.api import (
     ProjectCreate, ProjectResponse,
+    TxtImportResponse,
     ExpertCreate, ExpertUpdate, ExpertResponse,
     ChapterCreate, ChapterResponse, ChapterUpdate,
+    ChapterStructureExtractRequest, ChapterStructureExtractResponse,
     ChapterVersionResponse, ChapterVersionListItemResponse, ChapterVersionDiffRequest, ChapterVersionDiffResponse,
     WorldEntryCreate, WorldEntryUpdate, WorldEntryResponse,
     CharacterCreate, CharacterUpdate, CharacterResponse,
@@ -57,6 +60,13 @@ from rag.embedding_service import generate_embedding, _update_embedding_bg
 from services.diff_service import compute_diff
 from services.chapter_save import save_chapter_content
 from services.document_save import save_document_content
+from services.txt_import import decode_txt_bytes, split_txt_into_chapters, build_import_meta
+from services.structure_extraction import (
+    apply_structure_extraction,
+    build_structure_preview,
+    extract_structure_with_provider,
+    normalize_structure_result,
+)
 from services.generation_record_service import (
     create_generation_record,
     get_generation_record,
@@ -79,6 +89,14 @@ ALLOWED_IMAGE_TYPES = {
     "image/gif": "gif",
     "image/webp": "webp",
 }
+
+
+def _format_bytes_limit(size: int) -> str:
+    if size >= 1024 * 1024:
+        return f"{size / 1024 / 1024:g}MB"
+    if size >= 1024:
+        return f"{size / 1024:g}KB"
+    return f"{size}B"
 
 
 def _parse_directions(text: str) -> list[str]:
@@ -197,6 +215,54 @@ async def _verify_project_owner(project_id: uuid.UUID, user_id: str, db: AsyncSe
     return project
 
 
+async def _delete_project_tree(project_id: uuid.UUID, db: AsyncSession) -> None:
+    """Delete a project and all project-scoped rows."""
+    chapter_ids = select(Chapter.id).where(Chapter.project_id == project_id)
+    document_ids = select(Document.id).where(Document.project_id == project_id)
+
+    await db.execute(delete(GenerationRecord).where(GenerationRecord.project_id == project_id))
+    await db.execute(delete(ChapterVersion).where(ChapterVersion.chapter_id.in_(chapter_ids)))
+    await db.execute(delete(DocumentVersion).where(DocumentVersion.document_id.in_(document_ids)))
+    await db.execute(delete(CharacterRelation).where(CharacterRelation.project_id == project_id))
+    await db.execute(delete(Outline).where(Outline.project_id == project_id))
+    await db.execute(delete(HiddenThread).where(HiddenThread.project_id == project_id))
+    await db.execute(delete(WorldEntry).where(WorldEntry.project_id == project_id))
+    await db.execute(delete(Character).where(Character.project_id == project_id))
+    await db.execute(delete(Expert).where(Expert.project_id == project_id))
+    await db.execute(delete(Chapter).where(Chapter.project_id == project_id))
+    await db.execute(delete(Document).where(Document.project_id == project_id))
+    await db.execute(delete(Project).where(Project.id == project_id))
+
+
+async def _build_structure_context(project_id: uuid.UUID, db: AsyncSession) -> str:
+    """Build compact existing project context so extraction can avoid duplicates."""
+    char_result = await db.execute(
+        select(Character.name).where(Character.project_id == project_id).order_by(Character.created_at.asc()).limit(40)
+    )
+    outline_result = await db.execute(
+        select(Outline.sequence_number, Outline.title).where(Outline.project_id == project_id).order_by(Outline.sequence_number.asc()).limit(80)
+    )
+    world_result = await db.execute(
+        select(WorldEntry.title).where(WorldEntry.project_id == project_id).order_by(WorldEntry.created_at.asc()).limit(40)
+    )
+    thread_result = await db.execute(
+        select(HiddenThread.name).where(HiddenThread.project_id == project_id).order_by(HiddenThread.created_at.asc()).limit(40)
+    )
+
+    characters = [name for name in char_result.scalars().all() if name]
+    outlines = [f"{seq}. {title}" for seq, title in outline_result.all() if title]
+    world_entries = [title for title in world_result.scalars().all() if title]
+    hidden_threads = [name for name in thread_result.scalars().all() if name]
+
+    sections = [
+        ("已有角色", characters),
+        ("已有大纲", outlines),
+        ("已有世界观", world_entries),
+        ("已有暗线", hidden_threads),
+    ]
+    return "\n".join(f"{label}: {', '.join(values) if values else '无'}" for label, values in sections)
+
+
 def _image_extension_from_bytes(content_type: str, data: bytes) -> str | None:
     content_type = content_type.split(";", 1)[0].strip().lower()
     ext = ALLOWED_IMAGE_TYPES.get(content_type)
@@ -291,6 +357,96 @@ async def create_project(
     return project
 
 
+@router.post("/projects/import-txt", response_model=TxtImportResponse)
+async def import_txt_project(
+    request: Request,
+    file: UploadFile = File(...),
+    title: str | None = Form(default=None),
+    description: str | None = Form(default=None),
+    target_words: int | None = Form(default=None),
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    filename = file.filename or "未命名.txt"
+    if not filename.lower().endswith(".txt"):
+        raise HTTPException(status_code=415, detail="仅支持 TXT 文件")
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > settings.MAX_TXT_IMPORT_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"TXT 文件不能超过 {_format_bytes_limit(settings.MAX_TXT_IMPORT_BYTES)}",
+                )
+        except ValueError:
+            raise HTTPException(status_code=400, detail="无效的上传大小")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="TXT 文件内容为空")
+    if len(data) > settings.MAX_TXT_IMPORT_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"TXT 文件不能超过 {_format_bytes_limit(settings.MAX_TXT_IMPORT_BYTES)}",
+        )
+    if target_words is not None and target_words < 1:
+        raise HTTPException(status_code=400, detail="目标字数必须大于 0")
+
+    decoded = decode_txt_bytes(data, return_info=True)
+    text = decoded.text.strip()
+    chapters_payload = split_txt_into_chapters(text, filename=filename)
+    if not chapters_payload:
+        raise HTTPException(status_code=400, detail="TXT 文件没有可导入的正文")
+
+    project_title = (title or os.path.splitext(filename)[0] or "导入小说").strip()[:200]
+    if not project_title:
+        project_title = "导入小说"
+
+    project = Project(
+        title=project_title,
+        description=(description or "").strip() or None,
+        target_words=target_words or 200000,
+        mode="novel",
+        owner_id=user.id,
+    )
+
+    created_chapters: list[Chapter] = []
+    try:
+        db.add(project)
+        await db.flush()
+
+        for tpl in BUILTIN_EXPERTS:
+            db.add(Expert(project_id=project.id, is_builtin=True, **tpl))
+
+        for item in chapters_payload:
+            chapter = Chapter(
+                project_id=project.id,
+                title=item["title"],
+                sequence_number=item["sequence_number"],
+            )
+            db.add(chapter)
+            await db.flush()
+            await save_chapter_content(db, chapter, item.get("content") or "", source="manual")
+            created_chapters.append(chapter)
+
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+
+    await db.refresh(project)
+    for chapter in created_chapters:
+        await db.refresh(chapter)
+
+    import_meta = build_import_meta(filename=filename, data=data, chapters=chapters_payload)
+    return {
+        "project": project,
+        "chapters": import_meta["chapters"],
+        "import_meta": import_meta,
+    }
+
+
 @router.get("/projects", response_model=list[ProjectResponse])
 async def list_projects(
     db: AsyncSession = Depends(get_db),
@@ -316,6 +472,31 @@ async def get_project(
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
     return project
+
+
+@router.delete("/projects/{project_id}", status_code=204)
+async def delete_project(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    try:
+        await _delete_project_tree(uid, db)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+
+    project_media_dir = os.path.join(settings.UPLOAD_DIR, "projects", str(uid))
+    try:
+        if os.path.isdir(project_media_dir):
+            shutil.rmtree(project_media_dir)
+    except OSError as exc:
+        logger.warning("删除项目媒体目录失败 %s: %s", project_media_dir, exc)
+
+    return None
 
 
 # ==================== 章节 ====================
@@ -412,6 +593,61 @@ async def update_chapter(
     await db.commit()
     await db.refresh(chapter)
     return chapter
+
+
+@router.post("/projects/{project_id}/chapters/{sequence_number}/extract-structure", response_model=ChapterStructureExtractResponse)
+async def extract_chapter_structure(
+    project_id: str,
+    sequence_number: int,
+    req: ChapterStructureExtractRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    project = await _verify_project_owner(uid, user.id, db)
+    if project.mode != "novel":
+        raise HTTPException(status_code=400, detail="结构提炼仅支持小说项目")
+
+    result = await db.execute(
+        select(Chapter).where(Chapter.project_id == uid, Chapter.sequence_number == sequence_number)
+    )
+    chapter = result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    if not (chapter.content or "").strip() and req.extraction is None:
+        raise HTTPException(status_code=400, detail="章节正文为空，无法提炼")
+
+    extraction = normalize_structure_result(req.extraction) if req.extraction is not None else None
+    if extraction is None:
+        extra_context = None
+        if req.include_existing_context:
+            extra_context = await _build_structure_context(uid, db)
+        provider = get_llm_provider(await get_user_llm_config(user.id, db))
+        extraction = await extract_structure_with_provider(
+            provider,
+            chapter=chapter,
+            project_title=project.title,
+            extra_context=extra_context,
+        )
+
+    preview = build_structure_preview(extraction)
+    applied = None
+    if req.mode == "apply":
+        applied_result = await apply_structure_extraction(
+            db,
+            uid,
+            extraction,
+            background_tasks=background_tasks,
+            commit=True,
+        )
+        applied = {"counts": applied_result["counts"]}
+
+    return {
+        "extraction": extraction,
+        "preview": preview,
+        "applied": applied,
+    }
 
 
 @router.delete("/projects/{project_id}/chapters/{sequence_number}")

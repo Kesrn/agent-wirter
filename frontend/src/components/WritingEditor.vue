@@ -9,6 +9,7 @@ import DocumentRevisionPanel from './DocumentRevisionPanel.vue'
 import GenerationHistoryPanel from './GenerationHistoryPanel.vue'
 import VersionDiffViewer from './VersionDiffViewer.vue'
 import { renderMarkdown } from '../utils/markdown'
+import { formatNovelChapterTitle } from '../utils/chapterTitle'
 
 const props = defineProps<{
   projectId: string
@@ -39,6 +40,11 @@ const articlePreviewHtml = computed(() => articlePreviewEmpty.value ? '' : rende
 
 function unitPosition(unit: WritingUnit): number {
   return 'position' in unit ? unit.position : unit.chapter_num
+}
+
+function editorTitle(unit: WritingUnit): string {
+  if (props.mode === 'article') return unit.title
+  return formatNovelChapterTitle(unitPosition(unit), unit.title)
 }
 
 function toggleVersionPanel() {
@@ -183,8 +189,13 @@ function syncTextareaHeight() {
   const parentStyle = window.getComputedStyle(parent)
   const verticalPadding =
     parseFloat(parentStyle.paddingTop || '0') + parseFloat(parentStyle.paddingBottom || '0')
-  const minHeight = Math.max(320, parent.clientHeight - verticalPadding)
+  if (props.mode === 'novel') {
+    const fillHeight = Math.max(360, parent.clientHeight - verticalPadding)
+    el.style.height = `${fillHeight}px`
+    return
+  }
 
+  const minHeight = Math.max(320, parent.clientHeight - verticalPadding)
   el.style.height = 'auto'
   el.style.height = `${Math.max(minHeight, el.scrollHeight)}px`
 }
@@ -237,8 +248,10 @@ onMounted(() => {
   if (saved) selectedFont.value = saved
   const savedArticleView = localStorage.getItem('article_markdown_view')
   if (isArticleViewMode(savedArticleView)) articleViewMode.value = savedArticleView
+  window.addEventListener('resize', syncTextareaHeight)
   nextTick(syncTextareaHeight)
 })
+onUnmounted(() => window.removeEventListener('resize', syncTextareaHeight))
 
 function setFont(value: string) {
   selectedFont.value = value
@@ -287,15 +300,21 @@ function snapshotEditorScroll(el: HTMLTextAreaElement) {
     scroller,
     scrollTop: scroller?.scrollTop ?? 0,
     scrollLeft: scroller?.scrollLeft ?? 0,
+    textareaScrollTop: el.scrollTop,
+    textareaScrollLeft: el.scrollLeft,
     windowX: window.scrollX,
     windowY: window.scrollY,
   }
 }
 
-function restoreEditorScroll(snapshot: ReturnType<typeof snapshotEditorScroll>) {
+function restoreEditorScroll(snapshot: ReturnType<typeof snapshotEditorScroll>, el?: HTMLTextAreaElement | null) {
   if (snapshot.scroller) {
     snapshot.scroller.scrollTop = snapshot.scrollTop
     snapshot.scroller.scrollLeft = snapshot.scrollLeft
+  }
+  if (el) {
+    el.scrollTop = snapshot.textareaScrollTop
+    el.scrollLeft = snapshot.textareaScrollLeft
   }
   window.scrollTo(snapshot.windowX, snapshot.windowY)
 }
@@ -349,7 +368,7 @@ function applyEditorText(
     if (!el) return
     el.focus({ preventScroll: true })
     el.setSelectionRange(selectionStart, selectionEnd)
-    if (scrollSnapshot) restoreEditorScroll(scrollSnapshot)
+    if (scrollSnapshot) restoreEditorScroll(scrollSnapshot, el)
   })
 }
 
@@ -727,7 +746,7 @@ function onTextareaInput(e: Event) {
   <div class="writing-editor">
     <div class="editor-header">
       <span v-if="currentUnit" class="editor-title">
-        {{ mode === 'article' ? currentUnit.title : `第${unitPosition(currentUnit)}章 · ${currentUnit.title}` }}
+        {{ editorTitle(currentUnit) }}
       </span>
       <span v-if="currentUnit" class="editor-status" :class="currentUnit.status">
         {{ currentUnit.status === 'final' ? '终稿' : currentUnit.status === 'reviewing' ? '审核中' : '草稿' }}
@@ -831,6 +850,7 @@ function onTextareaInput(e: Event) {
         class="editor-content"
         :class="{
           'with-panel': showVersionPanel || showGenerationPanel,
+          'novel-content': mode === 'novel',
           'article-content': mode === 'article',
           'article-preview-only': mode === 'article' && articleViewMode === 'preview',
           'article-split': mode === 'article' && articleViewMode === 'split',
@@ -943,20 +963,22 @@ function onTextareaInput(e: Event) {
   align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-3) var(--sp-5);
-  background: var(--bg-panel);
+  background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
   flex-shrink: 0;
+  box-shadow: 0 1px 0 rgba(17, 24, 39, 0.03);
+  backdrop-filter: blur(10px);
 }
 .editor-title {
-  font-weight: 600;
+  font-weight: 720;
   font-size: var(--text-base);
   color: var(--text);
 }
 .editor-status {
   font-size: 10px;
-  font-weight: 500;
-  padding: 2px 8px;
+  font-weight: 700;
+  padding: 3px 8px;
   border-radius: 8px;
 }
 .editor-status.draft { background: var(--status-draft-bg); color: var(--status-draft); }
@@ -969,15 +991,19 @@ function onTextareaInput(e: Event) {
   padding: var(--sp-1) var(--sp-3);
   background: var(--accent);
   color: var(--text-inverse);
-  border: none;
+  border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
   font-size: var(--text-xs);
-  font-weight: 500;
+  font-weight: 700;
   cursor: pointer;
-  transition: opacity var(--transition);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 18%, transparent);
+  transition: opacity var(--transition), background var(--transition), transform var(--transition);
 }
 .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-save:hover:not(:disabled) { opacity: 0.9; }
+.btn-save:hover:not(:disabled) {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
 .dirty-indicator {
   font-size: var(--text-xs);
   color: var(--status-reviewing);
@@ -993,14 +1019,15 @@ function onTextareaInput(e: Event) {
 .btn-version-toggle {
   margin-left: var(--sp-2);
   padding: var(--sp-1) var(--sp-3);
-  background: var(--bg);
+  background: var(--bg-panel);
   color: var(--text-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: var(--text-xs);
-  font-weight: 500;
+  font-weight: 650;
   cursor: pointer;
   transition: all var(--transition);
+  box-shadow: var(--shadow-sm);
 }
 .btn-version-toggle:hover {
   background: var(--bg-hover);
@@ -1021,7 +1048,7 @@ function onTextareaInput(e: Event) {
   padding: var(--sp-1) var(--sp-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg);
+  background: var(--bg-panel);
   color: var(--text-secondary);
   cursor: pointer;
 }
@@ -1044,7 +1071,8 @@ function onTextareaInput(e: Event) {
   padding: 2px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg);
+  background: color-mix(in srgb, var(--bg-sidebar) 72%, var(--bg-panel));
+  box-shadow: var(--shadow-sm);
 }
 .view-segment {
   display: inline-flex;
@@ -1052,7 +1080,8 @@ function onTextareaInput(e: Event) {
   padding: 2px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg);
+  background: color-mix(in srgb, var(--bg-sidebar) 72%, var(--bg-panel));
+  box-shadow: var(--shadow-sm);
 }
 .view-segment-btn {
   min-width: 44px;
@@ -1063,7 +1092,7 @@ function onTextareaInput(e: Event) {
   background: transparent;
   color: var(--text-secondary);
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1;
 }
 .view-segment-btn:hover {
@@ -1079,10 +1108,10 @@ function onTextareaInput(e: Event) {
   padding: 0 var(--sp-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg);
+  background: var(--bg-panel);
   color: var(--text-secondary);
   font-size: var(--text-xs);
-  font-weight: 500;
+  font-weight: 650;
   cursor: pointer;
 }
 .tb-select:disabled {
@@ -1096,11 +1125,11 @@ function onTextareaInput(e: Event) {
   width: 28px;
   height: 26px;
   padding: 0;
-  background: var(--bg);
+  background: transparent;
   border: 1px solid transparent;
   border-radius: 4px;
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-secondary);
   cursor: pointer;
   transition: background var(--transition), border-color var(--transition), color var(--transition);
@@ -1111,6 +1140,7 @@ function onTextareaInput(e: Event) {
 .tb-select:hover {
   background: var(--bg-hover);
   border-color: var(--border-focus);
+  color: var(--accent);
 }
 .tb-btn:disabled {
   opacity: 0.38;
@@ -1136,13 +1166,14 @@ function onTextareaInput(e: Event) {
   align-items: center;
   justify-content: center;
   padding: var(--sp-4);
-  background: rgba(15, 23, 42, 0.38);
+  background: color-mix(in srgb, #0f172a 42%, transparent);
+  backdrop-filter: blur(4px);
 }
 .link-dialog {
   width: min(420px, 100%);
   padding: var(--sp-5);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   background: var(--bg-panel);
   box-shadow: var(--shadow-lg);
 }
@@ -1157,7 +1188,7 @@ function onTextareaInput(e: Event) {
   margin: 0;
   color: var(--text);
   font-size: var(--text-base);
-  font-weight: 600;
+  font-weight: 760;
 }
 .link-dialog-close {
   display: inline-flex;
@@ -1187,20 +1218,21 @@ function onTextareaInput(e: Event) {
 .link-dialog-field span {
   color: var(--text-secondary);
   font-size: var(--text-xs);
-  font-weight: 500;
+  font-weight: 650;
 }
 .link-dialog-input {
   width: 100%;
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg);
+  background: var(--bg-input);
   color: var(--text);
   font-size: var(--text-sm);
   outline: none;
 }
 .link-dialog-input:focus {
   border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .link-dialog-error {
   margin: 0 0 var(--sp-3);
@@ -1234,6 +1266,7 @@ function onTextareaInput(e: Event) {
   border: 1px solid var(--accent);
   background: var(--accent);
   color: var(--text-inverse);
+  font-weight: 700;
 }
 .link-dialog-confirm:hover {
   background: var(--accent-hover);
@@ -1243,7 +1276,9 @@ function onTextareaInput(e: Event) {
   flex: 1;
   overflow: hidden;
   display: flex;
-  background: var(--paper-stage, #eceff3);
+  background:
+    radial-gradient(circle at 50% 0, color-mix(in srgb, var(--bg-panel) 36%, transparent), transparent 44%),
+    var(--paper-stage, #eceff3);
   min-height: 0;
   min-width: 0;
 }
@@ -1255,6 +1290,10 @@ function onTextareaInput(e: Event) {
   min-height: 0;
   padding: var(--sp-6) var(--sp-6) calc(var(--sp-6) + 88px);
   scroll-padding-bottom: 96px;
+}
+.editor-content.novel-content {
+  padding: var(--sp-4) var(--sp-5);
+  scroll-padding-bottom: var(--sp-4);
 }
 .editor-content.with-panel {
   flex: 1;
@@ -1274,13 +1313,14 @@ function onTextareaInput(e: Event) {
 .editor-textarea {
   display: block;
   width: min(860px, 100%);
-  min-height: 100%;
+  min-height: 320px;
   margin: 0 auto;
   padding: 56px 64px 112px;
   border: 1px solid var(--paper-border, rgba(148, 163, 184, 0.22));
   border-radius: var(--paper-radius);
   resize: none;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   overflow-anchor: none;
   font-size: var(--text-lg);
   line-height: 2;
@@ -1294,10 +1334,13 @@ function onTextareaInput(e: Event) {
   caret-color: var(--accent);
 }
 .editor-textarea:focus {
-  border-color: rgba(59, 130, 246, 0.38);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--paper-border));
   box-shadow:
-    0 22px 52px rgba(15, 23, 42, 0.14),
-    0 0 0 3px rgba(59, 130, 246, 0.08);
+    var(--paper-shadow),
+    0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.novel-content .editor-textarea {
+  padding: 36px 56px 48px;
 }
 .article-content .editor-textarea {
   font-size: var(--text-base);
@@ -1309,6 +1352,7 @@ function onTextareaInput(e: Event) {
   flex: 1 1 0;
   width: auto;
   max-width: none;
+  min-height: 100%;
   min-width: 0;
   margin: 0;
 }
@@ -1381,7 +1425,7 @@ function onTextareaInput(e: Event) {
   margin: var(--sp-4) 0;
   padding: var(--sp-2) var(--sp-4);
   border-left: 3px solid var(--border-focus);
-  background: var(--bg-sidebar);
+  background: color-mix(in srgb, var(--accent-subtle) 44%, var(--bg-panel));
   color: var(--text-secondary);
 }
 .markdown-body :deep(blockquote > :last-child) {
@@ -1411,7 +1455,7 @@ function onTextareaInput(e: Event) {
 .markdown-body :deep(code) {
   padding: 0.12em 0.35em;
   border-radius: 4px;
-  background: var(--bg-hover);
+  background: var(--code-block-bg);
   font-family: var(--font-mono);
   font-size: 0.9em;
 }
@@ -1421,7 +1465,7 @@ function onTextareaInput(e: Event) {
   padding: var(--sp-4);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: #f6f8fa;
+  background: var(--code-block-bg);
 }
 .markdown-body :deep(pre code) {
   padding: 0;
