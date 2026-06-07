@@ -13,6 +13,7 @@ import json
 import re
 
 from config.settings import settings
+from observability.langfuse import current_langfuse_metadata, get_langfuse_async_openai_class
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,10 @@ class LLMProvider(ABC):
     @abstractmethod
     async def generate_stream(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> AsyncIterator[str]:
         ...
+
+
+class LLMConfigError(ValueError):
+    """Raised when a real provider is selected but its local config is unusable."""
 
 
 class MockProvider(LLMProvider):
@@ -58,6 +63,28 @@ class MockProvider(LLMProvider):
             or ("只输出严格 json" in prompt_lower and "character_relations" in prompt_lower)
             or ("world_entries" in prompt_lower and "hidden_threads" in prompt_lower)
         )
+        is_evaluation_judge_request = (
+            "评测裁判" in prompt_lower
+            or ("overall_score" in prompt_lower and "\"scores\"" in prompt_lower and "候选输出" in prompt_lower)
+        )
+        if is_evaluation_judge_request:
+            return json.dumps(
+                {
+                    "overall_score": 4.0,
+                    "scores": {
+                        "requirement_following": 4,
+                        "context_consistency": 4,
+                        "plot_progress": 4,
+                        "prose_quality": 4,
+                        "structure_quality": 4,
+                        "audience_match": 4,
+                        "risk_control": 4,
+                    },
+                    "passed": True,
+                    "feedback": "Mock 评测：候选输出整体满足样本要求，可作为回归测试通过。",
+                },
+                ensure_ascii=False,
+            )
         if is_structure_extraction_request:
             return self._mock_structure_extraction(user_prompt)
 
@@ -216,34 +243,46 @@ class OpenAIProvider(LLMProvider):
 
     def __init__(self, api_key: str, base_url: str | None = None, model: str = "gpt-4o-mini"):
         if not api_key:
-            raise ValueError("LLM_API_KEY 未设置，无法使用 OpenAI Provider")
-        from openai import AsyncOpenAI
+            raise LLMConfigError("当前模型配置缺少 API Key，请在设置里重新保存 API Key 后再试")
+        langfuse_async_openai = get_langfuse_async_openai_class()
+        self._use_langfuse_metadata = langfuse_async_openai is not None
+        AsyncOpenAI = langfuse_async_openai
+        if AsyncOpenAI is None:
+            from openai import AsyncOpenAI
         self.client = AsyncOpenAI(api_key=api_key, base_url=base_url or None)
         self.model = model
 
     async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> str:
-        resp = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
+        payload = {
+            "model": self.model,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        metadata = current_langfuse_metadata({"llm_model": self.model, "stream": False}) if self._use_langfuse_metadata else None
+        if metadata:
+            payload["metadata"] = metadata
+        resp = await self.client.chat.completions.create(**payload)
         return resp.choices[0].message.content or ""
 
     async def generate_stream(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> AsyncIterator[str]:
-        stream = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
+        payload = {
+            "model": self.model,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=True,
-        )
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        metadata = current_langfuse_metadata({"llm_model": self.model, "stream": True}) if self._use_langfuse_metadata else None
+        if metadata:
+            payload["metadata"] = metadata
+        stream = await self.client.chat.completions.create(**payload)
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
@@ -260,9 +299,12 @@ def get_llm_provider(config: dict | None = None) -> LLMProvider:
         provider = config.get("provider", settings.LLM_PROVIDER)
         if provider == "mock":
             return MockProvider()
+        api_key = (config.get("api_key") or "").strip()
+        if not api_key:
+            raise LLMConfigError("当前模型配置缺少 API Key，请在设置里重新保存 API Key 后再试")
         else:
             return OpenAIProvider(
-                api_key=config.get("api_key", ""),
+                api_key=api_key,
                 base_url=config.get("base_url"),
                 model=config.get("model") or settings.LLM_MODEL,
             )
@@ -271,6 +313,8 @@ def get_llm_provider(config: dict | None = None) -> LLMProvider:
     if settings.LLM_PROVIDER == "mock":
         return MockProvider()
     else:
+        if not settings.LLM_API_KEY.strip():
+            raise LLMConfigError("当前模型配置缺少 API Key，请在设置里重新保存 API Key 后再试")
         return OpenAIProvider(
             api_key=settings.LLM_API_KEY,
             base_url=settings.LLM_BASE_URL or None,

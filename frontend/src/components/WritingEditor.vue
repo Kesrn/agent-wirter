@@ -8,6 +8,7 @@ import VersionHistoryPanel from './VersionHistoryPanel.vue'
 import DocumentRevisionPanel from './DocumentRevisionPanel.vue'
 import GenerationHistoryPanel from './GenerationHistoryPanel.vue'
 import VersionDiffViewer from './VersionDiffViewer.vue'
+import BaseSelect from './BaseSelect.vue'
 import { renderMarkdown } from '../utils/markdown'
 import { formatNovelChapterTitle } from '../utils/chapterTitle'
 
@@ -24,6 +25,7 @@ const revisionStore = useDocumentRevisionStore()
 const generationHistoryStore = useGenerationHistoryStore()
 const currentUnit = computed(() => props.mode === 'article' ? documentStore.currentDocumentForProject(props.projectId) : chapterStore.currentChapterForProject(props.projectId))
 const currentDraftText = computed(() => currentUnit.value?.draft ?? currentUnit.value?.final_text ?? '')
+const currentWordCount = computed(() => countWritingWords(currentDraftText.value))
 const saving = computed(() => props.mode === 'article' ? documentStore.saving : chapterStore.saving)
 const unitLabel = computed(() => props.mode === 'article' ? '稿件' : '章节')
 const diffResult = computed(() => showGenerationPanel.value ? generationHistoryStore.diffResult : (props.mode === 'article' ? revisionStore.diffResult : versionStore.diffResult))
@@ -37,6 +39,10 @@ const articleViewMode = ref<'edit' | 'preview' | 'split'>('edit')
 const canUseFormatting = computed(() => props.mode === 'article' && articleViewMode.value !== 'preview')
 const articlePreviewEmpty = computed(() => !currentDraftText.value.trim())
 const articlePreviewHtml = computed(() => articlePreviewEmpty.value ? '' : renderMarkdown(currentDraftText.value))
+
+function countWritingWords(text: string): number {
+  return text.replace(/\s+/g, '').length
+}
 
 function unitPosition(unit: WritingUnit): number {
   return 'position' in unit ? unit.position : unit.chapter_num
@@ -241,6 +247,12 @@ const FONT_OPTIONS = [
   { label: '黑体', value: "'PingFang SC', 'Microsoft YaHei', sans-serif" },
   { label: '等宽', value: 'var(--font-mono)' },
 ]
+const HEADING_OPTIONS = [
+  { label: '正文', value: 'paragraph' },
+  { label: 'H1', value: '1' },
+  { label: 'H2', value: '2' },
+  { label: 'H3', value: '3' },
+]
 const selectedFont = ref('var(--font-serif)')
 
 onMounted(() => {
@@ -417,12 +429,9 @@ function setHeading(level: number | null) {
   })
 }
 
-function handleHeadingChange(event: Event) {
-  const select = event.target as HTMLSelectElement
-  const value = select.value
+function handleHeadingSelect(value: string) {
   if (value === 'paragraph') setHeading(null)
   else setHeading(Number(value))
-  select.value = 'heading'
 }
 
 function insertQuote() {
@@ -751,6 +760,9 @@ function onTextareaInput(e: Event) {
       <span v-if="currentUnit" class="editor-status" :class="currentUnit.status">
         {{ currentUnit.status === 'final' ? '终稿' : currentUnit.status === 'reviewing' ? '审核中' : '草稿' }}
       </span>
+      <span v-if="currentUnit" class="editor-word-count" aria-label="当前正文字数">
+        {{ currentWordCount.toLocaleString('zh-CN') }} 字
+      </span>
       <span v-if="!currentUnit" class="editor-title">选择一个{{ unitLabel }}开始写作</span>
 
       <!-- Save button -->
@@ -771,9 +783,13 @@ function onTextareaInput(e: Event) {
 
       <!-- Font switcher (novel mode only) -->
       <div v-if="mode === 'novel' && currentUnit" class="font-switcher">
-        <select v-model="selectedFont" @change="setFont(selectedFont)" class="font-select">
-          <option v-for="f in FONT_OPTIONS" :key="f.value" :value="f.value">{{ f.label }}</option>
-        </select>
+        <BaseSelect
+          v-model="selectedFont"
+          class="font-select"
+          :options="FONT_OPTIONS"
+          compact
+          @change="(value: string) => setFont(value)"
+        />
       </div>
 
       <!-- Rich text toolbar (article mode only) -->
@@ -805,13 +821,15 @@ function onTextareaInput(e: Event) {
           <button class="tb-btn" :disabled="editorHistory.length === 0" @click="undoEdit" title="撤销">↶</button>
           <button class="tb-btn" :disabled="editorRedoStack.length === 0" @click="redoEdit" title="重做">↷</button>
         </div>
-        <select class="tb-select" value="heading" title="段落样式" :disabled="!canUseFormatting" @change="handleHeadingChange">
-          <option value="heading" disabled>段落</option>
-          <option value="paragraph">正文</option>
-          <option value="1">H1</option>
-          <option value="2">H2</option>
-          <option value="3">H3</option>
-        </select>
+        <BaseSelect
+          class="tb-select"
+          model-value="paragraph"
+          title="段落样式"
+          :options="HEADING_OPTIONS"
+          :disabled="!canUseFormatting"
+          compact
+          @change="handleHeadingSelect"
+        />
         <div class="tb-group">
           <button class="tb-btn tb-bold" :disabled="!canUseFormatting" @click="insertBold" title="加粗">B</button>
           <button class="tb-btn tb-italic" :disabled="!canUseFormatting" @click="insertItalic" title="斜体">I</button>
@@ -984,6 +1002,19 @@ function onTextareaInput(e: Event) {
 .editor-status.draft { background: var(--status-draft-bg); color: var(--status-draft); }
 .editor-status.reviewing { background: var(--status-reviewing-bg); color: var(--status-reviewing); }
 .editor-status.final { background: var(--status-final-bg); color: var(--status-final); }
+.editor-word-count {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-sidebar) 70%, transparent);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
 
 /* Save button */
 .btn-save {
@@ -1044,13 +1075,8 @@ function onTextareaInput(e: Event) {
   margin-left: auto;
 }
 .font-select {
-  font-size: var(--text-xs);
-  padding: var(--sp-1) var(--sp-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-panel);
-  color: var(--text-secondary);
-  cursor: pointer;
+  width: 86px;
+  min-width: 86px;
 }
 
 /* Rich text toolbar */
@@ -1103,20 +1129,9 @@ function onTextareaInput(e: Event) {
   color: var(--text-inverse);
 }
 .tb-select {
-  height: 30px;
-  min-width: 72px;
-  padding: 0 var(--sp-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-panel);
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  font-weight: 650;
-  cursor: pointer;
-}
-.tb-select:disabled {
-  opacity: 0.42;
-  cursor: not-allowed;
+  flex: 0 0 auto;
+  width: 74px;
+  min-width: 74px;
 }
 .tb-btn {
   display: inline-flex;
@@ -1136,8 +1151,7 @@ function onTextareaInput(e: Event) {
   line-height: 1;
   white-space: nowrap;
 }
-.tb-btn:hover:not(:disabled),
-.tb-select:hover {
+.tb-btn:hover:not(:disabled) {
   background: var(--bg-hover);
   border-color: var(--border-focus);
   color: var(--accent);

@@ -94,9 +94,7 @@ export type ProjectMode = 'novel' | 'article'
 export interface Project {
   id: string
   title: string
-  /** Backend has no genre field; kept for UI backward-compat, always empty from API */
   genre: string
-  /** Backend has no style field; kept for UI backward-compat, always empty from API */
   style: string
   status: string
   mode: ProjectMode
@@ -235,6 +233,8 @@ export interface ApiProject {
   id: string
   title: string
   description: string | null
+  genre: string | null
+  style: string | null
   target_words: number
   status: string
   mode: ProjectMode
@@ -352,6 +352,8 @@ export interface ApiHiddenThread {
 export interface ProjectCreatePayload {
   title: string
   description?: string
+  genre?: string
+  style?: string
   target_words?: number
   mode?: ProjectMode
 }
@@ -686,6 +688,7 @@ export interface SkillPackPayload {
 export interface GenerationRecordPayload {
   id: string
   status: GenerationRecordStatus
+  langfuse_trace_id?: string | null
 }
 
 // ─── Chapter Version History ───
@@ -766,6 +769,7 @@ export interface ApiGenerationRecordListItem {
   direction: string | null
   word_count: number
   status: GenerationRecordStatus
+  langfuse_trace_id?: string | null
   created_at: string
 }
 
@@ -789,6 +793,7 @@ export interface GenerationRecord {
   direction: string | null
   wordCount: number
   status: GenerationRecordStatus
+  langfuseTraceId: string | null
   createdAt: string
   content: string | null
 }
@@ -804,6 +809,112 @@ export interface GenerationRecordDiffRequest {
 export interface GenerationRecordDiffResponse {
   generation_id: string
   diff: DiffHunk[]
+}
+
+// ─── Evaluation datasets ───
+
+export type EvaluationDatasetMode = 'creative' | 'regression' | 'prompt' | 'model'
+export type EvaluationCaseStatus = 'active' | 'disabled' | 'archived'
+export type EvaluationGenerationMode = 'generate_and_judge' | 'judge_only'
+export type EvaluationRunStatus = 'running' | 'completed' | 'partial' | 'failed'
+
+export interface ApiEvaluationDataset {
+  id: string
+  project_id: string
+  name: string
+  description: string | null
+  mode: EvaluationDatasetMode
+  status: 'active' | 'archived'
+  case_count: number
+  run_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface EvaluationDatasetCreatePayload {
+  name: string
+  description?: string | null
+  mode?: EvaluationDatasetMode
+}
+
+export interface EvaluationDatasetUpdatePayload {
+  name?: string
+  description?: string | null
+  status?: 'active' | 'archived'
+}
+
+export interface ApiEvaluationCase {
+  id: string
+  dataset_id: string
+  project_id: string
+  name: string
+  task_type: string
+  input_text: string
+  actual_output: string | null
+  reference_output: string | null
+  expected_properties: string[] | null
+  rubric: Record<string, string> | null
+  tags: string[] | null
+  status: EvaluationCaseStatus
+  created_at: string
+  updated_at: string
+}
+
+export interface EvaluationCaseCreatePayload {
+  name: string
+  task_type?: string
+  input_text?: string
+  actual_output?: string | null
+  reference_output?: string | null
+  expected_properties?: string[] | null
+  rubric?: Record<string, string> | null
+  tags?: string[] | null
+}
+
+export interface EvaluationCaseUpdatePayload extends Partial<EvaluationCaseCreatePayload> {
+  status?: EvaluationCaseStatus
+}
+
+export interface ApiEvaluationResult {
+  id: string
+  run_id: string
+  case_id: string
+  project_id: string
+  generated_output: string | null
+  scores: Record<string, number> | null
+  score: number | null
+  passed: boolean | null
+  feedback: string | null
+  error: string | null
+  latency_ms: number | null
+  langfuse_trace_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ApiEvaluationRun {
+  id: string
+  dataset_id: string
+  project_id: string
+  name: string
+  generation_mode: EvaluationGenerationMode
+  status: EvaluationRunStatus
+  model_provider: string | null
+  model_id: string | null
+  total_cases: number
+  completed_cases: number
+  failed_cases: number
+  average_score: number | null
+  summary: string | null
+  results: ApiEvaluationResult[]
+  created_at: string
+  updated_at: string
+}
+
+export interface EvaluationRunCreatePayload {
+  name?: string | null
+  generation_mode?: EvaluationGenerationMode
+  case_ids?: string[] | null
 }
 
 // ─── LLM Settings types ───

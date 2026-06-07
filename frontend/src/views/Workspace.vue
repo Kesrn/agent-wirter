@@ -8,6 +8,7 @@ import WritingEditor from '../components/WritingEditor.vue'
 import AgentPanel from '../components/AgentPanel.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import StructureExtractPreview from '../components/StructureExtractPreview.vue'
+import BaseSelect from '../components/BaseSelect.vue'
 import { displayChapterNumber, stripChapterNumber } from '../utils/chapterTitle'
 
 const route = useRoute()
@@ -41,6 +42,17 @@ const characterLabel = computed(() => projectMode.value === 'article' ? '受众�
 const worldLabel = computed(() => projectMode.value === 'article' ? '品牌/产品资料' : '世界观')
 const worldEntryLabel = computed(() => projectMode.value === 'article' ? '资料' : '设定')
 const searchPlaceholder = computed(() => projectMode.value === 'article' ? '搜索稿件正文、受众、资料' : '搜索章节正文、角色、设定')
+const characterRoleOptions = computed(() => [
+  { value: 'protagonist', label: projectMode.value === 'article' ? '核心受众' : '主角' },
+  { value: 'antagonist', label: projectMode.value === 'article' ? '反对人群' : '反派' },
+  { value: 'supporting', label: projectMode.value === 'article' ? '影响者' : '配角' },
+  { value: 'minor', label: projectMode.value === 'article' ? '泛受众' : '路人' },
+])
+const confidenceOptions = [
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+]
 const isGenerating = computed(() => expertStore.getState(projectId.value).isGenerating)
 const sidebarOpen = ref(true)
 const agentOpen = ref(true)
@@ -449,10 +461,21 @@ async function extractCurrentChapterStructure() {
     structurePayload.value = result.extraction
     showStructurePreview.value = true
   } catch (e: unknown) {
-    ui.showToast(friendlyError(e, '结构提炼失败'), 'error')
+    ui.showToast(structureExtractionError(e), 'error')
   } finally {
     extractingStructure.value = false
   }
+}
+
+function structureExtractionError(e: unknown) {
+  const message = friendlyError(e, '结构提炼失败')
+  if (message.includes('API Key') || message.includes('模型配置')) {
+    return '结构提炼失败：模型配置不可用，请到设置里重新保存 API Key 后再试'
+  }
+  if (message.includes('模型服务') || message.includes('服务器异常') || message.includes('Internal Server Error')) {
+    return '结构提炼失败：模型服务暂时不可用，请检查模型配置或稍后重试'
+  }
+  return `结构提炼失败：${message}`
 }
 
 async function applyExtractedStructure(payload: StructureExtractPayload) {
@@ -960,6 +983,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
         </div>
       </div>
       <div class="top-right">
+        <router-link class="top-btn top-btn-link" :to="`/projects/${projectId}/evaluations`">评测集</router-link>
         <div class="export-group">
           <button class="top-btn" :disabled="exporting" @click="showExportMenu = !showExportMenu">{{ exporting ? '导出中...' : '导出' }}</button>
           <div v-if="showExportMenu" class="export-dropdown">
@@ -1163,12 +1187,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
               </div>
               <div class="form-row">
                 <label>{{ characterLabel }}类型</label>
-                <select v-model="newCharRoleType" class="form-input">
-                  <option value="protagonist">{{ projectMode === 'article' ? '核心受众' : '主角' }}</option>
-                  <option value="antagonist">{{ projectMode === 'article' ? '反对人群' : '反派' }}</option>
-                  <option value="supporting">{{ projectMode === 'article' ? '影响者' : '配角' }}</option>
-                  <option value="minor">{{ projectMode === 'article' ? '泛受众' : '路人' }}</option>
-                </select>
+                <BaseSelect v-model="newCharRoleType" :options="characterRoleOptions" />
               </div>
               <div class="form-row">
                 <label>{{ projectMode === 'article' ? '细分人群' : '阵营' }}</label>
@@ -1199,12 +1218,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                   </div>
                   <div class="form-row">
                     <label>{{ characterLabel }}类型</label>
-                    <select v-model="editCharRoleType" class="form-input">
-                      <option value="protagonist">{{ projectMode === 'article' ? '核心受众' : '主角' }}</option>
-                      <option value="antagonist">{{ projectMode === 'article' ? '反对人群' : '反派' }}</option>
-                      <option value="supporting">{{ projectMode === 'article' ? '影响者' : '配角' }}</option>
-                      <option value="minor">{{ projectMode === 'article' ? '泛受众' : '路人' }}</option>
-                    </select>
+                    <BaseSelect v-model="editCharRoleType" :options="characterRoleOptions" />
                   </div>
                   <div class="form-row">
                     <label>{{ projectMode === 'article' ? '细分人群' : '阵营' }}</label>
@@ -1255,11 +1269,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
               </div>
               <div class="form-row">
                 <label>可信度</label>
-                <select v-model="newWEConfidence" class="form-input">
-                  <option value="low">低</option>
-                  <option value="medium">中</option>
-                  <option value="high">高</option>
-                </select>
+                <BaseSelect v-model="newWEConfidence" :options="confidenceOptions" />
               </div>
               <div v-if="newWEError" class="form-error">{{ newWEError }}</div>
               <div class="form-actions">
@@ -1290,11 +1300,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                   </div>
                   <div class="form-row">
                     <label>可信度</label>
-                    <select v-model="editWEConfidence" class="form-input">
-                      <option value="low">低</option>
-                      <option value="medium">中</option>
-                      <option value="high">高</option>
-                    </select>
+                    <BaseSelect v-model="editWEConfidence" :options="confidenceOptions" />
                   </div>
                   <div class="form-actions">
                     <button class="btn-submit" @click="saveEditWorldEntry(entry)">保存</button>
@@ -1524,6 +1530,11 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   transform: translateY(-1px);
 }
 .top-btn-logout { color: var(--text-tertiary); }
+.top-btn-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
 .export-group { position: relative; }
 .export-dropdown {
   position: absolute;

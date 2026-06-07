@@ -23,6 +23,7 @@ from models.chapter_version import ChapterVersion
 from models.document import Document
 from models.document_version import DocumentVersion
 from models.generation_record import GenerationRecord
+from models.evaluation import EvaluationDataset, EvaluationCase, EvaluationRun, EvaluationResult
 from models.world_entry import WorldEntry
 from models.character import Character
 from models.character_relation import CharacterRelation
@@ -46,11 +47,14 @@ from schemas.api import (
     DocumentVersionDiffRequest, DocumentVersionDiffResponse,
     GenerationRecordListItemResponse, GenerationRecordResponse,
     GenerationRecordUpdate, GenerationRecordDiffRequest, GenerationRecordDiffResponse,
+    EvaluationDatasetCreate, EvaluationDatasetUpdate, EvaluationDatasetResponse,
+    EvaluationCaseCreate, EvaluationCaseUpdate, EvaluationCaseResponse,
+    EvaluationRunCreate, EvaluationRunResponse, EvaluationResultResponse,
     AuthUser,
 )
 from agents.safety import validate_expert_safety
 from agents.expert_templates import BUILTIN_EXPERTS
-from agents.llm_provider import get_llm_provider
+from agents.llm_provider import LLMConfigError, get_llm_provider
 from agents.workflow import get_creative_app, CreativeState
 from skills.registry import get_skill_for_node
 from api.auth import get_current_user
@@ -74,6 +78,8 @@ from services.generation_record_service import (
     list_generation_records_for_document,
     update_generation_record_status,
 )
+from services.evaluation import default_rubric, normalize_expected_properties, normalize_rubric, run_evaluation_case
+from observability.langfuse import activate_langfuse_context, current_langfuse_trace_id, finish_langfuse_context
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -195,7 +201,44 @@ def _generation_list_item(record: GenerationRecord) -> GenerationRecordListItemR
         direction=record.direction,
         word_count=record.word_count,
         status=record.status,
+        langfuse_trace_id=record.langfuse_trace_id,
         created_at=record.created_at,
+    )
+
+
+def _evaluation_dataset_response(dataset: EvaluationDataset, case_count: int = 0, run_count: int = 0) -> EvaluationDatasetResponse:
+    return EvaluationDatasetResponse(
+        id=dataset.id,
+        project_id=dataset.project_id,
+        name=dataset.name,
+        description=dataset.description,
+        mode=dataset.mode,
+        status=dataset.status,
+        case_count=case_count,
+        run_count=run_count,
+        created_at=dataset.created_at,
+        updated_at=dataset.updated_at,
+    )
+
+
+def _evaluation_run_response(run: EvaluationRun, results: list[EvaluationResult] | None = None) -> EvaluationRunResponse:
+    return EvaluationRunResponse(
+        id=run.id,
+        dataset_id=run.dataset_id,
+        project_id=run.project_id,
+        name=run.name,
+        generation_mode=run.generation_mode,
+        status=run.status,
+        model_provider=run.model_provider,
+        model_id=run.model_id,
+        total_cases=run.total_cases,
+        completed_cases=run.completed_cases,
+        failed_cases=run.failed_cases,
+        average_score=run.average_score,
+        summary=run.summary,
+        results=[EvaluationResultResponse.model_validate(result) for result in (results or [])],
+        created_at=run.created_at,
+        updated_at=run.updated_at,
     )
 
 
@@ -220,6 +263,10 @@ async def _delete_project_tree(project_id: uuid.UUID, db: AsyncSession) -> None:
     chapter_ids = select(Chapter.id).where(Chapter.project_id == project_id)
     document_ids = select(Document.id).where(Document.project_id == project_id)
 
+    await db.execute(delete(EvaluationResult).where(EvaluationResult.project_id == project_id))
+    await db.execute(delete(EvaluationRun).where(EvaluationRun.project_id == project_id))
+    await db.execute(delete(EvaluationCase).where(EvaluationCase.project_id == project_id))
+    await db.execute(delete(EvaluationDataset).where(EvaluationDataset.project_id == project_id))
     await db.execute(delete(GenerationRecord).where(GenerationRecord.project_id == project_id))
     await db.execute(delete(ChapterVersion).where(ChapterVersion.chapter_id.in_(chapter_ids)))
     await db.execute(delete(DocumentVersion).where(DocumentVersion.document_id.in_(document_ids)))
@@ -337,6 +384,8 @@ async def create_project(
     project = Project(
         title=req.title,
         description=req.description,
+        genre=(req.genre or "").strip() or None,
+        style=(req.style or "").strip() or None,
         target_words=req.target_words,
         mode=req.mode,
         owner_id=user.id,
@@ -499,6 +548,391 @@ async def delete_project(
     return None
 
 
+# ==================== 评测集 ====================
+
+async def _get_evaluation_dataset(db: AsyncSession, project_id: uuid.UUID, dataset_id: uuid.UUID) -> EvaluationDataset:
+    result = await db.execute(
+        select(EvaluationDataset).where(
+            EvaluationDataset.id == dataset_id,
+            EvaluationDataset.project_id == project_id,
+        )
+    )
+    dataset = result.scalar_one_or_none()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="评测集不存在")
+    return dataset
+
+
+async def _get_evaluation_case(db: AsyncSession, project_id: uuid.UUID, dataset_id: uuid.UUID, case_id: uuid.UUID) -> EvaluationCase:
+    result = await db.execute(
+        select(EvaluationCase).where(
+            EvaluationCase.id == case_id,
+            EvaluationCase.dataset_id == dataset_id,
+            EvaluationCase.project_id == project_id,
+        )
+    )
+    case = result.scalar_one_or_none()
+    if not case:
+        raise HTTPException(status_code=404, detail="评测样本不存在")
+    return case
+
+
+async def _evaluation_dataset_counts(db: AsyncSession, dataset_id: uuid.UUID) -> tuple[int, int]:
+    case_count = await db.scalar(select(func.count()).select_from(EvaluationCase).where(EvaluationCase.dataset_id == dataset_id))
+    run_count = await db.scalar(select(func.count()).select_from(EvaluationRun).where(EvaluationRun.dataset_id == dataset_id))
+    return int(case_count or 0), int(run_count or 0)
+
+
+@router.get("/projects/{project_id}/eval-datasets", response_model=list[EvaluationDatasetResponse])
+async def list_evaluation_datasets(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    result = await db.execute(
+        select(EvaluationDataset)
+        .where(EvaluationDataset.project_id == uid)
+        .order_by(EvaluationDataset.created_at.desc())
+    )
+    datasets = result.scalars().all()
+    responses: list[EvaluationDatasetResponse] = []
+    for dataset in datasets:
+        case_count, run_count = await _evaluation_dataset_counts(db, dataset.id)
+        responses.append(_evaluation_dataset_response(dataset, case_count, run_count))
+    return responses
+
+
+@router.post("/projects/{project_id}/eval-datasets", response_model=EvaluationDatasetResponse)
+async def create_evaluation_dataset(
+    project_id: str,
+    req: EvaluationDatasetCreate,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    dataset = EvaluationDataset(
+        project_id=uid,
+        name=req.name.strip(),
+        description=(req.description or "").strip() or None,
+        mode=req.mode,
+        status="active",
+    )
+    db.add(dataset)
+    await db.commit()
+    await db.refresh(dataset)
+    return _evaluation_dataset_response(dataset)
+
+
+@router.patch("/projects/{project_id}/eval-datasets/{dataset_id}", response_model=EvaluationDatasetResponse)
+async def update_evaluation_dataset(
+    project_id: str,
+    dataset_id: str,
+    req: EvaluationDatasetUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    did = _to_uuid(dataset_id)
+    await _verify_project_owner(uid, user.id, db)
+    dataset = await _get_evaluation_dataset(db, uid, did)
+    if req.name is not None:
+        dataset.name = req.name.strip()
+    if req.description is not None:
+        dataset.description = req.description.strip() or None
+    if req.status is not None:
+        dataset.status = req.status
+    await db.commit()
+    await db.refresh(dataset)
+    case_count, run_count = await _evaluation_dataset_counts(db, dataset.id)
+    return _evaluation_dataset_response(dataset, case_count, run_count)
+
+
+@router.delete("/projects/{project_id}/eval-datasets/{dataset_id}", status_code=204)
+async def delete_evaluation_dataset(
+    project_id: str,
+    dataset_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    did = _to_uuid(dataset_id)
+    await _verify_project_owner(uid, user.id, db)
+    await _get_evaluation_dataset(db, uid, did)
+    await db.execute(delete(EvaluationDataset).where(EvaluationDataset.id == did, EvaluationDataset.project_id == uid))
+    await db.commit()
+    return None
+
+
+@router.get("/projects/{project_id}/eval-datasets/{dataset_id}/cases", response_model=list[EvaluationCaseResponse])
+async def list_evaluation_cases(
+    project_id: str,
+    dataset_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    did = _to_uuid(dataset_id)
+    project = await _verify_project_owner(uid, user.id, db)
+    await _get_evaluation_dataset(db, uid, did)
+    result = await db.execute(
+        select(EvaluationCase)
+        .where(EvaluationCase.dataset_id == did, EvaluationCase.project_id == uid)
+        .order_by(EvaluationCase.created_at.desc())
+    )
+    cases = result.scalars().all()
+    for case in cases:
+        if not case.rubric:
+            case.rubric = default_rubric(project.mode)
+    return cases
+
+
+@router.post("/projects/{project_id}/eval-datasets/{dataset_id}/cases", response_model=EvaluationCaseResponse)
+async def create_evaluation_case(
+    project_id: str,
+    dataset_id: str,
+    req: EvaluationCaseCreate,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    did = _to_uuid(dataset_id)
+    project = await _verify_project_owner(uid, user.id, db)
+    await _get_evaluation_dataset(db, uid, did)
+    case = EvaluationCase(
+        dataset_id=did,
+        project_id=uid,
+        name=req.name.strip(),
+        task_type=req.task_type.strip() or "creative_generation",
+        input_text=req.input_text or "",
+        actual_output=(req.actual_output or "").strip() or None,
+        reference_output=(req.reference_output or "").strip() or None,
+        expected_properties=normalize_expected_properties(req.expected_properties),
+        rubric=normalize_rubric(req.rubric, project.mode),
+        tags=req.tags or [],
+        status="active",
+    )
+    db.add(case)
+    await db.commit()
+    await db.refresh(case)
+    return case
+
+
+@router.patch("/projects/{project_id}/eval-datasets/{dataset_id}/cases/{case_id}", response_model=EvaluationCaseResponse)
+async def update_evaluation_case(
+    project_id: str,
+    dataset_id: str,
+    case_id: str,
+    req: EvaluationCaseUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    did = _to_uuid(dataset_id)
+    cid = _to_uuid(case_id)
+    project = await _verify_project_owner(uid, user.id, db)
+    case = await _get_evaluation_case(db, uid, did, cid)
+    data = req.model_dump(exclude_unset=True)
+    if "name" in data and req.name is not None:
+        case.name = req.name.strip()
+    if "task_type" in data and req.task_type is not None:
+        case.task_type = req.task_type.strip() or "creative_generation"
+    if "input_text" in data and req.input_text is not None:
+        case.input_text = req.input_text
+    if "actual_output" in data:
+        case.actual_output = (req.actual_output or "").strip() or None
+    if "reference_output" in data:
+        case.reference_output = (req.reference_output or "").strip() or None
+    if "expected_properties" in data:
+        case.expected_properties = normalize_expected_properties(req.expected_properties)
+    if "rubric" in data:
+        case.rubric = normalize_rubric(req.rubric, project.mode)
+    if "tags" in data:
+        case.tags = req.tags or []
+    if req.status is not None:
+        case.status = req.status
+    await db.commit()
+    await db.refresh(case)
+    return case
+
+
+@router.delete("/projects/{project_id}/eval-datasets/{dataset_id}/cases/{case_id}", status_code=204)
+async def delete_evaluation_case(
+    project_id: str,
+    dataset_id: str,
+    case_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    did = _to_uuid(dataset_id)
+    cid = _to_uuid(case_id)
+    await _verify_project_owner(uid, user.id, db)
+    await _get_evaluation_case(db, uid, did, cid)
+    await db.execute(delete(EvaluationCase).where(EvaluationCase.id == cid, EvaluationCase.dataset_id == did))
+    await db.commit()
+    return None
+
+
+@router.get("/projects/{project_id}/eval-datasets/{dataset_id}/runs", response_model=list[EvaluationRunResponse])
+async def list_evaluation_runs(
+    project_id: str,
+    dataset_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    did = _to_uuid(dataset_id)
+    await _verify_project_owner(uid, user.id, db)
+    await _get_evaluation_dataset(db, uid, did)
+    result = await db.execute(
+        select(EvaluationRun)
+        .where(EvaluationRun.dataset_id == did, EvaluationRun.project_id == uid)
+        .order_by(EvaluationRun.created_at.desc())
+    )
+    return [_evaluation_run_response(run) for run in result.scalars().all()]
+
+
+@router.get("/projects/{project_id}/eval-datasets/{dataset_id}/runs/{run_id}", response_model=EvaluationRunResponse)
+async def get_evaluation_run(
+    project_id: str,
+    dataset_id: str,
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    did = _to_uuid(dataset_id)
+    rid = _to_uuid(run_id)
+    await _verify_project_owner(uid, user.id, db)
+    result = await db.execute(
+        select(EvaluationRun).where(EvaluationRun.id == rid, EvaluationRun.dataset_id == did, EvaluationRun.project_id == uid)
+    )
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="评测运行不存在")
+    results = await db.execute(
+        select(EvaluationResult).where(EvaluationResult.run_id == rid).order_by(EvaluationResult.created_at.asc())
+    )
+    return _evaluation_run_response(run, results.scalars().all())
+
+
+@router.post("/projects/{project_id}/eval-datasets/{dataset_id}/runs", response_model=EvaluationRunResponse)
+async def run_evaluation_dataset(
+    project_id: str,
+    dataset_id: str,
+    req: EvaluationRunCreate,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    did = _to_uuid(dataset_id)
+    project = await _verify_project_owner(uid, user.id, db)
+    dataset = await _get_evaluation_dataset(db, uid, did)
+
+    query = select(EvaluationCase).where(
+        EvaluationCase.dataset_id == did,
+        EvaluationCase.project_id == uid,
+        EvaluationCase.status == "active",
+    )
+    if req.case_ids:
+        query = query.where(EvaluationCase.id.in_(req.case_ids))
+    query = query.order_by(EvaluationCase.created_at.asc())
+    case_result = await db.execute(query)
+    cases = case_result.scalars().all()
+    if not cases:
+        raise HTTPException(status_code=400, detail="评测集没有可运行的样本")
+
+    llm_config = await get_user_llm_config(user.id, db)
+    provider = get_llm_provider(llm_config)
+    run_name = (req.name or f"{dataset.name} 运行 {datetime.now().strftime('%m-%d %H:%M')}").strip()
+    run = EvaluationRun(
+        dataset_id=did,
+        project_id=uid,
+        name=run_name[:200],
+        generation_mode=req.generation_mode,
+        status="running",
+        model_provider=(llm_config or {}).get("provider", settings.LLM_PROVIDER),
+        model_id=(llm_config or {}).get("model", settings.LLM_MODEL),
+        total_cases=len(cases),
+        completed_cases=0,
+        failed_cases=0,
+    )
+    db.add(run)
+    await db.flush()
+
+    context = activate_langfuse_context(
+        name="evaluation_run",
+        user_id=user.id,
+        session_id=str(project.id),
+        tags=["evaluation", project.mode, req.generation_mode],
+        metadata={"project_id": str(project.id), "dataset_id": str(dataset.id), "action": "evaluation_run"},
+    )
+    created_results: list[EvaluationResult] = []
+    scores: list[float] = []
+    try:
+        for case in cases:
+            try:
+                evaluated = await run_evaluation_case(
+                    provider=provider,
+                    project=project,
+                    case=case,
+                    generation_mode=req.generation_mode,
+                )
+                score = evaluated.get("score")
+                if isinstance(score, (int, float)):
+                    scores.append(float(score))
+                result = EvaluationResult(
+                    run_id=run.id,
+                    case_id=case.id,
+                    project_id=uid,
+                    generated_output=evaluated.get("generated_output"),
+                    scores=evaluated.get("scores"),
+                    score=score,
+                    passed=evaluated.get("passed"),
+                    feedback=evaluated.get("feedback"),
+                    error=None,
+                    latency_ms=evaluated.get("latency_ms"),
+                    langfuse_trace_id=current_langfuse_trace_id(),
+                )
+                run.completed_cases += 1
+            except Exception as exc:
+                result = EvaluationResult(
+                    run_id=run.id,
+                    case_id=case.id,
+                    project_id=uid,
+                    generated_output=None,
+                    scores=None,
+                    score=None,
+                    passed=False,
+                    feedback=None,
+                    error=str(exc),
+                    latency_ms=None,
+                    langfuse_trace_id=current_langfuse_trace_id(),
+                )
+                run.failed_cases += 1
+            db.add(result)
+            created_results.append(result)
+
+        run.average_score = round(sum(scores) / len(scores), 2) if scores else None
+        run.status = "completed" if run.failed_cases == 0 else ("partial" if run.completed_cases > 0 else "failed")
+        run.summary = f"完成 {run.completed_cases}/{run.total_cases} 个样本，失败 {run.failed_cases} 个。"
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        finish_langfuse_context(context)
+
+    await db.refresh(run)
+    results = await db.execute(
+        select(EvaluationResult).where(EvaluationResult.run_id == run.id).order_by(EvaluationResult.created_at.asc())
+    )
+    return _evaluation_run_response(run, results.scalars().all())
+
+
 # ==================== 章节 ====================
 
 @router.get("/projects/{project_id}/chapters", response_model=list[ChapterResponse])
@@ -623,13 +1057,19 @@ async def extract_chapter_structure(
         extra_context = None
         if req.include_existing_context:
             extra_context = await _build_structure_context(uid, db)
-        provider = get_llm_provider(await get_user_llm_config(user.id, db))
-        extraction = await extract_structure_with_provider(
-            provider,
-            chapter=chapter,
-            project_title=project.title,
-            extra_context=extra_context,
-        )
+        try:
+            provider = get_llm_provider(await get_user_llm_config(user.id, db))
+            extraction = await extract_structure_with_provider(
+                provider,
+                chapter=chapter,
+                project_title=project.title,
+                extra_context=extra_context,
+            )
+        except LLMConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.exception("章节结构提炼失败")
+            raise HTTPException(status_code=502, detail="模型服务暂时不可用，请检查模型配置或稍后重试") from exc
 
     preview = build_structure_preview(extraction)
     applied = None
@@ -1338,6 +1778,19 @@ async def generate_chapter(
             target_chapter_id = ch.id
 
     async def event_stream():
+        langfuse_context = activate_langfuse_context(
+            name="generate_content",
+            user_id=str(user.id),
+            session_id=str(uid),
+            tags=["article" if is_article_project else "novel", req.mode],
+            metadata={
+                "project_id": str(uid),
+                "chapter_id": str(target_chapter_id) if target_chapter_id else None,
+                "document_id": str(target_document_id) if target_document_id else None,
+                "mode": req.mode,
+                "endpoint": request.url.path,
+            },
+        )
         try:
             generation_record_saved = False
 
@@ -1361,6 +1814,7 @@ async def generate_chapter(
                         content=content,
                         req=req,
                         review_results=review_results,
+                        langfuse_trace_id=current_langfuse_trace_id(),
                     )
                     if not record:
                         return None
@@ -1377,7 +1831,7 @@ async def generate_chapter(
                     return ""
                 return (
                     "event: generation_record\n"
-                    f"data: {json.dumps({'id': record_id, 'status': 'candidate'}, ensure_ascii=False)}\n\n"
+                    f"data: {json.dumps({'id': record_id, 'status': 'candidate', 'langfuse_trace_id': current_langfuse_trace_id()}, ensure_ascii=False)}\n\n"
                 )
 
             yield f"event: progress\ndata: {json.dumps({'message': '开始生成', 'mode': req.mode, 'chapter_num': req.chapter_num}, ensure_ascii=False)}\n\n"
@@ -1883,6 +2337,8 @@ async def generate_chapter(
         except Exception as e:
             logger.exception("生成失败")
             yield f"event: error\ndata: {json.dumps({'message': f'生成失败: {str(e)}'}, ensure_ascii=False)}\n\n"
+        finally:
+            finish_langfuse_context(langfuse_context)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -1927,6 +2383,18 @@ async def resume_chapter_generation(
     config = {"configurable": {"thread_id": thread_id}}
 
     async def event_stream():
+        langfuse_context = activate_langfuse_context(
+            name="resume_generation",
+            user_id=str(user.id),
+            session_id=str(uid),
+            tags=["article" if project.mode == "article" else "novel", action],
+            metadata={
+                "project_id": str(uid),
+                "thread_id": thread_id,
+                "action": action,
+                "endpoint": request.url.path,
+            },
+        )
         try:
             # 获取当前状态
             state = await app.aget_state(config)
@@ -1947,6 +2415,7 @@ async def resume_chapter_generation(
                         document_id=content_id if project.mode == "article" else None,
                         mode=values.get("mode", "full_pipeline"),
                         content=content,
+                        langfuse_trace_id=current_langfuse_trace_id(),
                     )
                     if not record:
                         return None
@@ -1962,7 +2431,7 @@ async def resume_chapter_generation(
                     return ""
                 return (
                     "event: generation_record\n"
-                    f"data: {json.dumps({'id': record_id, 'status': 'candidate'}, ensure_ascii=False)}\n\n"
+                    f"data: {json.dumps({'id': record_id, 'status': 'candidate', 'langfuse_trace_id': current_langfuse_trace_id()}, ensure_ascii=False)}\n\n"
                 )
 
             if action == "reject":
@@ -2113,6 +2582,8 @@ async def resume_chapter_generation(
         except Exception as e:
             logger.exception("恢复工作流失败")
             yield f"event: error\ndata: {json.dumps({'message': f'恢复失败: {str(e)}'}, ensure_ascii=False)}\n\n"
+        finally:
+            finish_langfuse_context(langfuse_context)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

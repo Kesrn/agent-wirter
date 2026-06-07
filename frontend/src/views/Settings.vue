@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useLLMSettingsStore, useUiStore, friendlyError } from '../stores'
 import type { LLMProviderName, LLMConfigCreatePayload } from '../api/types'
+import BaseSelect from '../components/BaseSelect.vue'
 
 const router = useRouter()
 const store = useLLMSettingsStore()
@@ -41,6 +42,19 @@ const PROVIDER_LABELS: Record<string, string> = {
   minimax: 'MiniMax',
   custom: '自定义（OpenAI 兼容）',
 }
+
+const providerOptions: { value: LLMProviderName; label: string }[] = [
+  { value: 'mock', label: PROVIDER_LABELS.mock },
+  { value: 'openai', label: PROVIDER_LABELS.openai },
+  { value: 'deepseek', label: PROVIDER_LABELS.deepseek },
+  { value: 'siliconflow', label: PROVIDER_LABELS.siliconflow },
+  { value: 'zhipu', label: PROVIDER_LABELS.zhipu },
+  { value: 'moonshot', label: PROVIDER_LABELS.moonshot },
+  { value: 'qwen', label: PROVIDER_LABELS.qwen },
+  { value: 'yi', label: PROVIDER_LABELS.yi },
+  { value: 'minimax', label: PROVIDER_LABELS.minimax },
+  { value: 'custom', label: PROVIDER_LABELS.custom },
+]
 
 const isMock = computed(() => formProvider.value === 'mock')
 
@@ -181,18 +195,7 @@ function handleLogout() {
     <div class="config-form">
       <div class="form-row">
         <label>Provider</label>
-        <select v-model="formProvider" class="form-input">
-          <option value="mock">Mock（测试）</option>
-          <option value="openai">OpenAI</option>
-          <option value="deepseek">DeepSeek</option>
-          <option value="siliconflow">SiliconFlow</option>
-          <option value="zhipu">智谱 AI</option>
-          <option value="moonshot">月之暗面</option>
-          <option value="qwen">通义千问</option>
-          <option value="yi">零一万物</option>
-          <option value="minimax">MiniMax</option>
-          <option value="custom">自定义（OpenAI 兼容）</option>
-        </select>
+        <BaseSelect v-model="formProvider" :options="providerOptions" />
       </div>
 
       <div class="form-row" :class="{ disabled: isMock }">

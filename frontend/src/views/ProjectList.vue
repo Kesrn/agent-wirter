@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useProjectStore, useUiStore, friendlyError } from '../stores'
 import { useRouter } from 'vue-router'
 import type { ProjectMode } from '../api/types'
 import { api } from '../api/client'
 import ConfirmModal from '../components/ConfirmModal.vue'
+import BaseMultiSelect from '../components/BaseMultiSelect.vue'
 
 const store = useProjectStore()
 const ui = useUiStore()
@@ -42,11 +43,42 @@ function modeLabel(mode: string): string {
 const showNewProject = ref(false)
 const newTitle = ref('')
 const newMode = ref<ProjectMode>('novel')
-const newGenre = ref('')
-const newStyle = ref('')
+const newGenres = ref<string[]>([])
+const newStyles = ref<string[]>([])
 const newDescription = ref('')
 const newTargetWords = ref<number | null>(null)
 const newProjectError = ref('')
+
+const novelGenreOptions = [
+  '玄幻', '仙侠', '奇幻', '都市', '科幻', '悬疑', '历史', '武侠',
+  '言情', '穿越重生', '末世', '无限流', '游戏竞技', '轻小说',
+  '灵异', '现实', '宫斗宅斗', '职场商战',
+].map(label => ({ value: label, label }))
+
+const articleGenreOptions = [
+  '产品介绍', '行业分析', '教程指南', '品牌故事', '案例复盘', '观点评论',
+  '知识科普', '营销文案', '社媒短文', '新闻解读', '人物访谈', '活动策划',
+].map(label => ({ value: label, label }))
+
+const novelStyleOptions = [
+  '爽文', '热血', '轻松', '正剧', '甜文', '暗黑', '硬核', '悬疑感',
+  '群像', '慢热', '快节奏', '幽默', '治愈', '史诗', '赛博朋克', '国风',
+].map(label => ({ value: label, label }))
+
+const articleStyleOptions = [
+  '专业', '轻松', '犀利', '克制', '故事化', '数据驱动', '口语化', '高级感',
+  '转化导向', '深度分析', '短平快', '社媒感', '科普向', '观点鲜明',
+].map(label => ({ value: label, label }))
+
+const genreOptions = computed(() => newMode.value === 'article' ? articleGenreOptions : novelGenreOptions)
+const styleOptions = computed(() => newMode.value === 'article' ? articleStyleOptions : novelStyleOptions)
+
+function setNewProjectMode(mode: ProjectMode) {
+  if (newMode.value === mode) return
+  newMode.value = mode
+  newGenres.value = []
+  newStyles.value = []
+}
 
 const importFileInput = ref<HTMLInputElement | null>(null)
 const showTxtImport = ref(false)
@@ -62,8 +94,8 @@ const projectPendingDelete = ref<{ id: string; title: string } | null>(null)
 function openNewProjectForm() {
   newTitle.value = ''
   newMode.value = 'novel'
-  newGenre.value = ''
-  newStyle.value = ''
+  newGenres.value = []
+  newStyles.value = []
   newDescription.value = ''
   newTargetWords.value = null
   newProjectError.value = ''
@@ -78,8 +110,8 @@ async function submitNewProject() {
   const payload = {
     title: newTitle.value.trim(),
     mode: newMode.value,
-    genre: newGenre.value.trim() || undefined,
-    style: newStyle.value.trim() || undefined,
+    genre: newGenres.value.join('、') || undefined,
+    style: newStyles.value.join('、') || undefined,
     description: newDescription.value.trim() || undefined,
     target_words: newTargetWords.value ?? undefined,
   }
@@ -202,17 +234,25 @@ async function deleteProject(projectId: string) {
       <div class="form-row">
         <label>创作模式</label>
         <div class="mode-segmented">
-          <button :class="{ active: newMode === 'novel' }" @click="newMode = 'novel'">小说</button>
-          <button :class="{ active: newMode === 'article' }" @click="newMode = 'article'">文章</button>
+          <button :class="{ active: newMode === 'novel' }" @click="setNewProjectMode('novel')">小说</button>
+          <button :class="{ active: newMode === 'article' }" @click="setNewProjectMode('article')">文章</button>
         </div>
       </div>
       <div class="form-row">
         <label>题材</label>
-        <input v-model="newGenre" type="text" placeholder="可选，如：科幻、悬疑" class="form-input" />
+        <BaseMultiSelect
+          v-model="newGenres"
+          :options="genreOptions"
+          :placeholder="newMode === 'article' ? '可选，如：行业分析、教程指南' : '可选，如：科幻、悬疑'"
+        />
       </div>
       <div class="form-row">
         <label>风格</label>
-        <input v-model="newStyle" type="text" placeholder="可选，如：硬核、暗黑" class="form-input" />
+        <BaseMultiSelect
+          v-model="newStyles"
+          :options="styleOptions"
+          :placeholder="newMode === 'article' ? '可选，如：专业、故事化' : '可选，如：硬核、暗黑'"
+        />
       </div>
       <div class="form-row">
         <label>简介</label>
@@ -265,6 +305,13 @@ async function deleteProject(projectId: string) {
           <h3 class="card-title">{{ project.title }}</h3>
           <div class="card-actions" @click.stop>
             <span class="status-badge" :class="project.status">{{ statusLabel(project.status) }}</span>
+            <button
+              class="btn-card-secondary"
+              title="评测集"
+              @click.stop="router.push(`/projects/${project.id}/evaluations`)"
+            >
+              评测集
+            </button>
             <button
               class="btn-card-delete"
               :disabled="deletingProjectId === project.id"
@@ -627,6 +674,20 @@ async function deleteProject(projectId: string) {
   font-size: var(--text-xs);
   font-weight: 650;
   transition: opacity var(--transition), background var(--transition), border-color var(--transition);
+}
+.btn-card-secondary {
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
+  border-radius: 9px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  transition: background var(--transition), border-color var(--transition);
+}
+.btn-card-secondary:hover {
+  background: color-mix(in srgb, var(--accent-subtle) 70%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
 }
 .btn-card-delete:hover:not(:disabled) {
   background: color-mix(in srgb, var(--status-error, #ef4444) 12%, var(--bg-panel));

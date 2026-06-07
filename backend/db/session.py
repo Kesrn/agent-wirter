@@ -33,7 +33,7 @@ async def get_db() -> AsyncSession:
 async def init_db():
     """初始化数据库：创建所有表"""
     from models.base import Base
-    from models import project, chapter, document, expert, world_entry, character, character_relation, outline, hidden_thread, user, llm_config, chapter_version, document_version, generation_record  # noqa: F401
+    from models import project, chapter, document, expert, world_entry, character, character_relation, outline, hidden_thread, user, llm_config, chapter_version, document_version, generation_record, evaluation  # noqa: F401
 
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

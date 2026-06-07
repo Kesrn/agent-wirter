@@ -85,6 +85,7 @@
   --text-base: 0.925rem;
   --text-lg: 1.05rem;
   --text-xl: 1.2rem;
+  --desktop-status-bar-height: 0px;
 
   /* Transitions */
   --transition: 120ms ease;
@@ -181,6 +182,127 @@ html, body {
   transition: background var(--transition), color var(--transition);
 }
 
+html.desktop-runtime body {
+  padding-top: 34px;
+}
+
+html.desktop-runtime {
+  --desktop-status-bar-height: 34px;
+}
+
+.desktop-status-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5000;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 34px;
+  padding: 0 14px;
+  color: #e5edf8;
+  background:
+    linear-gradient(90deg, rgba(15, 23, 42, 0.98), rgba(31, 59, 98, 0.97) 54%, rgba(15, 118, 110, 0.97));
+  border-bottom: 1px solid rgba(226, 232, 240, 0.16);
+  box-shadow: 0 1px 8px rgba(2, 6, 23, 0.18);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.desktop-status-main,
+.desktop-backend {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.desktop-status-main {
+  gap: 8px;
+  flex: 0 0 auto;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.desktop-app-mark {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background:
+    linear-gradient(135deg, #fffaf0 0 36%, transparent 36%),
+    linear-gradient(135deg, #14b8a6, #67e8f9);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.4), 0 2px 7px rgba(20,184,166,0.35);
+}
+
+.desktop-version {
+  color: rgba(226, 232, 240, 0.7);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.desktop-backend {
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  gap: 8px;
+  overflow: hidden;
+  font-size: 0.78rem;
+  color: rgba(226, 232, 240, 0.78);
+}
+
+.desktop-backend-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #f59e0b;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.17);
+}
+
+.desktop-backend.online .desktop-backend-dot {
+  background: #34d399;
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.18);
+}
+
+.desktop-backend.offline .desktop-backend-dot {
+  background: #fb7185;
+  box-shadow: 0 0 0 3px rgba(251, 113, 133, 0.17);
+}
+
+.desktop-backend-label {
+  flex: 0 0 auto;
+  color: #f8fafc;
+  font-weight: 650;
+}
+
+.desktop-backend-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-status-action {
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid rgba(226, 232, 240, 0.24);
+  border-radius: 5px;
+  color: #f8fafc;
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 0.74rem;
+  -webkit-app-region: no-drag;
+}
+
+.desktop-status-action:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.17);
+}
+
+.desktop-status-action:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
 a {
   color: var(--accent);
   text-decoration: none;
@@ -198,7 +320,7 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
-input, textarea, select {
+input, textarea {
   font-family: var(--font-sans);
   font-size: var(--text-sm);
   color: var(--text);
@@ -209,7 +331,7 @@ input, textarea, select {
   box-shadow: 0 1px 0 rgba(17, 24, 39, 0.02);
   transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
 }
-input:focus, textarea:focus, select:focus {
+input:focus, textarea:focus {
   outline: none;
   border-color: var(--border-focus);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
@@ -229,18 +351,6 @@ input[type="color"] {
   height: 32px;
   width: 48px;
   cursor: pointer;
-}
-
-select {
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' stroke='%236b6b74' fill='none' stroke-width='1.5'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 8px center;
-  padding-right: 28px;
-}
-
-html[data-theme="dark"] select {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' stroke='%23b9b3a6' fill='none' stroke-width='1.5'/%3E%3C/svg%3E");
 }
 
 /* ─── Scrollbar ─── */

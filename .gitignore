@@ -31,3 +31,9 @@ backend/uploads/
 
 # Build
 *.pyc
+frontend/.pyinstaller-build/
+frontend/.pyinstaller-spec/
+frontend/backend-dist/
+frontend/build-assets/
+frontend/dist-desktop/
+frontend/release/

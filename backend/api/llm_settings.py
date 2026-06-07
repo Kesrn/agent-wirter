@@ -36,6 +36,16 @@ PROVIDER_BASE_URLS = {
 }
 
 
+def _api_key_is_available(encrypted_key: str | None) -> bool:
+    if not encrypted_key:
+        return False
+    try:
+        return bool(decrypt_api_key(encrypted_key))
+    except Exception:
+        logger.warning("API Key 解密失败，将配置标记为未设置")
+        return False
+
+
 def _user_uuid(user: AuthUser) -> uuid.UUID:
     return uuid.UUID(user.id)
 
@@ -54,7 +64,7 @@ async def get_llm_settings(
         return {
             "id": str(config.id),
             "provider": config.provider,
-            "api_key_set": bool(config.encrypted_api_key),
+            "api_key_set": _api_key_is_available(config.encrypted_api_key),
             "base_url": config.base_url,
             "model_id": config.model_id,
             "created_at": config.created_at.isoformat(),
@@ -114,7 +124,7 @@ async def upsert_llm_settings(
     return {
         "id": str(config.id),
         "provider": config.provider,
-        "api_key_set": bool(config.encrypted_api_key),
+        "api_key_set": _api_key_is_available(config.encrypted_api_key),
         "base_url": config.base_url,
         "model_id": config.model_id,
         "created_at": config.created_at.isoformat(),
@@ -160,7 +170,7 @@ async def get_llm_status(
             "has_config": True,
             "provider": config.provider,
             "model_id": config.model_id,
-            "has_api_key": bool(config.encrypted_api_key),
+            "has_api_key": _api_key_is_available(config.encrypted_api_key),
         }
     return {
         "has_config": False,

@@ -24,7 +24,7 @@ def compile_uuid_sqlite(type_, compiler, **kw):
 
 
 from models.base import Base
-from models import Project, Chapter, Expert, WorldEntry, Character, User, ChapterVersion, Document, DocumentVersion  # noqa: F401
+from models import Project, Chapter, Expert, WorldEntry, Character, User, ChapterVersion, Document, DocumentVersion, EvaluationDataset, EvaluationCase, EvaluationRun, EvaluationResult  # noqa: F401
 from db.session import get_db, set_engine
 from main import app
 from services.diff_service import compute_diff
@@ -175,16 +175,29 @@ def test_list_projects_empty():
 
 def test_create_project():
     headers = _auth_headers()
-    resp = client.post("/api/projects", json={"title": "测试小说", "description": "一部测试小说", "target_words": 50000}, headers=headers)
+    resp = client.post(
+        "/api/projects",
+        json={
+            "title": "测试小说",
+            "description": "一部测试小说",
+            "genre": "科幻、悬疑",
+            "style": "硬核、暗黑",
+            "target_words": 50000,
+        },
+        headers=headers,
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert data["title"] == "测试小说"
     assert data["status"] == "active"
+    assert data["genre"] == "科幻、悬疑"
+    assert data["style"] == "硬核、暗黑"
     assert data["target_words"] == 50000
     project_id = data["id"]
 
     resp2 = client.get(f"/api/projects/{project_id}", headers=headers)
     assert resp2.status_code == 200
+    assert resp2.json()["genre"] == "科幻、悬疑"
 
     resp3 = client.get(f"/api/projects/{project_id}/experts", headers=headers)
     assert resp3.status_code == 200
@@ -259,6 +272,56 @@ def test_delete_project_removes_project_and_children():
     list_resp = client.get("/api/projects", headers=headers)
     assert all(item["id"] != project_id for item in list_resp.json())
     assert client.get(f"/api/projects/{project_id}/chapters", headers=headers).status_code == 404
+
+
+def test_evaluation_dataset_case_and_run():
+    headers = _auth_headers("eval_user", "eval_pass")
+    project_resp = client.post("/api/projects", json={"title": "评测项目"}, headers=headers)
+    project_id = project_resp.json()["id"]
+
+    dataset_resp = client.post(
+        f"/api/projects/{project_id}/eval-datasets",
+        json={"name": "小说回归评测", "description": "基础创作质量", "mode": "regression"},
+        headers=headers,
+    )
+    assert dataset_resp.status_code == 200, dataset_resp.text
+    dataset = dataset_resp.json()
+    assert dataset["name"] == "小说回归评测"
+    dataset_id = dataset["id"]
+
+    case_resp = client.post(
+        f"/api/projects/{project_id}/eval-datasets/{dataset_id}/cases",
+        json={
+            "name": "角色一致性",
+            "task_type": "novel_chapter",
+            "input_text": "主角林澈在旧城档案馆发现线索。",
+            "actual_output": "林澈在旧城档案馆翻到缺页档案，并意识到线索被人故意藏起。",
+            "expected_properties": ["必须出现林澈", "必须出现旧城档案馆"],
+            "rubric": {"requirement_following": "是否遵守硬性要求", "prose_quality": "文字质量"},
+        },
+        headers=headers,
+    )
+    assert case_resp.status_code == 200, case_resp.text
+    case = case_resp.json()
+    assert case["rubric"]["requirement_following"]
+
+    list_resp = client.get(f"/api/projects/{project_id}/eval-datasets", headers=headers)
+    assert list_resp.status_code == 200
+    assert list_resp.json()[0]["case_count"] == 1
+
+    run_resp = client.post(
+        f"/api/projects/{project_id}/eval-datasets/{dataset_id}/runs",
+        json={"generation_mode": "judge_only"},
+        headers=headers,
+    )
+    assert run_resp.status_code == 200, run_resp.text
+    run = run_resp.json()
+    assert run["status"] == "completed"
+    assert run["total_cases"] == 1
+    assert run["completed_cases"] == 1
+    assert run["average_score"] >= 1
+    assert len(run["results"]) == 1
+    assert run["results"][0]["passed"] is True
 
 
 def test_import_txt_project_creates_novel_chapters():

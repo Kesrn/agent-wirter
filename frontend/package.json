@@ -1,13 +1,87 @@
 {
-  "name": "frontend",
+  "name": "ai-creative-platform",
+  "description": "AI 创作平台桌面端与 Web 前端",
+  "author": "AI Creative Platform",
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "assets:desktop": "node scripts/generate-desktop-assets.mjs",
+    "backend:build": "node scripts/build-backend.mjs",
+    "build:desktop": "vue-tsc -b && vite build --mode desktop",
+    "desktop:dev": "npm run assets:desktop && concurrently -k \"vite --mode desktop --host 127.0.0.1 --port 5173 --strictPort\" \"wait-on http://127.0.0.1:5173 && cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:5173 electron .\"",
+    "desktop:build": "node scripts/build-desktop.mjs current",
+    "desktop:build:mac": "node scripts/build-desktop.mjs darwin",
+    "desktop:build:win": "node scripts/build-desktop.mjs win32",
+    "desktop:build:linux": "node scripts/build-desktop.mjs linux",
     "preview": "vite preview",
     "test": "vitest run"
+  },
+  "build": {
+    "appId": "com.ai-creative-platform.desktop",
+    "productName": "AI 创作平台",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist-desktop/**/*",
+      "electron/**/*",
+      "build-assets/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend-dist",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "mac": {
+      "icon": "build-assets/app-icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "dmg": {
+      "background": "build-assets/dmg-background.png",
+      "window": {
+        "width": 660,
+        "height": 420
+      },
+      "contents": [
+        {
+          "x": 192,
+          "y": 212,
+          "type": "file"
+        },
+        {
+          "x": 470,
+          "y": 212,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "win": {
+      "icon": "build-assets/app-icon.png",
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "icon": "build-assets/app-icon.png",
+      "target": [
+        "AppImage"
+      ],
+      "category": "Office"
+    }
   },
   "dependencies": {
     "pinia": "^3.0.4",
@@ -18,9 +92,15 @@
     "@types/node": "^24.12.3",
     "@vitejs/plugin-vue": "^6.0.6",
     "@vue/tsconfig": "^0.9.1",
+    "concurrently": "^10.0.3",
+    "cross-env": "^10.1.0",
+    "electron": "^42.3.3",
+    "electron-builder": "^26.15.0",
+    "tslib": "^2.8.1",
     "typescript": "~6.0.2",
     "vite": "^8.0.12",
     "vitest": "^4.1.7",
-    "vue-tsc": "^3.2.8"
+    "vue-tsc": "^3.2.8",
+    "wait-on": "^9.0.10"
   }
 }

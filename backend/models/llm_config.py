@@ -4,16 +4,15 @@
 """
 
 from sqlalchemy import String
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .base import Base, UUIDMixin, TimestampMixin
+from .base import Base, GUID, UUIDMixin, TimestampMixin
 
 
 class LLMConfig(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "llm_configs"
 
-    user_id: Mapped[str] = mapped_column(UUID(as_uuid=True), nullable=False, unique=True, index=True)
+    user_id: Mapped[str] = mapped_column(GUID(), nullable=False, unique=True, index=True)
     provider: Mapped[str] = mapped_column(String(20), nullable=False, default="mock")
     encrypted_api_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     base_url: Mapped[str | None] = mapped_column(String(500), nullable=True)

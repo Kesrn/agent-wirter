@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 class ProjectCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str | None = None
+    genre: str | None = Field(default=None, max_length=200)
+    style: str | None = Field(default=None, max_length=200)
     target_words: int = 200000
     mode: str = Field(default="novel", pattern=r"^(novel|article)$")
 
@@ -17,6 +19,8 @@ class ProjectResponse(BaseModel):
     id: uuid.UUID
     title: str
     description: str | None
+    genre: str | None
+    style: str | None
     target_words: int
     status: str
     mode: str
@@ -558,6 +562,7 @@ class GenerationRecordListItemResponse(BaseModel):
     direction: str | None
     word_count: int
     status: str
+    langfuse_trace_id: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -586,3 +591,119 @@ class GenerationRecordDiffRequest(BaseModel):
 class GenerationRecordDiffResponse(BaseModel):
     generation_id: uuid.UUID
     diff: list[dict]
+
+
+# --- 评测集 ---
+class EvaluationDatasetCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=5000)
+    mode: str = Field(default="creative", pattern=r"^(creative|regression|prompt|model)$")
+
+
+class EvaluationDatasetUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=5000)
+    status: str | None = Field(default=None, pattern=r"^(active|archived)$")
+
+
+class EvaluationDatasetResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    description: str | None
+    mode: str
+    status: str
+    case_count: int = 0
+    run_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class EvaluationCaseCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    task_type: str = Field(default="creative_generation", max_length=50)
+    input_text: str = Field(default="", max_length=20000)
+    actual_output: str | None = Field(default=None, max_length=30000)
+    reference_output: str | None = Field(default=None, max_length=30000)
+    expected_properties: list[str] | None = None
+    rubric: dict | None = None
+    tags: list[str] | None = None
+
+
+class EvaluationCaseUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    task_type: str | None = Field(default=None, max_length=50)
+    input_text: str | None = Field(default=None, max_length=20000)
+    actual_output: str | None = Field(default=None, max_length=30000)
+    reference_output: str | None = Field(default=None, max_length=30000)
+    expected_properties: list[str] | None = None
+    rubric: dict | None = None
+    tags: list[str] | None = None
+    status: str | None = Field(default=None, pattern=r"^(active|disabled|archived)$")
+
+
+class EvaluationCaseResponse(BaseModel):
+    id: uuid.UUID
+    dataset_id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    task_type: str
+    input_text: str
+    actual_output: str | None
+    reference_output: str | None
+    expected_properties: list[str] | None
+    rubric: dict | None
+    tags: list[str] | None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class EvaluationRunCreate(BaseModel):
+    name: str | None = Field(default=None, max_length=200)
+    generation_mode: str = Field(default="generate_and_judge", pattern=r"^(generate_and_judge|judge_only)$")
+    case_ids: list[uuid.UUID] | None = None
+
+
+class EvaluationResultResponse(BaseModel):
+    id: uuid.UUID
+    run_id: uuid.UUID
+    case_id: uuid.UUID
+    project_id: uuid.UUID
+    generated_output: str | None
+    scores: dict | None
+    score: float | None
+    passed: bool | None
+    feedback: str | None
+    error: str | None
+    latency_ms: int | None
+    langfuse_trace_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class EvaluationRunResponse(BaseModel):
+    id: uuid.UUID
+    dataset_id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    generation_mode: str
+    status: str
+    model_provider: str | None
+    model_id: str | None
+    total_cases: int
+    completed_cases: int
+    failed_cases: int
+    average_score: float | None
+    summary: str | None
+    results: list[EvaluationResultResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}

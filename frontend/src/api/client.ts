@@ -20,6 +20,9 @@ import {
   type DocumentVersionDiffRequest, type DocumentVersionDiffResponse,
   type ApiGenerationRecordListItem, type ApiGenerationRecord,
   type GenerationRecordUpdatePayload, type GenerationRecordDiffRequest, type GenerationRecordDiffResponse,
+  type ApiEvaluationDataset, type ApiEvaluationCase, type ApiEvaluationRun,
+  type EvaluationDatasetCreatePayload, type EvaluationDatasetUpdatePayload,
+  type EvaluationCaseCreatePayload, type EvaluationCaseUpdatePayload, type EvaluationRunCreatePayload,
 } from './types'
 
 function getToken(): string | null {
@@ -45,6 +48,14 @@ function formAuthHeaders(): Record<string, string> {
   const token = getToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
   return headers
+}
+
+function redirectToLogin(): void {
+  if (import.meta.env.VITE_DESKTOP === 'true') {
+    window.location.hash = '#/login'
+    return
+  }
+  window.location.href = '/login'
 }
 
 /** Parse backend error body into a user-friendly Chinese message */
@@ -105,7 +116,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (res.status === 401) {
       localStorage.removeItem('ai_write_token')
       localStorage.removeItem('ai_write_logged_in')
-      window.location.href = '/login'
+      redirectToLogin()
     }
     throw new ApiError(res.status, parseApiError(res.status, body))
   }
@@ -195,7 +206,7 @@ export const api = {
       if (res.status === 401) {
         localStorage.removeItem('ai_write_token')
         localStorage.removeItem('ai_write_logged_in')
-        window.location.href = '/login'
+        redirectToLogin()
       }
       throw new ApiError(res.status, parseApiError(res.status, body))
     }
@@ -212,7 +223,7 @@ export const api = {
       if (res.status === 401) {
         localStorage.removeItem('ai_write_token')
         localStorage.removeItem('ai_write_logged_in')
-        window.location.href = '/login'
+        redirectToLogin()
       }
       throw new ApiError(res.status, parseApiError(res.status, body))
     }
@@ -392,6 +403,30 @@ export const api = {
     request<ApiGenerationRecord>(`/projects/${projectId}/generations/${generationId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   diffGenerationRecord: (projectId: string, generationId: string, data: GenerationRecordDiffRequest) =>
     request<GenerationRecordDiffResponse>(`/projects/${projectId}/generations/${generationId}/diff`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // ─── Evaluation datasets ───
+  listEvaluationDatasets: (projectId: string) =>
+    request<ApiEvaluationDataset[]>(`/projects/${projectId}/eval-datasets`),
+  createEvaluationDataset: (projectId: string, data: EvaluationDatasetCreatePayload) =>
+    request<ApiEvaluationDataset>(`/projects/${projectId}/eval-datasets`, { method: 'POST', body: JSON.stringify(data) }),
+  updateEvaluationDataset: (projectId: string, datasetId: string, data: EvaluationDatasetUpdatePayload) =>
+    request<ApiEvaluationDataset>(`/projects/${projectId}/eval-datasets/${datasetId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteEvaluationDataset: (projectId: string, datasetId: string) =>
+    request<void>(`/projects/${projectId}/eval-datasets/${datasetId}`, { method: 'DELETE' }),
+  listEvaluationCases: (projectId: string, datasetId: string) =>
+    request<ApiEvaluationCase[]>(`/projects/${projectId}/eval-datasets/${datasetId}/cases`),
+  createEvaluationCase: (projectId: string, datasetId: string, data: EvaluationCaseCreatePayload) =>
+    request<ApiEvaluationCase>(`/projects/${projectId}/eval-datasets/${datasetId}/cases`, { method: 'POST', body: JSON.stringify(data) }),
+  updateEvaluationCase: (projectId: string, datasetId: string, caseId: string, data: EvaluationCaseUpdatePayload) =>
+    request<ApiEvaluationCase>(`/projects/${projectId}/eval-datasets/${datasetId}/cases/${caseId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteEvaluationCase: (projectId: string, datasetId: string, caseId: string) =>
+    request<void>(`/projects/${projectId}/eval-datasets/${datasetId}/cases/${caseId}`, { method: 'DELETE' }),
+  listEvaluationRuns: (projectId: string, datasetId: string) =>
+    request<ApiEvaluationRun[]>(`/projects/${projectId}/eval-datasets/${datasetId}/runs`),
+  getEvaluationRun: (projectId: string, datasetId: string, runId: string) =>
+    request<ApiEvaluationRun>(`/projects/${projectId}/eval-datasets/${datasetId}/runs/${runId}`),
+  runEvaluationDataset: (projectId: string, datasetId: string, data: EvaluationRunCreatePayload) =>
+    request<ApiEvaluationRun>(`/projects/${projectId}/eval-datasets/${datasetId}/runs`, { method: 'POST', body: JSON.stringify(data) }),
 
   // ─── LLM Settings ───
   getLLMConfig: () => request<LLMConfigResponse>('/llm-settings'),

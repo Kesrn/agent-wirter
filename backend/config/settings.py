@@ -5,9 +5,22 @@
 """
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+
+from dotenv import load_dotenv
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
+
+
+def _load_env_files() -> None:
+    """Load local env files for direct `python main.py` startup."""
+    for env_file in (os.path.join(PROJECT_ROOT, ".env"), os.path.join(BASE_DIR, ".env")):
+        if os.path.exists(env_file):
+            load_dotenv(env_file, override=False)
+
+
+_load_env_files()
 
 
 @dataclass(frozen=True)
@@ -43,9 +56,17 @@ class Settings:
     # --- LangGraph ---
     LANGGRAPH_CHECKPOINT_DB: bool = os.getenv("LANGGRAPH_CHECKPOINT_DB", "false").lower() == "true"
 
+    # --- Langfuse / Observability ---
+    LANGFUSE_ENABLED: bool = os.getenv("LANGFUSE_ENABLED", "false").lower() == "true"
+    LANGFUSE_PUBLIC_KEY: str = os.getenv("LANGFUSE_PUBLIC_KEY", "")
+    LANGFUSE_SECRET_KEY: str = os.getenv("LANGFUSE_SECRET_KEY", "")
+    LANGFUSE_HOST: str = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+    LANGFUSE_SAMPLE_RATE: float = float(os.getenv("LANGFUSE_SAMPLE_RATE", "1.0"))
+    LANGFUSE_CAPTURE_PROMPTS: bool = os.getenv("LANGFUSE_CAPTURE_PROMPTS", "true").lower() == "true"
+
     # --- 应用 ---
     DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
-    CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:3000")
+    CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:3000,null")
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
     MAX_UPLOAD_BYTES: int = int(os.getenv("MAX_UPLOAD_BYTES", str(5 * 1024 * 1024)))
     MAX_TXT_IMPORT_BYTES: int = int(os.getenv("MAX_TXT_IMPORT_BYTES", str(50 * 1024 * 1024)))

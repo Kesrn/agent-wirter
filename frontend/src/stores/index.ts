@@ -12,8 +12,8 @@ function apiProjectToProject(ap: ApiProject): Project {
   return {
     id: ap.id,
     title: ap.title,
-    genre: '',
-    style: '',
+    genre: ap.genre ?? '',
+    style: ap.style ?? '',
     status: ap.status,
     mode: ap.mode as ProjectMode,
     description: ap.description ?? '',
@@ -116,6 +116,8 @@ export const useProjectStore = defineStore('project', () => {
     const ap = await api.createProject({
       title: payload.title,
       description: payload.description,
+      genre: payload.genre,
+      style: payload.style,
       target_words: payload.target_words,
       mode: payload.mode,
     })
@@ -1163,6 +1165,7 @@ function apiGenerationRecordToRecord(record: ApiGenerationRecordListItem | ApiGe
     direction: record.direction,
     wordCount: record.word_count,
     status: record.status,
+    langfuseTraceId: record.langfuse_trace_id ?? null,
     createdAt: record.created_at,
     content: 'content' in record ? record.content : null,
   }
@@ -1263,6 +1266,7 @@ export const useGenerationHistoryStore = defineStore('generationHistory', () => 
       direction: null,
       wordCount: 0,
       status: 'candidate',
+      langfuseTraceId: null,
       createdAt: new Date().toISOString(),
       content: null,
     })
@@ -1296,11 +1300,15 @@ export const useUiStore = defineStore('ui', () => {
     const id = nextId++
     toasts.value.push({ id, message, type })
     setTimeout(() => {
-      toasts.value = toasts.value.filter(t => t.id !== id)
+      dismissToast(id)
     }, 4000)
   }
 
-  return { toasts, showToast }
+  function dismissToast(id: number) {
+    toasts.value = toasts.value.filter(t => t.id !== id)
+  }
+
+  return { toasts, showToast, dismissToast }
 })
 
 /** Helper: extract friendly message from ApiError or generic Error */

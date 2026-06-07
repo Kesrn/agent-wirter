@@ -48,6 +48,7 @@ async def create_generation_record(
     document_id: str | uuid.UUID | None = None,
     expert_id: str | uuid.UUID | None = None,
     review_results: dict | None = None,
+    langfuse_trace_id: str | None = None,
     status: str = "candidate",
 ) -> GenerationRecord | None:
     clean_content = sanitize_chapter_content(content or "")
@@ -70,6 +71,7 @@ async def create_generation_record(
         status=status,
         review_results=review_results,
         request_params=_request_snapshot(req) if req else None,
+        langfuse_trace_id=langfuse_trace_id,
     )
     db.add(record)
     await db.flush()

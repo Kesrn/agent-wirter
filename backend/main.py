@@ -13,6 +13,7 @@ from db.session import init_db
 from api.routes import router
 from api.auth import router as auth_router
 from api.llm_settings import router as llm_settings_router
+from observability.langfuse import log_langfuse_startup_status
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("🚀 AI 小说创作平台启动")
+    log_langfuse_startup_status()
     try:
         await init_db()
         logger.info("✅ 数据库初始化完成")

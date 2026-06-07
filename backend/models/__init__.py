@@ -13,5 +13,6 @@ from .llm_config import LLMConfig
 from .chapter_version import ChapterVersion
 from .document_version import DocumentVersion
 from .generation_record import GenerationRecord
+from .evaluation import EvaluationDataset, EvaluationCase, EvaluationRun, EvaluationResult
 
-__all__ = ["Base", "UUIDMixin", "TimestampMixin", "Project", "Chapter", "Document", "Expert", "WorldEntry", "Character", "CharacterRelation", "Outline", "HiddenThread", "User", "LLMConfig", "ChapterVersion", "DocumentVersion", "GenerationRecord"]
+__all__ = ["Base", "UUIDMixin", "TimestampMixin", "Project", "Chapter", "Document", "Expert", "WorldEntry", "Character", "CharacterRelation", "Outline", "HiddenThread", "User", "LLMConfig", "ChapterVersion", "DocumentVersion", "GenerationRecord", "EvaluationDataset", "EvaluationCase", "EvaluationRun", "EvaluationResult"]

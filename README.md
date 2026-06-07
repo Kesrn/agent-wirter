@@ -111,6 +111,52 @@ http://localhost:5173
 
 Vite 已配置 `/api` 代理到 `http://localhost:8000`。
 
+### 4. 启动桌面端
+
+桌面端基于 Electron 封装现有 Vue 前端，并内置 FastAPI 后端服务。Web 端入口和构建仍然保留。
+
+开发模式：
+
+```bash
+cd frontend
+npm run desktop:dev
+```
+
+开发模式会自动启动内置后端，默认地址：
+
+```text
+http://127.0.0.1:8765
+```
+
+构建桌面安装包：
+
+```bash
+cd frontend
+npm run desktop:build
+```
+
+按平台构建：
+
+```bash
+cd frontend
+npm run desktop:build:mac   # macOS: 生成 .dmg / .zip
+npm run desktop:build:win   # Windows: 生成 NSIS .exe
+npm run desktop:build:linux # Linux: 生成 AppImage
+```
+
+Windows 版 `.exe` 需要在 Windows 环境运行 `npm run desktop:build:win`。桌面包会内置 PyInstaller 生成的 FastAPI 后端二进制，PyInstaller 必须在目标系统上构建，所以 macOS 不能直接产出可用的 Windows `.exe`。
+
+仓库也内置了 GitHub Actions 工作流：推送到 `master` 后会在 `windows-latest` 上构建 Windows 安装器，并把 `.exe` 上传为 `ai-creative-platform-windows-exe` artifact。
+
+桌面安装包会包含：
+
+- Electron 桌面客户端
+- 打包后的 FastAPI 后端二进制
+- 本地 SQLite 数据库支持
+- 桌面端图标、macOS DMG 安装封面和 Windows NSIS 安装器配置
+
+桌面端启动后会自动拉起内置后端，默认监听 `http://127.0.0.1:8765`，数据保存到系统用户数据目录；不需要额外启动 Docker、PostgreSQL 或 `uvicorn`。
+
 ## 环境变量
 
 复制 `.env.example` 后按需修改：
@@ -131,7 +177,7 @@ cp .env.example .env
 | `EMBEDDING_PROVIDER` | embedding 提供商 | `mock` |
 | `EMBEDDING_API_KEY` | embedding API Key | 空 |
 | `JWT_SECRET` | JWT 和 API Key 加密相关密钥 | 空，开发环境会自动生成 |
-| `CORS_ORIGINS` | 允许的前端源 | `http://localhost:5173,http://localhost:3000` |
+| `CORS_ORIGINS` | 允许的前端源，`null` 用于桌面端本地文件来源 | `http://localhost:5173,http://localhost:3000,null` |
 | `MAX_UPLOAD_BYTES` | 图片等通用上传大小上限 | `5242880` |
 | `MAX_TXT_IMPORT_BYTES` | TXT 小说导入大小上限，不限制章节数量 | `52428800` |
 
