@@ -93,8 +93,8 @@ function makeIconPng(size) {
       const i = 1 + x * 4
       const nx = x / (size - 1)
       const ny = y / (size - 1)
-      const inset = size * 0.06
-      const radius = size * 0.2
+      const inset = size * 0.025
+      const radius = size * 0.22
       const inside =
         x >= inset &&
         y >= inset &&
@@ -164,12 +164,6 @@ function makeIco(png) {
   return Buffer.concat([header, entry, png])
 }
 
-async function renderSvg(svgPath, pngPath, size) {
-  await execFileAsync('qlmanage', ['-t', '-s', String(size), '-o', path.dirname(pngPath), svgPath])
-  const generatedPath = path.join(path.dirname(pngPath), `${path.basename(svgPath)}.png`)
-  await execFileAsync('mv', [generatedPath, pngPath])
-}
-
 async function renderSvgWithSips(svgPath, pngPath) {
   await execFileAsync('sips', ['-s', 'format', 'png', svgPath, '--out', pngPath])
 }
@@ -183,11 +177,13 @@ await writeFile(iconIco, makeIco(makeIconPng(256)))
 if (process.platform === 'darwin') {
   await rm(iconsetDir, { recursive: true, force: true })
   await mkdir(iconsetDir, { recursive: true })
-  await renderSvg(iconSvg, iconPng, 1024)
   for (const entry of macIconEntries) {
     const renderedSize = entry.size * entry.scale
     const scaleSuffix = entry.scale === 2 ? '@2x' : ''
-    await renderSvg(iconSvg, path.join(iconsetDir, `icon_${entry.size}x${entry.size}${scaleSuffix}.png`), renderedSize)
+    await writeFile(
+      path.join(iconsetDir, `icon_${entry.size}x${entry.size}${scaleSuffix}.png`),
+      makeIconPng(renderedSize),
+    )
   }
   await execFileAsync('iconutil', ['-c', 'icns', iconsetDir, '-o', path.join(assetsDir, 'app-icon.icns')])
   await renderSvgWithSips(dmgSvg, dmgPng)
