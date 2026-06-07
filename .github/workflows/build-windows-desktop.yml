@@ -43,9 +43,21 @@ jobs:
           backend\venv\Scripts\python.exe -m pip install -r backend\requirements.txt
           backend\venv\Scripts\python.exe -m pip install "pyinstaller>=6.0.0"
 
+      - name: Generate desktop assets
+        working-directory: frontend
+        run: npm run assets:desktop
+
+      - name: Build embedded backend
+        working-directory: frontend
+        run: npm run backend:build
+
+      - name: Build desktop frontend
+        working-directory: frontend
+        run: npm run build:desktop
+
       - name: Build Windows installer
         working-directory: frontend
-        run: npm run desktop:build:win
+        run: npx electron-builder --win
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
@@ -56,3 +68,14 @@ jobs:
             frontend/release/*.blockmap
             frontend/release/builder-*.yml
           if-no-files-found: error
+
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-creative-platform-windows-build-diagnostics
+          path: |
+            frontend/release/**
+            frontend/.pyinstaller-build/**
+            frontend/.pyinstaller-spec/**
+          if-no-files-found: ignore
