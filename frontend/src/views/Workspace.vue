@@ -1694,8 +1694,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 .workspace-wrapper {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
+  height: calc(100vh - var(--desktop-status-bar-height, 0px));
+  height: calc(100dvh - var(--desktop-status-bar-height, 0px));
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--bg) 88%, white) 0%, var(--bg) 180px),
     var(--bg);
@@ -2164,8 +2164,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 .workspace-mobile {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
+  height: calc(100vh - var(--desktop-status-bar-height, 0px));
+  height: calc(100dvh - var(--desktop-status-bar-height, 0px));
   background: var(--bg);
 }
 .mobile-nav {
