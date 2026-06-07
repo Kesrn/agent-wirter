@@ -116,6 +116,25 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
 <style scoped>
 /* ─── Overlay ─── */
 .diff-overlay {
+  --diff-modal-bg: #f0ede8;
+  --diff-chrome-bg: #e8e4de;
+  --diff-header-bg: #e8e4de;
+  --diff-border: #d5d0c8;
+  --diff-title: #3a3632;
+  --diff-muted: #8a8580;
+  --diff-page-bg: var(--paper-bg);
+  --diff-page-title-bg: linear-gradient(to bottom, #faf8f4, #f5f2ec);
+  --diff-page-title: #6b6560;
+  --diff-text: #2c2825;
+  --diff-line-no: #8e8580;
+  --diff-delete-bg: rgba(220, 38, 38, 0.16);
+  --diff-delete-border: #dc322f;
+  --diff-delete-decoration: rgba(220, 50, 47, 0.58);
+  --diff-insert-bg: rgba(22, 163, 74, 0.16);
+  --diff-insert-border: #28a03c;
+  --diff-replace-bg: rgba(202, 138, 4, 0.18);
+  --diff-replace-border: #c8a014;
+  --diff-empty-bg: rgba(0, 0, 0, 0.04);
   position: fixed;
   inset: 0;
   background: rgba(30, 30, 40, 0.5);
@@ -129,7 +148,7 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   width: 94vw;
   max-width: 1140px;
   max-height: 88vh;
-  background: #f0ede8;
+  background: var(--diff-modal-bg);
   border-radius: 10px;
   display: flex;
   flex-direction: column;
@@ -143,28 +162,28 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   align-items: center;
   justify-content: space-between;
   padding: 14px 24px;
-  background: #e8e4de;
-  border-bottom: 1px solid #d5d0c8;
+  background: var(--diff-header-bg);
+  border-bottom: 1px solid var(--diff-border);
   flex-shrink: 0;
 }
 .diff-title {
   font-weight: 700;
   font-size: 15px;
-  color: #3a3632;
+  color: var(--diff-title);
   letter-spacing: 0.02em;
 }
 .btn-close {
   background: none;
   border: none;
   font-size: 24px;
-  color: #8a8580;
+  color: var(--diff-muted);
   cursor: pointer;
   padding: 0 4px;
   line-height: 1;
   transition: color 0.15s;
 }
 .btn-close:hover {
-  color: #3a3632;
+  color: var(--diff-title);
 }
 
 /* ─── Desk (holds two pages) ─── */
@@ -174,7 +193,7 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   gap: 20px;
   padding: 20px;
   overflow: auto;
-  background: #e8e4de;
+  background: var(--diff-chrome-bg);
 }
 
 /* ─── Single page ─── */
@@ -183,7 +202,7 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: var(--paper-bg);
+  background: var(--diff-page-bg);
   border-radius: var(--paper-radius);
   box-shadow: var(--paper-shadow), 0 0 0 1px rgba(0,0,0,0.03);
   overflow: hidden;
@@ -192,9 +211,9 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   padding: 10px 20px;
   font-size: 12px;
   font-weight: 700;
-  color: #6b6560;
-  background: linear-gradient(to bottom, #faf8f4, #f5f2ec);
-  border-bottom: 1px solid #e8e4de;
+  color: var(--diff-page-title);
+  background: var(--diff-page-title-bg);
+  border-bottom: 1px solid var(--diff-border);
   text-align: center;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -207,7 +226,7 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   font-family: var(--font-serif);
   font-size: 14px;
   line-height: 1.85;
-  color: #2c2825;
+  color: var(--diff-text);
   background-image: repeating-linear-gradient(
     transparent,
     transparent calc(1.85em - 1px),
@@ -227,23 +246,23 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   transition: background 0.1s;
 }
 .page-line.line-delete {
-  background: rgba(220, 50, 47, 0.10);
-  border-left-color: #dc322f;
+  background: var(--diff-delete-bg);
+  border-left-color: var(--diff-delete-border);
 }
 .page-line.line-delete .line-text {
   text-decoration: line-through;
-  text-decoration-color: rgba(220, 50, 47, 0.45);
+  text-decoration-color: var(--diff-delete-decoration);
 }
 .page-line.line-insert {
-  background: rgba(40, 160, 60, 0.10);
-  border-left-color: #28a03c;
+  background: var(--diff-insert-bg);
+  border-left-color: var(--diff-insert-border);
 }
 .page-line.line-replace {
-  background: rgba(200, 160, 20, 0.12);
-  border-left-color: #c8a014;
+  background: var(--diff-replace-bg);
+  border-left-color: var(--diff-replace-border);
 }
 .page-line.line-empty {
-  background: rgba(0, 0, 0, 0.025);
+  background: var(--diff-empty-bg);
 }
 
 .line-no {
@@ -251,7 +270,7 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   width: 3.2em;
   text-align: right;
   padding-right: 12px;
-  color: #b0a8a0;
+  color: var(--diff-line-no);
   user-select: none;
   flex-shrink: 0;
   font-family: var(--font-mono);
@@ -266,6 +285,33 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   word-break: break-all;
   flex: 1;
   min-width: 0;
+}
+
+html[data-theme="dark"] .diff-overlay {
+  --diff-modal-bg: #0d1420;
+  --diff-chrome-bg: #111a29;
+  --diff-header-bg: #172235;
+  --diff-border: #334156;
+  --diff-title: #f1f5f9;
+  --diff-muted: #93a4b8;
+  --diff-page-bg: #121b2b;
+  --diff-page-title-bg: linear-gradient(to bottom, #1e2a3d, #182336);
+  --diff-page-title: #dbe7f5;
+  --diff-text: #eef4ff;
+  --diff-line-no: #a9b8ca;
+  --diff-delete-bg: rgba(248, 113, 113, 0.24);
+  --diff-delete-border: #fb7185;
+  --diff-delete-decoration: rgba(252, 165, 165, 0.86);
+  --diff-insert-bg: rgba(52, 211, 153, 0.22);
+  --diff-insert-border: #34d399;
+  --diff-replace-bg: rgba(251, 191, 36, 0.24);
+  --diff-replace-border: #fbbf24;
+  --diff-empty-bg: rgba(148, 163, 184, 0.09);
+  background: rgba(3, 7, 18, 0.74);
+}
+
+html[data-theme="dark"] .diff-page {
+  box-shadow: 0 22px 55px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(148, 163, 184, 0.2);
 }
 
 /* ─── Responsive ─── */
