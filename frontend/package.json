@@ -70,7 +70,7 @@
       ]
     },
     "win": {
-      "icon": "build-assets/app-icon.png",
+      "icon": "build-assets/app-icon.ico",
       "target": [
         "nsis"
       ]
