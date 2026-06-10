@@ -979,17 +979,18 @@ function onTextareaInput(e: Event) {
 .editor-header {
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-5);
-  background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
-  border-bottom: 1px solid var(--border);
+  gap: 10px;
+  min-height: 58px;
+  padding: 10px 24px;
+  background: color-mix(in srgb, var(--bg-panel) 68%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   flex-wrap: wrap;
   flex-shrink: 0;
-  box-shadow: 0 1px 0 rgba(17, 24, 39, 0.03);
-  backdrop-filter: blur(10px);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.025) inset;
+  backdrop-filter: blur(16px);
 }
 .editor-title {
-  font-weight: 720;
+  font-weight: 780;
   font-size: var(--text-base);
   color: var(--text);
 }
@@ -997,7 +998,7 @@ function onTextareaInput(e: Event) {
   font-size: 10px;
   font-weight: 700;
   padding: 3px 8px;
-  border-radius: 8px;
+  border-radius: 999px;
 }
 .editor-status.draft { background: var(--status-draft-bg); color: var(--status-draft); }
 .editor-status.reviewing { background: var(--status-reviewing-bg); color: var(--status-reviewing); }
@@ -1005,12 +1006,12 @@ function onTextareaInput(e: Event) {
 .editor-word-count {
   display: inline-flex;
   align-items: center;
-  height: 24px;
-  padding: 0 var(--sp-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 999px;
   color: var(--text-secondary);
-  background: color-mix(in srgb, var(--bg-sidebar) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-sidebar) 82%, transparent);
   font-size: var(--text-xs);
   font-weight: 700;
   white-space: nowrap;
@@ -1019,11 +1020,12 @@ function onTextareaInput(e: Event) {
 /* Save button */
 .btn-save {
   margin-left: var(--sp-2);
-  padding: var(--sp-1) var(--sp-3);
+  height: 34px;
+  padding: 0 16px;
   background: var(--accent);
   color: var(--text-inverse);
   border: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
+  border-radius: 10px;
   font-size: var(--text-xs);
   font-weight: 700;
   cursor: pointer;
@@ -1049,11 +1051,12 @@ function onTextareaInput(e: Event) {
 /* Version history toggle */
 .btn-version-toggle {
   margin-left: var(--sp-2);
-  padding: var(--sp-1) var(--sp-3);
-  background: var(--bg-panel);
+  height: 34px;
+  padding: 0 14px;
+  background: color-mix(in srgb, var(--bg-panel) 70%, transparent);
   color: var(--text-secondary);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: 10px;
   font-size: var(--text-xs);
   font-weight: 650;
   cursor: pointer;
@@ -1075,8 +1078,8 @@ function onTextareaInput(e: Event) {
   margin-left: auto;
 }
 .font-select {
-  width: 86px;
-  min-width: 86px;
+  width: 96px;
+  min-width: 96px;
 }
 
 /* Rich text toolbar */
@@ -1096,25 +1099,25 @@ function onTextareaInput(e: Event) {
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg-sidebar) 72%, var(--bg-panel));
-  box-shadow: var(--shadow-sm);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-sidebar) 82%, var(--bg-panel));
+  box-shadow: 0 1px 0 rgba(255,255,255,0.035) inset, var(--shadow-sm);
 }
 .view-segment {
   display: inline-flex;
   align-items: center;
   padding: 2px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg-sidebar) 72%, var(--bg-panel));
-  box-shadow: var(--shadow-sm);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-sidebar) 82%, var(--bg-panel));
+  box-shadow: 0 1px 0 rgba(255,255,255,0.035) inset, var(--shadow-sm);
 }
 .view-segment-btn {
   min-width: 44px;
   height: 26px;
   padding: 0 var(--sp-2);
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 8px;
   background: transparent;
   color: var(--text-secondary);
   font-size: var(--text-xs);
@@ -1142,7 +1145,7 @@ function onTextareaInput(e: Event) {
   padding: 0;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 8px;
   font-size: var(--text-xs);
   font-weight: 700;
   color: var(--text-secondary);
@@ -1291,7 +1294,8 @@ function onTextareaInput(e: Event) {
   overflow: hidden;
   display: flex;
   background:
-    radial-gradient(circle at 50% 0, color-mix(in srgb, var(--bg-panel) 36%, transparent), transparent 44%),
+    radial-gradient(circle at 50% 0, color-mix(in srgb, var(--accent) 8%, transparent), transparent 42%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-panel) 16%, transparent), transparent 28%),
     var(--paper-stage, #eceff3);
   min-height: 0;
   min-width: 0;
@@ -1302,11 +1306,11 @@ function onTextareaInput(e: Event) {
   -webkit-overflow-scrolling: touch;
   min-width: 0;
   min-height: 0;
-  padding: var(--sp-6) var(--sp-6) calc(var(--sp-6) + 88px);
+  padding: 34px 42px 112px;
   scroll-padding-bottom: 96px;
 }
 .editor-content.novel-content {
-  padding: var(--sp-4) var(--sp-5);
+  padding: 28px 42px 96px;
   scroll-padding-bottom: var(--sp-4);
 }
 .editor-content.with-panel {
@@ -1326,12 +1330,12 @@ function onTextareaInput(e: Event) {
 }
 .editor-textarea {
   display: block;
-  width: min(860px, 100%);
+  width: min(920px, 100%);
   min-height: 320px;
   margin: 0 auto;
-  padding: 56px 64px 112px;
+  padding: 52px 66px 112px;
   border: 1px solid var(--paper-border, rgba(148, 163, 184, 0.22));
-  border-radius: var(--paper-radius);
+  border-radius: 18px;
   resize: none;
   overflow-y: auto;
   overflow-x: hidden;
@@ -1344,7 +1348,9 @@ function onTextareaInput(e: Event) {
     repeating-linear-gradient(to bottom, var(--paper-bg) 0, var(--paper-bg) 37px, var(--paper-line) 38px),
     var(--paper-bg);
   outline: none;
-  box-shadow: var(--paper-shadow);
+  box-shadow:
+    var(--paper-shadow),
+    0 0 0 1px rgba(255,255,255,0.025) inset;
   caret-color: var(--accent);
 }
 .editor-textarea:focus {
@@ -1371,15 +1377,17 @@ function onTextareaInput(e: Event) {
   margin: 0;
 }
 .markdown-preview {
-  width: min(860px, 100%);
+  width: min(920px, 100%);
   min-height: 100%;
   margin: 0 auto;
   padding: 56px 64px 112px;
   border: 1px solid var(--paper-border, rgba(148, 163, 184, 0.22));
-  border-radius: var(--paper-radius);
+  border-radius: 18px;
   background: var(--paper-bg);
   color: var(--text);
-  box-shadow: var(--paper-shadow);
+  box-shadow:
+    var(--paper-shadow),
+    0 0 0 1px rgba(255,255,255,0.025) inset;
 }
 .markdown-preview.empty {
   display: flex;

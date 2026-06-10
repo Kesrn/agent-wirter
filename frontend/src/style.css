@@ -97,28 +97,28 @@ html {
 
 :root[data-theme="dark"] {
   /* Surfaces */
-  --bg: #0f141b;
-  --bg-panel: #171d27;
-  --bg-sidebar: #131922;
-  --bg-hover: #202838;
-  --bg-active: #273244;
-  --bg-input: #121821;
+  --bg: #0b0d10;
+  --bg-panel: #181a1f;
+  --bg-sidebar: #101216;
+  --bg-hover: #24272e;
+  --bg-active: #2d323b;
+  --bg-input: #12151b;
 
   /* Borders */
-  --border: #2d3647;
-  --border-focus: #7ca2ff;
+  --border: #2b3038;
+  --border-focus: #3b9dff;
 
   /* Text */
-  --text: #edf2f8;
-  --text-primary: #edf2f8;
-  --text-secondary: #aeb8c8;
-  --text-tertiary: #768295;
-  --text-inverse: #08111f;
+  --text: #f3f6fb;
+  --text-primary: #f3f6fb;
+  --text-secondary: #b7beca;
+  --text-tertiary: #737d8c;
+  --text-inverse: #06111f;
 
   /* Accent */
-  --accent: #7ca2ff;
-  --accent-hover: #a3bdff;
-  --accent-subtle: rgba(124, 162, 255, 0.14);
+  --accent: #3b9dff;
+  --accent-hover: #66b5ff;
+  --accent-subtle: rgba(59, 157, 255, 0.14);
 
   /* Status */
   --status-draft: #a8a29e;
@@ -144,15 +144,15 @@ html {
 
   /* Geometry */
   --shadow-sm: 0 1px 2px rgba(0,0,0,0.35);
-  --shadow: 0 1px 3px rgba(0,0,0,0.38), 0 1px 2px rgba(0,0,0,0.28);
-  --shadow-lg: 0 10px 30px rgba(0,0,0,0.4);
+  --shadow: 0 10px 24px rgba(0,0,0,0.22), 0 1px 2px rgba(0,0,0,0.34);
+  --shadow-lg: 0 28px 70px rgba(0,0,0,0.48), 0 10px 26px rgba(0,0,0,0.32);
 
   /* Paper / manuscript theme */
-  --paper-bg: #1a1f2b;
-  --paper-stage: #0c1118;
-  --paper-border: rgba(124, 162, 255, 0.2);
-  --paper-shadow: 0 28px 70px rgba(0, 0, 0, 0.42), 0 4px 14px rgba(0, 0, 0, 0.32);
-  --paper-line: rgba(124, 162, 255, 0.12);
+  --paper-bg: #171b22;
+  --paper-stage: #101216;
+  --paper-border: rgba(148, 163, 184, 0.18);
+  --paper-shadow: 0 30px 80px rgba(0, 0, 0, 0.42), 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+  --paper-line: rgba(148, 163, 184, 0.1);
   --code-block-bg: #101722;
   --auth-card-bg: rgba(23, 29, 39, 0.96);
   --auth-card-mobile-bg: rgba(23, 29, 39, 0.94);
@@ -183,12 +183,12 @@ html, body {
   transition: background var(--transition), color var(--transition);
 }
 
-html.desktop-runtime body {
-  padding-top: 34px;
+html.desktop-runtime {
+  --desktop-status-bar-height: 32px;
 }
 
-html.desktop-runtime {
-  --desktop-status-bar-height: 34px;
+html.desktop-runtime body {
+  padding-top: var(--desktop-status-bar-height);
 }
 
 .desktop-status-bar {
@@ -201,13 +201,13 @@ html.desktop-runtime {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  height: 34px;
-  padding: 0 14px;
-  color: #e5edf8;
+  height: var(--desktop-status-bar-height);
+  padding: 0 16px;
+  color: rgba(241, 245, 249, 0.82);
   background:
-    linear-gradient(90deg, rgba(15, 23, 42, 0.98), rgba(31, 59, 98, 0.97) 54%, rgba(15, 118, 110, 0.97));
-  border-bottom: 1px solid rgba(226, 232, 240, 0.16);
-  box-shadow: 0 1px 8px rgba(2, 6, 23, 0.18);
+    linear-gradient(90deg, rgba(18, 21, 27, 0.94), rgba(20, 28, 39, 0.94) 50%, rgba(13, 30, 36, 0.94));
+  border-bottom: 1px solid rgba(148, 163, 184, 0.13);
+  box-shadow: 0 1px 16px rgba(0, 0, 0, 0.22);
   -webkit-app-region: drag;
   user-select: none;
 }
@@ -227,9 +227,9 @@ html.desktop-runtime {
 }
 
 .desktop-app-mark {
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
   background:
     linear-gradient(135deg, #fffaf0 0 36%, transparent 36%),
     linear-gradient(135deg, #14b8a6, #67e8f9);
@@ -247,8 +247,8 @@ html.desktop-runtime {
   justify-content: flex-end;
   gap: 8px;
   overflow: hidden;
-  font-size: 0.78rem;
-  color: rgba(226, 232, 240, 0.78);
+  font-size: 0.76rem;
+  color: rgba(226, 232, 240, 0.68);
 }
 
 .desktop-backend-dot {
@@ -285,12 +285,12 @@ html.desktop-runtime {
 
 .desktop-status-action {
   flex: 0 0 auto;
-  height: 24px;
+  height: 22px;
   padding: 0 10px;
   border: 1px solid rgba(226, 232, 240, 0.24);
   border-radius: 5px;
   color: #f8fafc;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.075);
   font-size: 0.74rem;
   -webkit-app-region: no-drag;
 }

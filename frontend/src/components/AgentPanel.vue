@@ -842,7 +842,7 @@ defineExpose({ testExpert, cancelStream })
 .agent-panel {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-4);
+  gap: 18px;
 }
 .panel-header {
   display: flex;
@@ -851,8 +851,8 @@ defineExpose({ testExpert, cancelStream })
   gap: var(--sp-3);
 }
 .panel-header h3 {
-  font-size: var(--text-base);
-  font-weight: 760;
+  font-size: 1rem;
+  font-weight: 800;
   margin: 0;
 }
 .panel-actions {
@@ -870,11 +870,12 @@ defineExpose({ testExpert, cancelStream })
   text-decoration: none;
 }
 .btn-generate {
-  padding: var(--sp-2) var(--sp-4);
+  height: 40px;
+  padding: 0 18px;
   background: var(--accent);
   color: var(--text-inverse);
   border: 1px solid var(--accent);
-  border-radius: var(--radius);
+  border-radius: 12px;
   font-size: var(--text-sm);
   font-weight: 700;
   box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 22%, transparent);
@@ -893,11 +894,12 @@ defineExpose({ testExpert, cancelStream })
   box-shadow: 0 14px 30px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 .btn-cancel-stream {
-  padding: var(--sp-2) var(--sp-4);
+  height: 40px;
+  padding: 0 18px;
   background: var(--status-error);
   color: var(--text-inverse);
   border: 1px solid var(--status-error);
-  border-radius: var(--radius);
+  border-radius: 12px;
   font-size: var(--text-sm);
   font-weight: 700;
   transition: opacity var(--transition), transform var(--transition);
@@ -910,22 +912,25 @@ defineExpose({ testExpert, cancelStream })
 
 .quick-actions {
   display: flex;
-  gap: var(--sp-2);
+  flex-direction: column;
+  gap: 10px;
 }
 .quick-actions button {
   flex: 1;
-  padding: 9px var(--sp-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
-  font-size: var(--text-xs);
-  font-weight: 650;
+  min-height: 52px;
+  padding: 0 16px;
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-panel) 86%, transparent);
+  font-size: var(--text-sm);
+  font-weight: 720;
   color: var(--text-secondary);
-  box-shadow: var(--shadow-sm);
+  text-align: left;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.035) inset, var(--shadow-sm);
   transition: background var(--transition), border-color var(--transition), color var(--transition);
 }
 .quick-actions button:hover {
-  background: var(--accent-subtle);
+  background: color-mix(in srgb, var(--accent-subtle) 72%, var(--bg-panel));
   border-color: var(--border-focus);
   color: var(--accent);
 }
@@ -945,8 +950,8 @@ defineExpose({ testExpert, cancelStream })
   gap: var(--sp-2);
 }
 .review-comment {
-  padding: var(--sp-2) var(--sp-3);
-  border-radius: var(--radius);
+  padding: 12px 14px;
+  border-radius: 14px;
   font-size: var(--text-xs);
   line-height: 1.5;
   border-left: 3px solid transparent;
@@ -965,10 +970,10 @@ defineExpose({ testExpert, cancelStream })
   flex-direction: column;
 }
 .stream-output {
-  background: var(--code-block-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--sp-3);
+  background: color-mix(in srgb, var(--code-block-bg) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 14px;
+  padding: 14px;
   max-height: 280px;
   overflow-y: auto;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--bg-panel) 72%, transparent);
@@ -988,11 +993,11 @@ defineExpose({ testExpert, cancelStream })
 .draft-preview {
   background: var(--paper-bg);
   border: 1px solid var(--paper-border);
-  border-radius: var(--radius);
-  padding: var(--sp-4);
+  border-radius: 16px;
+  padding: 18px;
   max-height: 320px;
   overflow-y: auto;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--paper-shadow);
 }
 .draft-preview pre {
   font-family: var(--font-serif);

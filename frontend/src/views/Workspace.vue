@@ -1467,13 +1467,15 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--sp-4);
-  padding: 10px var(--sp-5);
-  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
-  border-bottom: 1px solid var(--border);
+  gap: 18px;
+  min-height: 66px;
+  padding: 12px 24px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-panel) 88%, transparent), color-mix(in srgb, var(--bg) 88%, transparent));
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   flex-shrink: 0;
-  box-shadow: 0 1px 0 rgba(17, 24, 39, 0.03);
-  backdrop-filter: blur(12px);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.025) inset;
+  backdrop-filter: blur(18px);
 }
 .top-left, .top-right {
   display: flex;
@@ -1482,7 +1484,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 }
 .top-left {
   min-width: 0;
-  flex: 1 1 260px;
+  flex: 1 1 300px;
 }
 .top-right {
   flex: 0 0 auto;
@@ -1490,14 +1492,14 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 .top-link {
   font-size: var(--text-sm);
   color: var(--accent);
-  font-weight: 650;
+  font-weight: 720;
   white-space: nowrap;
 }
 .top-link:hover { text-decoration: none; opacity: 0.85; }
 .top-sep { color: var(--text-tertiary); font-size: var(--text-xs); }
 .top-project-name {
-  font-size: var(--text-sm);
-  font-weight: 700;
+  font-size: 0.98rem;
+  font-weight: 780;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1506,21 +1508,22 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 .mode-badge {
   font-size: 10px;
   font-weight: 700;
-  padding: 3px 8px;
-  border-radius: 10px;
+  padding: 4px 9px;
+  border-radius: 999px;
   white-space: nowrap;
 }
 .mode-badge.novel { background: var(--status-final-bg); color: var(--status-final); }
 .mode-badge.article { background: var(--status-reviewing-bg); color: var(--status-reviewing); }
 .top-btn {
-  padding: var(--sp-2) var(--sp-3);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  height: 38px;
+  padding: 0 14px;
+  background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 10px;
   font-size: var(--text-xs);
   color: var(--text-secondary);
   cursor: pointer;
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.035) inset;
   transition: background var(--transition), border-color var(--transition), color var(--transition), transform var(--transition);
 }
 .top-btn:hover {
@@ -1564,8 +1567,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 
 .project-search {
   position: relative;
-  flex: 0 1 420px;
-  min-width: 260px;
+  flex: 0 1 620px;
+  min-width: 300px;
   z-index: 1300;
 }
 .search-prefix {
@@ -1580,15 +1583,15 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 }
 .project-search-input {
   width: 100%;
-  height: 36px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-input);
+  height: 42px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-input) 86%, transparent);
   color: var(--text);
   font-size: var(--text-sm);
   padding: 0 64px 0 36px;
   outline: none;
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.035) inset, 0 12px 28px rgba(0,0,0,0.12);
   transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
 }
 .project-search-input:focus {
@@ -1626,8 +1629,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   overflow-y: auto;
   padding: var(--sp-2);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
   box-shadow: var(--shadow-lg);
 }
 .search-result {
@@ -1697,19 +1700,20 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   height: calc(100vh - var(--desktop-status-bar-height, 0px));
   height: calc(100dvh - var(--desktop-status-bar-height, 0px));
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg) 88%, white) 0%, var(--bg) 180px),
+    radial-gradient(circle at 54% 0, color-mix(in srgb, var(--accent) 10%, transparent), transparent 34%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-panel) 26%, var(--bg)) 0%, var(--bg) 240px),
     var(--bg);
 }
 .workspace {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr) 324px;
+  grid-template-columns: 280px minmax(0, 1fr) 360px;
   flex: 1;
   min-height: 0;
   overflow: hidden;
   transition: grid-template-columns 220ms ease;
 }
-.workspace.sidebar-collapsed { grid-template-columns: 0px minmax(0, 1fr) 324px; }
-.workspace.agent-collapsed { grid-template-columns: 248px minmax(0, 1fr) 0px; }
+.workspace.sidebar-collapsed { grid-template-columns: 0px minmax(0, 1fr) 360px; }
+.workspace.agent-collapsed { grid-template-columns: 280px minmax(0, 1fr) 0px; }
 .workspace.sidebar-collapsed.agent-collapsed { grid-template-columns: 0px 1fr 0px; }
 
 /* Sidebar & agent toggle buttons */
@@ -1718,11 +1722,11 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   top: 50%;
   transform: translateY(-50%);
   z-index: 10;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-panel) 90%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
   border-radius: 999px;
-  width: 24px;
-  height: 40px;
+  width: 28px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1732,6 +1736,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   transition: background var(--transition), color var(--transition), opacity 220ms ease;
   padding: 0;
   box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
 }
 .sidebar-toggle {
   right: -12px; /* overlap the border */
@@ -1747,8 +1752,9 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 
 /* Sidebar */
 .sidebar {
-  background: color-mix(in srgb, var(--bg-sidebar) 86%, var(--bg-panel));
-  border-right: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-panel) 20%, var(--bg-sidebar)), var(--bg-sidebar));
+  border-right: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   display: flex;
   flex-direction: column;
   overflow: visible;
@@ -1777,17 +1783,18 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 }
 .sidebar-tabs {
   display: flex;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
   flex-shrink: 0;
-  gap: 2px;
-  padding: var(--sp-2);
+  gap: 4px;
+  padding: 12px;
 }
 .sidebar-tabs button {
   flex: 1;
-  padding: var(--sp-2) var(--sp-1);
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
+  min-height: 36px;
+  padding: 0 var(--sp-1);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
   font-size: var(--text-xs);
   font-weight: 650;
   color: var(--text-tertiary);
@@ -1796,14 +1803,15 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 }
 .sidebar-tabs button:hover { color: var(--text-secondary); }
 .sidebar-tabs button.active {
-  background: var(--bg-panel);
+  background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
+  border-color: color-mix(in srgb, var(--border) 86%, transparent);
   color: var(--text);
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, var(--shadow-sm);
 }
 .sidebar-content {
   flex: 1;
   overflow-y: auto;
-  padding: var(--sp-3);
+  padding: 14px;
   min-width: 0;
   min-height: 0;
   overscroll-behavior: contain;
@@ -1820,21 +1828,22 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: 9px var(--sp-3);
-  border-radius: var(--radius);
+  min-height: 48px;
+  padding: 9px 12px;
+  border-radius: 12px;
   cursor: pointer;
   font-size: var(--text-sm);
   border: 1px solid transparent;
   transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
 }
 .unit-item:hover {
-  background: color-mix(in srgb, var(--bg-hover) 72%, var(--bg-panel));
-  border-color: var(--border);
+  background: color-mix(in srgb, var(--bg-hover) 80%, transparent);
+  border-color: color-mix(in srgb, var(--border) 76%, transparent);
 }
 .unit-item.active {
-  background: var(--bg-panel);
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
-  box-shadow: var(--shadow-sm);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent), var(--shadow-sm);
   color: var(--accent);
   font-weight: 600;
 }
@@ -1877,10 +1886,10 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 /* Outline */
 .outline-item {
   padding: var(--sp-3);
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--bg-panel);
-  box-shadow: var(--shadow-sm);
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 86%, transparent);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.035) inset, var(--shadow-sm);
 }
 .outline-header {
   display: flex;
@@ -1923,10 +1932,10 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 /* Characters */
 .character-card {
   padding: var(--sp-3);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
+  background: color-mix(in srgb, var(--bg-panel) 86%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 14px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.035) inset, var(--shadow-sm);
 }
 .char-name {
   font-size: var(--text-sm);
@@ -1999,10 +2008,10 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 }
 .world-block {
   padding: var(--sp-3);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
+  background: color-mix(in srgb, var(--bg-panel) 86%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 14px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.035) inset, var(--shadow-sm);
 }
 
 .empty-hint {
@@ -2020,10 +2029,11 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 }
 .btn-add-unit {
   width: 100%;
+  min-height: 44px;
   padding: 10px var(--sp-3);
-  background: color-mix(in srgb, var(--bg-panel) 68%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 54%, transparent);
   border: 1px dashed color-mix(in srgb, var(--accent) 34%, var(--border));
-  border-radius: var(--radius);
+  border-radius: 14px;
   font-size: var(--text-sm);
   font-weight: 650;
   color: var(--accent);
@@ -2039,7 +2049,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   padding: 9px var(--sp-3);
   background: var(--accent);
   border: 1px solid var(--accent);
-  border-radius: var(--radius);
+  border-radius: 14px;
   color: var(--text-inverse);
   font-size: var(--text-sm);
   font-weight: 650;
@@ -2054,9 +2064,9 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   opacity: 0.48;
 }
 .unit-form {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 14px;
   padding: var(--sp-3);
   display: flex;
   flex-direction: column;
@@ -2128,15 +2138,18 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--paper-stage);
+  background:
+    radial-gradient(circle at 50% 0, color-mix(in srgb, var(--accent) 8%, transparent), transparent 42%),
+    var(--paper-stage);
   min-width: 0;
   min-height: 0;
 }
 
 /* Agent area */
 .agent-area {
-  border-left: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-sidebar) 86%, var(--bg-panel));
+  border-left: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-panel) 18%, var(--bg-sidebar)), var(--bg-sidebar));
   overflow: visible;
   position: relative;
   display: flex;
@@ -2147,7 +2160,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: var(--sp-4);
+  padding: 20px;
   min-width: 0;
 }
 .agent-area.agent-hidden {
