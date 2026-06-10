@@ -352,9 +352,55 @@ async function deleteProject(projectId: string) {
 
 <style scoped>
 .project-list-page {
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 40px var(--sp-6) 56px;
+  --project-page-bg:
+    linear-gradient(180deg, #f7f9fd 0%, #eef3f9 52%, #f4f6fb 100%),
+    radial-gradient(circle at 18% 0%, rgba(49, 89, 217, 0.1), transparent 32%),
+    radial-gradient(circle at 78% 8%, rgba(5, 150, 105, 0.08), transparent 30%);
+  --project-panel-bg: rgba(255, 255, 255, 0.92);
+  --project-panel-strong-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 251, 255, 0.96));
+  --project-button-bg: rgba(255, 255, 255, 0.86);
+  --project-border: rgba(120, 136, 160, 0.28);
+  --project-inner-bg: rgba(238, 242, 247, 0.7);
+  --project-shadow: 0 18px 44px rgba(17, 24, 39, 0.08), 0 1px 0 rgba(255, 255, 255, 0.9) inset;
+  height: calc(100vh - var(--desktop-status-bar-height, 0px));
+  overflow-y: auto;
+  max-width: none;
+  margin: 0;
+  padding: 46px max(var(--sp-8), calc((100vw - 1520px) / 2 + var(--sp-8))) 72px;
+  background: var(--project-page-bg);
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 40%, var(--border)) transparent;
+}
+:global(:root[data-theme="dark"]) .project-list-page {
+  --project-page-bg:
+    linear-gradient(180deg, rgba(21, 28, 38, 0.96) 0%, rgba(13, 17, 23, 0.98) 48%, rgba(18, 21, 26, 1) 100%),
+    radial-gradient(circle at 18% 0%, rgba(59, 157, 255, 0.16), transparent 32%),
+    radial-gradient(circle at 78% 8%, rgba(45, 212, 191, 0.1), transparent 30%);
+  --project-panel-bg: linear-gradient(180deg, rgba(28, 33, 41, 0.98), rgba(22, 27, 34, 0.98));
+  --project-panel-strong-bg: linear-gradient(180deg, rgba(27, 32, 40, 0.96), rgba(20, 25, 32, 0.96));
+  --project-button-bg: rgba(30, 35, 43, 0.84);
+  --project-border: rgba(148, 163, 184, 0.18);
+  --project-inner-bg: rgba(13, 17, 23, 0.42);
+  --project-shadow: 0 18px 44px rgba(0, 0, 0, 0.26), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+.project-list-page::-webkit-scrollbar {
+  width: 8px;
+}
+.project-list-page::-webkit-scrollbar-track {
+  background: transparent;
+}
+.project-list-page::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 999px;
+}
+.page-header,
+.new-project-form,
+.project-grid,
+.empty-state,
+.loading-state {
+  max-width: 1520px;
+  margin-left: auto;
+  margin-right: auto;
 }
 .page-header {
   display: flex;
@@ -389,8 +435,8 @@ async function deleteProject(projectId: string) {
 }
 .btn-logout {
   padding: var(--sp-2) var(--sp-3);
-  background: color-mix(in srgb, var(--bg-panel) 78%, transparent);
-  border: 1px solid var(--border);
+  background: var(--project-button-bg);
+  border: 1px solid var(--project-border);
   border-radius: var(--radius);
   font-size: var(--text-xs);
   color: var(--text-secondary);
@@ -404,8 +450,8 @@ async function deleteProject(projectId: string) {
 }
 .btn-settings {
   padding: var(--sp-2) var(--sp-3);
-  background: color-mix(in srgb, var(--bg-panel) 78%, transparent);
-  border: 1px solid var(--border);
+  background: var(--project-button-bg);
+  border: 1px solid var(--project-border);
   border-radius: var(--radius);
   font-size: var(--text-xs);
   color: var(--text-secondary);
@@ -420,7 +466,7 @@ async function deleteProject(projectId: string) {
 }
 .btn-secondary-action {
   padding: var(--sp-2) var(--sp-3);
-  background: color-mix(in srgb, var(--bg-panel) 78%, transparent);
+  background: var(--project-button-bg);
   border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
   border-radius: var(--radius);
   font-size: var(--text-xs);
@@ -459,15 +505,15 @@ async function deleteProject(projectId: string) {
 
 /* New project form */
 .new-project-form {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
+  background: var(--project-panel-strong-bg);
+  border: 1px solid var(--project-border);
   border-radius: var(--radius-lg);
   padding: var(--sp-6);
   margin-bottom: var(--sp-8);
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
-  box-shadow: var(--shadow);
+  box-shadow: var(--project-shadow);
 }
 .new-project-form h3 {
   font-size: var(--text-lg);
@@ -481,9 +527,9 @@ async function deleteProject(projectId: string) {
   justify-content: space-between;
   gap: var(--sp-3);
   padding: var(--sp-3);
-  border: 1px solid var(--border);
+  border: 1px solid var(--project-border);
   border-radius: var(--radius);
-  background: var(--bg-sidebar);
+  background: var(--project-inner-bg);
 }
 .import-file-name {
   min-width: 0;
@@ -604,12 +650,12 @@ async function deleteProject(projectId: string) {
 .project-card {
   position: relative;
   overflow: hidden;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
+  background: var(--project-panel-bg);
+  border: 1px solid var(--project-border);
   border-radius: var(--radius-lg);
   padding: var(--sp-6);
   cursor: pointer;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--project-shadow);
   transition: box-shadow var(--transition), border-color var(--transition), transform var(--transition);
 }
 .project-card::before {
@@ -622,7 +668,7 @@ async function deleteProject(projectId: string) {
 }
 .project-card:hover {
   border-color: var(--border-focus);
-  box-shadow: var(--shadow);
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(59, 157, 255, 0.1) inset;
   transform: translateY(-2px);
 }
 .card-header {
@@ -718,7 +764,7 @@ async function deleteProject(projectId: string) {
 .mode-badge.article { background: var(--status-reviewing-bg); color: var(--status-reviewing); }
 .meta-sep { margin: 0 var(--sp-1); color: var(--text-tertiary); }
 .card-footer {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--project-border);
   padding-top: var(--sp-3);
 }
 .meta-time {
