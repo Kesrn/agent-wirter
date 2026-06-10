@@ -353,26 +353,6 @@ async function deleteProject(projectId: string) {
 <style scoped>
 .project-list-page {
   --project-page-bg:
-    linear-gradient(180deg, #f7f9fd 0%, #eef3f9 52%, #f4f6fb 100%),
-    radial-gradient(circle at 18% 0%, rgba(49, 89, 217, 0.1), transparent 32%),
-    radial-gradient(circle at 78% 8%, rgba(5, 150, 105, 0.08), transparent 30%);
-  --project-panel-bg: rgba(255, 255, 255, 0.92);
-  --project-panel-strong-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 251, 255, 0.96));
-  --project-button-bg: rgba(255, 255, 255, 0.86);
-  --project-border: rgba(120, 136, 160, 0.28);
-  --project-inner-bg: rgba(238, 242, 247, 0.7);
-  --project-shadow: 0 18px 44px rgba(17, 24, 39, 0.08), 0 1px 0 rgba(255, 255, 255, 0.9) inset;
-  height: calc(100vh - var(--desktop-status-bar-height, 0px));
-  overflow-y: auto;
-  max-width: none;
-  margin: 0;
-  padding: 46px max(var(--sp-8), calc((100vw - 1520px) / 2 + var(--sp-8))) 72px;
-  background: var(--project-page-bg);
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--accent) 40%, var(--border)) transparent;
-}
-:global(:root[data-theme="dark"]) .project-list-page {
-  --project-page-bg:
     linear-gradient(180deg, rgba(21, 28, 38, 0.96) 0%, rgba(13, 17, 23, 0.98) 48%, rgba(18, 21, 26, 1) 100%),
     radial-gradient(circle at 18% 0%, rgba(59, 157, 255, 0.16), transparent 32%),
     radial-gradient(circle at 78% 8%, rgba(45, 212, 191, 0.1), transparent 30%);
@@ -382,6 +362,58 @@ async function deleteProject(projectId: string) {
   --project-border: rgba(148, 163, 184, 0.18);
   --project-inner-bg: rgba(13, 17, 23, 0.42);
   --project-shadow: 0 18px 44px rgba(0, 0, 0, 0.26), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  --bg-panel: #181a1f;
+  --bg-hover: #24272e;
+  --bg-input: #12151b;
+  --border: #2b3038;
+  --text: #f3f6fb;
+  --text-secondary: #b7beca;
+  --text-tertiary: #737d8c;
+  --text-inverse: #06111f;
+  --status-draft: #a8a29e;
+  --status-draft-bg: rgba(168, 162, 158, 0.14);
+  --status-reviewing: #fbbf24;
+  --status-reviewing-bg: rgba(251, 191, 36, 0.14);
+  --status-final: #34d399;
+  --status-final-bg: rgba(52, 211, 153, 0.14);
+  --status-error: #f87171;
+  --accent-subtle: rgba(59, 157, 255, 0.14);
+  height: calc(100vh - var(--desktop-status-bar-height, 0px));
+  overflow-y: auto;
+  max-width: none;
+  margin: 0;
+  padding: 46px max(var(--sp-8), calc((100vw - 1520px) / 2 + var(--sp-8))) 72px;
+  background: var(--project-page-bg);
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 40%, var(--border)) transparent;
+}
+:global(:root:not(.desktop-runtime)[data-theme="light"]) .project-list-page {
+  --project-page-bg:
+    linear-gradient(180deg, #f7f9fd 0%, #eef3f9 52%, #f4f6fb 100%),
+    radial-gradient(circle at 18% 0%, rgba(49, 89, 217, 0.1), transparent 32%),
+    radial-gradient(circle at 78% 8%, rgba(5, 150, 105, 0.08), transparent 30%);
+  --project-panel-bg: rgba(255, 255, 255, 0.92);
+  --project-panel-strong-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 251, 255, 0.96));
+  --project-button-bg: rgba(255, 255, 255, 0.86);
+  --project-border: rgba(120, 136, 160, 0.28);
+  --project-inner-bg: rgba(238, 242, 247, 0.7);
+  --project-shadow: 0 18px 44px rgba(17, 24, 39, 0.08), 0 1px 0 rgba(255, 255, 255, 0.9) inset;
+  --bg-panel: #ffffff;
+  --bg-hover: #edf3ff;
+  --bg-input: #ffffff;
+  --border: #d8e0ec;
+  --text: #111827;
+  --text-secondary: #5d6675;
+  --text-tertiary: #96a0ae;
+  --text-inverse: #ffffff;
+  --status-draft: #6b7280;
+  --status-draft-bg: #f3f4f6;
+  --status-reviewing: #d97706;
+  --status-reviewing-bg: #fffbeb;
+  --status-final: #059669;
+  --status-final-bg: #ecfdf5;
+  --status-error: #dc2626;
+  --accent-subtle: #edf3ff;
 }
 .project-list-page::-webkit-scrollbar {
   width: 8px;
