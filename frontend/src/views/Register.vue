@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, ApiError } from '../api/client'
+import { saveAuthSession } from '../utils/authSession'
 
 const router = useRouter()
 const username = ref('')
@@ -27,9 +28,11 @@ async function handleRegister() {
     })
     // 注册成功后自动登录
     const res = await api.login({ username: username.value.trim(), password: password.value })
-    localStorage.setItem('ai_write_logged_in', 'true')
-    localStorage.setItem('ai_write_token', res.access_token)
-    localStorage.setItem('ai_write_username', res.user.username)
+    saveAuthSession({
+      token: res.access_token,
+      username: res.user.username,
+      remember: true,
+    })
     router.push('/projects')
   } catch (e: unknown) {
     if (e instanceof ApiError) {

@@ -4,6 +4,7 @@ import { useProjectStore, useUiStore, friendlyError } from '../stores'
 import { useRouter } from 'vue-router'
 import type { ProjectMode } from '../api/types'
 import { api } from '../api/client'
+import { clearAuthSession } from '../utils/authSession'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import BaseMultiSelect from '../components/BaseMultiSelect.vue'
 
@@ -14,8 +15,7 @@ const router = useRouter()
 onMounted(() => { store.loadProjects() })
 
 function handleLogout() {
-  localStorage.removeItem('ai_write_logged_in')
-  localStorage.removeItem('ai_write_token')
+  clearAuthSession()
   router.push('/login')
 }
 

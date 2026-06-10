@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useLLMSettingsStore, useUiStore, friendlyError } from '../stores'
 import type { LLMProviderName, LLMConfigCreatePayload } from '../api/types'
 import BaseSelect from '../components/BaseSelect.vue'
+import { clearAuthSession } from '../utils/authSession'
 
 const router = useRouter()
 const store = useLLMSettingsStore()
@@ -152,8 +153,7 @@ onMounted(() => document.addEventListener('click', onClickOutsideModel))
 onBeforeUnmount(() => document.removeEventListener('click', onClickOutsideModel))
 
 function handleLogout() {
-  localStorage.removeItem('ai_write_logged_in')
-  localStorage.removeItem('ai_write_token')
+  clearAuthSession()
   router.push('/login')
 }
 </script>

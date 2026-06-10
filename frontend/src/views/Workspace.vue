@@ -10,6 +10,7 @@ import ConfirmModal from '../components/ConfirmModal.vue'
 import StructureExtractPreview from '../components/StructureExtractPreview.vue'
 import BaseSelect from '../components/BaseSelect.vue'
 import { displayChapterNumber, stripChapterNumber } from '../utils/chapterTitle'
+import { clearAuthSession, getAuthToken } from '../utils/authSession'
 
 const route = useRoute()
 const router = useRouter()
@@ -361,8 +362,7 @@ function handleSwitchProject() {
 // Navigation
 function handleLogout() {
   confirmLeaveIfGenerating(() => {
-    localStorage.removeItem('ai_write_logged_in')
-    localStorage.removeItem('ai_write_token')
+    clearAuthSession()
     router.push('/login')
   })
 }
@@ -372,7 +372,7 @@ const showExportMenu = ref(false)
 const exporting = ref(false)
 
 function getAuthHeaders(): Record<string, string> {
-  const token = localStorage.getItem('ai_write_token')
+  const token = getAuthToken()
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
   return headers

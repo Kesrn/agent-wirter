@@ -6,13 +6,14 @@ import Workspace from '../views/Workspace.vue'
 import AgentStudio from '../views/AgentStudio.vue'
 import Settings from '../views/Settings.vue'
 import EvaluationLab from '../views/EvaluationLab.vue'
+import { hasAuthSession } from '../utils/authSession'
 
 const router = createRouter({
   history: import.meta.env.VITE_DESKTOP === 'true' ? createWebHashHistory() : createWebHistory(),
   routes: [
     { path: '/login', name: 'login', component: Login, meta: { public: true } },
     { path: '/register', name: 'register', component: Register, meta: { public: true } },
-    { path: '/', redirect: '/login' },
+    { path: '/', redirect: () => hasAuthSession() ? '/projects' : '/login' },
     { path: '/projects', name: 'projects', component: ProjectList },
     { path: '/projects/:id', name: 'workspace', component: Workspace },
     { path: '/projects/:id/experts', name: 'experts', component: AgentStudio },
@@ -22,10 +23,9 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
+  if (to.meta.public && to.name === 'login' && hasAuthSession()) return { path: '/projects' }
   if (to.meta.public) return true
-  const loggedIn = localStorage.getItem('ai_write_logged_in') === 'true'
-  const token = localStorage.getItem('ai_write_token')
-  if (!loggedIn || !token) return { path: '/login' }
+  if (!hasAuthSession()) return { path: '/login' }
   return true
 })
 

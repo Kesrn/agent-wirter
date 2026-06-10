@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, ApiError } from '../api/client'
+import { getRememberLoginPreference, getRememberedUsername, saveAuthSession } from '../utils/authSession'
 
 const router = useRouter()
 const username = ref('')
 const password = ref('')
+const rememberLogin = ref(getRememberLoginPreference())
 const loginError = ref('')
 
 async function doLogin(user: string, pass: string) {
@@ -13,9 +15,11 @@ async function doLogin(user: string, pass: string) {
   try {
     const payload = { username: user, password: pass }
     const res = await api.login(payload)
-    localStorage.setItem('ai_write_logged_in', 'true')
-    localStorage.setItem('ai_write_token', res.access_token)
-    localStorage.setItem('ai_write_username', res.user.username)
+    saveAuthSession({
+      token: res.access_token,
+      username: res.user.username,
+      remember: rememberLogin.value,
+    })
     router.push('/projects')
   } catch (e: unknown) {
     if (e instanceof ApiError) {
@@ -51,6 +55,10 @@ async function handleDemoLogin() {
   await doLogin('admin', 'admin123')
 }
 
+onMounted(() => {
+  username.value = getRememberedUsername()
+})
+
 const features = [
   { icon: '01', title: '章节草稿', desc: '第 12 章 · 修订中' },
   { icon: '02', title: '一致性审校', desc: '角色动机已同步' },
@@ -82,6 +90,10 @@ const features = [
               <label for="login-password">密码</label>
               <input id="login-password" v-model="password" type="password" autocomplete="current-password" placeholder="输入密码" />
             </div>
+            <label class="remember-row">
+              <input v-model="rememberLogin" type="checkbox" />
+              <span>记住登录用户</span>
+            </label>
             <div v-if="loginError" class="login-error" role="alert">{{ loginError }}</div>
             <button type="submit" class="btn-login">登录</button>
             <button type="button" class="btn-demo" @click="handleDemoLogin">使用演示账号</button>
@@ -242,6 +254,24 @@ const features = [
   min-height: 44px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--bg-input) 92%, var(--bg));
+}
+.remember-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: fit-content;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  cursor: pointer;
+  user-select: none;
+}
+.remember-row input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 .btn-login {
   min-height: 46px;

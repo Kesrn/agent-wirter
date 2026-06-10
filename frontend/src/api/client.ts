@@ -24,9 +24,10 @@ import {
   type EvaluationDatasetCreatePayload, type EvaluationDatasetUpdatePayload,
   type EvaluationCaseCreatePayload, type EvaluationCaseUpdatePayload, type EvaluationRunCreatePayload,
 } from './types'
+import { clearAuthSession, getAuthToken } from '../utils/authSession'
 
 function getToken(): string | null {
-  return localStorage.getItem('ai_write_token')
+  return getAuthToken()
 }
 
 function authHeaders(): Record<string, string> {
@@ -114,8 +115,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     const body = await res.text().catch(() => '')
     if (res.status === 401) {
-      localStorage.removeItem('ai_write_token')
-      localStorage.removeItem('ai_write_logged_in')
+      clearAuthSession()
       redirectToLogin()
     }
     throw new ApiError(res.status, parseApiError(res.status, body))
@@ -204,8 +204,7 @@ export const api = {
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       if (res.status === 401) {
-        localStorage.removeItem('ai_write_token')
-        localStorage.removeItem('ai_write_logged_in')
+        clearAuthSession()
         redirectToLogin()
       }
       throw new ApiError(res.status, parseApiError(res.status, body))
@@ -221,8 +220,7 @@ export const api = {
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       if (res.status === 401) {
-        localStorage.removeItem('ai_write_token')
-        localStorage.removeItem('ai_write_logged_in')
+        clearAuthSession()
         redirectToLogin()
       }
       throw new ApiError(res.status, parseApiError(res.status, body))
