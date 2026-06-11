@@ -101,9 +101,23 @@ function workflowLabel(wp: string): string {
 
 <style scoped>
 .studio-page {
-  max-width: 860px;
-  margin: 0 auto;
-  padding: var(--sp-8) var(--sp-6);
+  height: calc(100vh - var(--desktop-status-bar-height, 0px));
+  overflow-y: auto;
+  max-width: none;
+  margin: 0;
+  padding: var(--sp-8) max(var(--sp-6), calc((100vw - 1440px) / 2 + var(--sp-6))) 96px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 38%, var(--border)) transparent;
+}
+.studio-page::-webkit-scrollbar {
+  width: 8px;
+}
+.studio-page::-webkit-scrollbar-track {
+  background: transparent;
+}
+.studio-page::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 999px;
 }
 .studio-header {
   display: flex;
@@ -137,11 +151,12 @@ function workflowLabel(wp: string): string {
 }
 .expert-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: var(--sp-3);
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--sp-4);
 }
 .expert-card {
   display: flex;
+  min-height: 108px;
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -249,5 +264,21 @@ function workflowLabel(wp: string): string {
 }
 .toggle-switch input:checked + .toggle-track::after {
   transform: translateX(14px);
+}
+
+@media (max-width: 760px) {
+  .studio-page {
+    padding: var(--sp-6) var(--sp-4) 88px;
+  }
+
+  .studio-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--sp-2);
+  }
+
+  .expert-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
