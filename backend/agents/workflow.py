@@ -33,6 +33,7 @@ _CHECKPOINTER = MemorySaver()
 class CreativeState(TypedDict):
     project_id: str
     chapter_id: str
+    chapter_num: int  # 章节序号，供 ChapterContextService 按章查询
     mode: str  # continue | full_pipeline | enhance | summarize
     context: str  # RAG 检索到的上下文
     draft: str  # 当前草稿
@@ -51,6 +52,8 @@ class CreativeState(TypedDict):
     selected_world_entry_ids: list[str]  # 用户选中的世界观 ID
     selected_hidden_thread_ids: list[str]  # 用户选中的暗线 ID
     target_words: int  # 目标字数
+    selected_direction: str  # 用户选择的剧情走向（从 DirectionPicker 传入）
+    user_note: str  # 用户补充要求
 
 
 # --- 默认 system_prompt（硬编码 fallback） ---
@@ -97,8 +100,15 @@ def _build_writer_user_prompt(state: CreativeState) -> str:
             "请根据审校意见改进草稿，输出完整章节正文。不要在草稿结尾之后续写新剧情。"
         )
     else:
+        selected_direction = state.get("selected_direction", "")
+        user_note = state.get("user_note", "")
+        direction_block = ""
+        if selected_direction:
+            direction_block += f"\n## 剧情走向\n用户选择了以下走向：{selected_direction}\n请严格遵循此走向展开情节。\n"
+        if user_note:
+            direction_block += f"\n## 用户补充要求\n{user_note}\n"
         user_prompt = (
-            f"## 上下文\n{context}\n\n"
+            f"## 上下文\n{context}{direction_block}\n\n"
             f"## 当前草稿\n{draft}\n\n"
             "请根据上下文和当前草稿生成/完善本章正文。"
             "如果当前草稿非空，请将其整理为完整章节正文；不要接写无关后续内容。"
@@ -144,15 +154,43 @@ def _make_expert_node(expert_id: str, role_type: str, system_prompt: str, temper
 async def context_loader_node(state: CreativeState) -> dict:
     """加载创作上下文
 
-    当 state 中有 selected_*_ids 且非空时，按 ID 精确加载（不截断，不走向量搜索）。
-    否则走现有 RAG 向量搜索逻辑（向后兼容）。
+    统一使用 ChapterContextService 聚合本章资料 + 用户显式选择的条目。
+    无章节号时 fallback 到旧 RAG（向后兼容文章模式 / 旧调用路径）。
     """
     selected_outlines = state.get("selected_outline_ids", [])
     selected_characters = state.get("selected_character_ids", [])
     selected_world_entries = state.get("selected_world_entry_ids", [])
     selected_hidden_threads = state.get("selected_hidden_thread_ids", [])
+    chapter_num = state.get("chapter_num", 0)
+
+    # ── 主路径：有章节号时走 ChapterContextService ──
+    if chapter_num:
+        try:
+            from services.chapter_context import build_chapter_context, format_chapter_context_for_prompt
+            from db.session import async_session as ctx_async_session
+            async with ctx_async_session() as session:
+                ctx = await build_chapter_context(
+                    session,
+                    state["project_id"],
+                    chapter_num,
+                    intent=state.get("mode", "generate"),
+                    selected_outline_ids=selected_outlines or None,
+                    selected_character_ids=selected_characters or None,
+                    selected_world_entry_ids=selected_world_entries or None,
+                    selected_hidden_thread_ids=selected_hidden_threads or None,
+                )
+                context = format_chapter_context_for_prompt(ctx)
+                logger.info(
+                    "context_loader: ChapterContextService loaded length=%d stats=%s has_selections=%s",
+                    len(context), ctx.stats, bool(selected_outlines or selected_characters or selected_world_entries or selected_hidden_threads),
+                )
+                return {"context": context}
+        except Exception as e:
+            logger.exception(f"ChapterContextService 加载失败，fallback 到旧逻辑: {e}")
+
+    # ── 回退：旧逻辑（文章模式 / 无章节号 / ChapterContextService 失败） ──
     has_selections = selected_outlines or selected_characters or selected_world_entries or selected_hidden_threads
-    logger.info(f"context_loader: outlines={selected_outlines}, chars={selected_characters}, we={selected_world_entries}, has_selections={has_selections}")
+    logger.info(f"context_loader fallback: outlines={selected_outlines}, chars={selected_characters}, we={selected_world_entries}, has_selections={has_selections}")
 
     if has_selections:
         # 用户主动选择了素材 → 按 ID 精确加载，不截断
@@ -256,10 +294,10 @@ async def context_loader_node(state: CreativeState) -> dict:
             parts.append(f"(上下文加载失败: {e})")
 
         context = "\n\n".join(parts) if parts else "(暂无上下文)"
-        logger.info(f"context_loader: loaded context length={len(context)}, parts={len(parts)}")
+        logger.info(f"context_loader fallback: loaded context length={len(context)}, parts={len(parts)}")
         return {"context": context}
 
-    # 无选中 ID → 走现有 RAG 向量搜索逻辑
+    # 最终 Fallback: 旧 RAG 向量搜索逻辑（向后兼容文章模式 / 无章节号场景）
     loader = ContextLoader()
     context = await loader.load_context(
         project_id=state["project_id"],

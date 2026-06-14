@@ -213,6 +213,8 @@ class GenerateRequest(BaseModel):
     selected_world_entry_ids: list[str] | None = None
     selected_hidden_thread_ids: list[str] | None = None
     target_words: int | None = None
+    selected_direction: str | None = None
+    direction_option_id: str | None = None
     enhance_direction: str | None = None
     turn_direction: str | None = None
     user_note: str | None = None

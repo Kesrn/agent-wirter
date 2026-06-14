@@ -395,6 +395,27 @@ export const api = {
   diffChapterVersions: (projectId: string, sequenceNumber: number, data: ChapterVersionDiffRequest) =>
     request<ChapterVersionDiffResponse>(`/projects/${projectId}/chapters/${sequenceNumber}/versions/diff`, { method: 'POST', body: JSON.stringify(data) }),
 
+  // ─── Chapter Context Stats ───
+  getChapterContext: (projectId: string, sequenceNumber: number) =>
+    request<{
+      stats: { characters: number; events: number; hidden_threads: number; world_entries: number; sources: number }
+      chapter_goal: { outline: string; light_line: string }
+    }>(`/projects/${projectId}/chapters/${sequenceNumber}/context`),
+
+  // ─── Chapter Directions ───
+  getChapterDirections: (projectId: string, sequenceNumber: number, selectedIds?: {
+    selected_outline_ids?: string[]
+    selected_character_ids?: string[]
+    selected_world_entry_ids?: string[]
+    selected_hidden_thread_ids?: string[]
+  }) =>
+    request<{
+      options: Array<{ id: string; title: string; description: string; risk: string }>
+    }>(`/projects/${projectId}/chapters/${sequenceNumber}/directions`, {
+      method: 'POST',
+      body: JSON.stringify(selectedIds ?? {}),
+    }),
+
   // ─── Document Versions ───
   listDocumentVersions: (projectId: string, documentId: string) =>
     request<ApiDocumentVersion[]>(`/projects/${projectId}/documents/${documentId}/versions`),

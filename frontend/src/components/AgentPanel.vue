@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useChapterStore, useDocumentStore, useExpertStore, useUiStore, useOutlineStore, useCharacterStore, useWorldEntryStore, useHiddenThreadStore, useGenerationHistoryStore, friendlyError } from '../stores'
 import type { WorkflowStep, SSEEnvelope, GenerateMode, ProjectMode, ArticleGenerateParams, WritingUnit } from '../api/types'
 import type { AgentStartPayload, AgentOutputPayload, AgentDonePayload, ProgressPayload, ErrorPayload, WriterOutputPayload, CriticOutputPayload, ConsistencyCheckPayload, EnhanceDirectionsPayload, TurnSuggestionsPayload, RevisionSuggestionsPayload, SkillPackPayload, ArticleReviewPayload, GenerationRecordPayload } from '../api/types'
@@ -11,6 +11,7 @@ import EnhancePicker from './EnhancePicker.vue'
 import TurnPicker from './TurnPicker.vue'
 import RevisionSuggestionPicker from './RevisionSuggestionPicker.vue'
 import ArticleParamsPicker from './ArticleParamsPicker.vue'
+import DirectionPicker from './DirectionPicker.vue'
 
 const props = defineProps<{ projectId: string; mode: ProjectMode }>()
 const chapterStore = useChapterStore()
@@ -64,6 +65,99 @@ const maxRevisions = ref(3)
 const pendingMode = ref<GenerateMode>('full_pipeline')
 const showArticleParams = ref(false)
 const latestGenerationRecordId = ref<string | null>(null)
+
+// ─── Chapter context stats ───
+interface ChapterContextStats {
+  stats: { characters: number; events: number; hidden_threads: number; world_entries: number; sources: number }
+  chapter_goal: { outline: string; light_line: string }
+}
+const contextStats = ref<ChapterContextStats | null>(null)
+
+async function fetchContextStats() {
+  if (!isNovel.value) { contextStats.value = null; return }
+  const seq = currentUnitPosition.value
+  if (!seq) { contextStats.value = null; return }
+  try {
+    contextStats.value = await api.getChapterContext(pid.value, seq)
+  } catch {
+    contextStats.value = null
+  }
+}
+
+watch([() => props.projectId, currentUnitPosition], () => {
+  contextStats.value = null
+  fetchContextStats()
+}, { immediate: true })
+
+// ─── Direction picker state ───
+const showDirectionPicker = ref(false)
+const directionOptions = ref<Array<{ id: string; title: string; description: string; risk: string }>>([])
+const directionLoading = ref(false)
+let pendingContextPick: {
+  outlineIds: string[]; characterIds: string[]; worldEntryIds: string[]; hiddenThreadIds: string[]; targetWords: number
+} | null = null
+
+async function fetchAndShowDirections() {
+  if (!isNovel.value) return
+  const seq = currentUnitPosition.value
+  if (!seq) return
+  showDirectionPicker.value = true
+  directionOptions.value = []
+  directionLoading.value = true
+  try {
+    const selectedIds = pendingContextPick ? {
+      selected_outline_ids: pendingContextPick.outlineIds.length ? pendingContextPick.outlineIds : undefined,
+      selected_character_ids: pendingContextPick.characterIds.length ? pendingContextPick.characterIds : undefined,
+      selected_world_entry_ids: pendingContextPick.worldEntryIds.length ? pendingContextPick.worldEntryIds : undefined,
+      selected_hidden_thread_ids: pendingContextPick.hiddenThreadIds.length ? pendingContextPick.hiddenThreadIds : undefined,
+    } : undefined
+    const result = await api.getChapterDirections(pid.value, seq, selectedIds)
+    directionOptions.value = result.options ?? []
+  } catch {
+    directionOptions.value = []
+  } finally {
+    directionLoading.value = false
+  }
+}
+
+function handleDirectionConfirm(_directionId: string, directionTitle: string, userNote: string) {
+  showDirectionPicker.value = false
+  if (!pendingContextPick) return
+  expertStore.startGenerating(pid.value)
+  expertStore.setWorkflowSteps(pid.value, defaultWorkflow.map(s => ({ ...s, status: 'pending' as const })))
+  runGenerateStream(
+    pendingContextPick.outlineIds,
+    pendingContextPick.characterIds,
+    pendingContextPick.worldEntryIds,
+    pendingContextPick.hiddenThreadIds,
+    pendingContextPick.targetWords,
+    undefined, // enhanceDirection
+    undefined, // turnDirection
+    userNote,
+    directionTitle, // selectedDirection
+  )
+  pendingContextPick = null
+}
+
+function handleDirectionSkip() {
+  showDirectionPicker.value = false
+  if (!pendingContextPick) return
+  expertStore.startGenerating(pid.value)
+  expertStore.setWorkflowSteps(pid.value, defaultWorkflow.map(s => ({ ...s, status: 'pending' as const })))
+  runGenerateStream(
+    pendingContextPick.outlineIds,
+    pendingContextPick.characterIds,
+    pendingContextPick.worldEntryIds,
+    pendingContextPick.hiddenThreadIds,
+    pendingContextPick.targetWords,
+  )
+  pendingContextPick = null
+}
+
+function handleDirectionCancel() {
+  showDirectionPicker.value = false
+  pendingContextPick = null
+}
 
 // ─── Mode-aware labels ───
 const GENERATE_LABEL = computed(() => isNovel.value ? '章节生成' : '生成内容')
@@ -230,9 +324,8 @@ function handleArticleCancel() {
 
 function handleContextConfirm(outlineIds: string[], characterIds: string[], worldEntryIds: string[], hiddenThreadIds: string[], targetWords: number) {
   showContextPicker.value = false
-  expertStore.startGenerating(pid.value)
-  expertStore.setWorkflowSteps(pid.value, defaultWorkflow.map(s => ({ ...s, status: 'pending' as const })))
-  runGenerateStream(outlineIds, characterIds, worldEntryIds, hiddenThreadIds, targetWords)
+  pendingContextPick = { outlineIds, characterIds, worldEntryIds, hiddenThreadIds, targetWords }
+  fetchAndShowDirections()
 }
 
 function handleContextCancel() {
@@ -410,6 +503,7 @@ async function runGenerateStream(
   enhanceDirection?: string,
   turnDirection?: string,
   userNote?: string,
+  selectedDirection?: string,
 ) {
   const unit = currentWritingUnit.value
   if (!unit) {
@@ -437,6 +531,7 @@ async function runGenerateStream(
         enhance_direction: enhanceDirection,
         turn_direction: turnDirection,
         user_note: userNote,
+        selected_direction: selectedDirection,
         ...(articleParams.value ?? {}),
       },
       (envelope: SSEEnvelope) => handleSSEEvent(envelope),
@@ -740,6 +835,10 @@ defineExpose({ testExpert, cancelStream })
         <span class="unit-title">{{ currentUnitTitle }}</span>
       </div>
 
+      <div v-if="isNovel && contextStats" class="context-stats">
+        已加载：角色 {{ contextStats.stats.characters }} · 事件 {{ contextStats.stats.events }} · 暗线 {{ contextStats.stats.hidden_threads }} · 设定 {{ contextStats.stats.world_entries }}
+      </div>
+
       <div class="primary-action">
         <button
           v-if="projectState.isGenerating"
@@ -852,6 +951,15 @@ defineExpose({ testExpert, cancelStream })
       @cancel="showTurnPicker = false"
     />
 
+    <DirectionPicker
+      v-if="showDirectionPicker"
+      :options="directionOptions"
+      :loading="directionLoading"
+      @confirm="handleDirectionConfirm"
+      @cancel="handleDirectionCancel"
+      @skip="handleDirectionSkip"
+    />
+
     <RevisionSuggestionPicker
       v-if="showRevisionPicker"
       :directions="revisionDirections"
@@ -929,6 +1037,14 @@ defineExpose({ testExpert, cancelStream })
   color: var(--text-secondary);
   font-size: var(--text-sm);
   font-weight: 650;
+}
+
+.context-stats {
+  font-size: 12px;
+  color: var(--text-tertiary, #768390);
+  padding: 0 4px;
+  margin-top: 4px;
+  line-height: 1.6;
 }
 .primary-action {
   display: flex;

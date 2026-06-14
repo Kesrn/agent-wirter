@@ -97,6 +97,7 @@ def test_health():
 # ==================== Auth ====================
 
 def test_auth_login_success():
+    client.post("/api/auth/register", json={"username": "testuser", "password": "testpass"})
     resp = client.post("/api/auth/login", json={"username": "testuser", "password": "testpass"})
     assert resp.status_code == 200
     data = resp.json()

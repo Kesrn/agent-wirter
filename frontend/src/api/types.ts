@@ -658,6 +658,8 @@ export interface GenerateRequest {
   selected_world_entry_ids?: string[]
   selected_hidden_thread_ids?: string[]
   target_words?: number
+  selected_direction?: string
+  direction_option_id?: string
   enhance_direction?: string
   turn_direction?: string
   user_note?: string

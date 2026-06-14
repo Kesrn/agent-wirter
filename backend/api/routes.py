@@ -1052,6 +1052,123 @@ async def update_chapter(
     return chapter
 
 
+@router.get("/projects/{project_id}/chapters/{sequence_number}/context")
+async def get_chapter_context(
+    project_id: str,
+    sequence_number: int,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """返回当前章节的资料统计和上下文概要。
+
+    供章节助手面板显示“已加载：角色 X · 事件 Y · 暗线 Z”。
+    """
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    from services.chapter_context import build_chapter_context, context_to_stats
+
+    ctx = await build_chapter_context(db, uid, sequence_number)
+    return context_to_stats(ctx)
+
+
+def _parse_direction_options(raw: str) -> list[dict]:
+    """Parse LLM direction output into structured options."""
+    import re
+    # 尝试直接 JSON 解析
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            result: list[dict] = []
+            for i, d in enumerate(parsed):
+                if isinstance(d, str):
+                    # 字符串数组（mock provider）：自动转为对象
+                    result.append({"id": chr(65 + i), "title": d, "description": "", "risk": ""})
+                elif isinstance(d, dict):
+                    result.append({"id": d.get("id", chr(65 + i)), "title": d.get("title", ""), "description": d.get("description", ""), "risk": d.get("risk", "")})
+            if result:
+                return result
+    except (json.JSONDecodeError, Exception):
+        pass
+    # 回退：按字母编号拆分
+    options: list[dict] = []
+    for m in re.finditer(r'(?:^|\n)\s*([A-C])\s*[.、)]?\s*(.+?)(?=\n\s*[A-C]\s*[.、)]?\s|\Z)', raw, re.S):
+        letter = m.group(1)
+        body = m.group(2).strip()
+        lines = body.split('\n')
+        title = lines[0].strip() if lines else ""
+        desc = lines[1].strip() if len(lines) > 1 else ""
+        risk = ""
+        for line in lines[1:]:
+            if '风险' in line or '注意' in line or '代价' in line:
+                risk = line.strip()
+                break
+        options.append({"id": letter, "title": title, "description": desc, "risk": risk})
+    return options[:3]
+
+
+@router.post("/projects/{project_id}/chapters/{sequence_number}/directions")
+async def get_chapter_directions(
+    project_id: str,
+    sequence_number: int,
+    req: Request,
+    selected_outline_ids: list[str] | None = None,
+    selected_character_ids: list[str] | None = None,
+    selected_world_entry_ids: list[str] | None = None,
+    selected_hidden_thread_ids: list[str] | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """返回当前章节的剧情走向选项。
+
+    调用 LLM 基于章节上下文生成 2-4 个走向，供前端 DirectionPicker 展示。
+    此 API 为独立调用，不进入 LangGraph 工作流。
+    可选传入用户选中的素材 ID 以影响走向建议。
+    """
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    project_result = await db.execute(select(Project).where(Project.id == uid))
+    project = project_result.scalar_one()
+    if project.mode != "novel":
+        raise HTTPException(status_code=400, detail="走向选择仅支持小说项目")
+
+    from services.chapter_context import build_chapter_context, format_chapter_context_for_prompt
+
+    ctx = await build_chapter_context(
+        db, uid, sequence_number, intent="generate",
+        selected_outline_ids=selected_outline_ids,
+        selected_character_ids=selected_character_ids,
+        selected_world_entry_ids=selected_world_entry_ids,
+        selected_hidden_thread_ids=selected_hidden_thread_ids,
+    )
+    formatted = format_chapter_context_for_prompt(ctx)
+
+    llm_config_dict = await get_user_llm_config(user.id, db)
+    provider = get_llm_provider(llm_config_dict)
+
+    prompt = (
+        "你是一位小说剧情策划。基于以下章节资料，为本章提出 3 个不同的剧情走向选择。\n\n"
+        "要求：\n"
+        "1. 每个走向给出 id（A/B/C）、title（简短标题）、description（1-2 句话描述）、risk（潜在风险或需要注意的点）。\n"
+        "2. 三个走向应有明显差异（不同风格、不同节奏、不同聚焦角色）。\n"
+        "3. 只输出 JSON 数组，不要任何其他内容。\n\n"
+        f"## 章节资料\n{formatted or '(暂无资料)'}"
+    )
+    try:
+        result = await provider.generate(
+            "你是一位经验丰富的小说剧情策划。输出必须是严格 JSON 数组。",
+            prompt,
+            temperature=0.7,
+            max_tokens=1200,
+        )
+        options = _parse_direction_options(result)
+    except Exception:
+        logger.exception("走向生成失败")
+        options = []
+
+    return {"options": options}
+
+
 @router.post("/projects/{project_id}/chapters/{sequence_number}/extract-structure", response_model=ChapterStructureExtractResponse)
 async def extract_chapter_structure(
     project_id: str,
@@ -2203,11 +2320,22 @@ async def generate_chapter(
             llm_config_dict = await get_user_llm_config(user.id, db)
             provider = get_llm_provider(llm_config_dict)
 
+            # 确定章节序号（供 ChapterContextService 按章加载上下文）
+            chapter_num = req.chapter_num or 0
+            if not chapter_num and not is_article_project and target_chapter_id:
+                ch_num_result = await db.execute(
+                    select(Chapter.sequence_number).where(Chapter.id == target_chapter_id)
+                )
+                ch_num_row = ch_num_result.scalar_one_or_none()
+                if ch_num_row is not None:
+                    chapter_num = ch_num_row
+
             # 加载创作上下文（大纲/角色/世界观/暗线/前文），供 enhance/continue/summarize 使用
             from agents.workflow import context_loader_node
             ctx_state = CreativeState(
                 project_id=str(uid),
                 chapter_id="" if is_article_project else (str(target_chapter_id) if target_chapter_id else ""),
+                chapter_num=chapter_num,
                 mode=req.mode,
                 context="",
                 draft="",
@@ -2226,6 +2354,8 @@ async def generate_chapter(
                 selected_world_entry_ids=req.selected_world_entry_ids or [],
                 selected_hidden_thread_ids=req.selected_hidden_thread_ids or [],
                 target_words=req.target_words or 0,
+                selected_direction=req.selected_direction or "",
+                user_note=req.user_note or "",
             )
             try:
                 ctx_result = await context_loader_node(ctx_state)
@@ -2553,6 +2683,7 @@ async def generate_chapter(
             initial_state: CreativeState = {
                 "project_id": str(uid),
                 "chapter_id": str(target_chapter_id or target_document_id) if (target_chapter_id or target_document_id) else "",
+                "chapter_num": chapter_num,
                 "mode": req.mode,
                 "context": "",
                 "draft": "",
@@ -2571,6 +2702,8 @@ async def generate_chapter(
                 "selected_world_entry_ids": req.selected_world_entry_ids or [],
                 "selected_hidden_thread_ids": req.selected_hidden_thread_ids or [],
                 "target_words": req.target_words or 0,
+                "selected_direction": req.selected_direction or "",
+                "user_note": req.user_note or "",
             }
 
             config = {"configurable": {"thread_id": thread_id}}
