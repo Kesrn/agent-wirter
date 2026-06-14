@@ -12,6 +12,7 @@ class Character(UUIDMixin, TimestampMixin, Base):
     project_id: Mapped[str] = mapped_column(GUID(), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     role_type: Mapped[str] = mapped_column(String(20), default="supporting")
+    scope_type: Mapped[str] = mapped_column(String(20), default="recurring")
     profile: Mapped[str | None] = mapped_column(Text, nullable=True)
     faction: Mapped[str | None] = mapped_column(String(100), nullable=True)
     appearance_count: Mapped[int] = mapped_column(Integer, default=0)

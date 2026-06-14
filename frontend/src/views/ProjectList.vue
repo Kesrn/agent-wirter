@@ -1,14 +1,20 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { useProjectStore, useUiStore, friendlyError } from '../stores'
+import { useProjectStore, useCharacterStore, useCharacterEventStore, useWorldEntryStore, useOutlineStore, useUiStore, friendlyError } from '../stores'
 import { useRouter } from 'vue-router'
-import type { ProjectMode } from '../api/types'
+import type { Project, ProjectMode } from '../api/types'
 import { api } from '../api/client'
 import { clearAuthSession } from '../utils/authSession'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import BaseMultiSelect from '../components/BaseMultiSelect.vue'
+import NovelConfig from '../components/NovelConfig.vue'
+import ProjectWorldLibrary from '../components/ProjectWorldLibrary.vue'
 
 const store = useProjectStore()
+const characterStore = useCharacterStore()
+const characterEventStore = useCharacterEventStore()
+const worldEntryStore = useWorldEntryStore()
+const outlineStore = useOutlineStore()
 const ui = useUiStore()
 const router = useRouter()
 
@@ -90,6 +96,10 @@ const txtImportError = ref('')
 const importingTxt = ref(false)
 const deletingProjectId = ref<string | null>(null)
 const projectPendingDelete = ref<{ id: string; title: string } | null>(null)
+const configProject = ref<Project | null>(null)
+const loadingConfigProjectId = ref<string | null>(null)
+const worldLibraryProject = ref<Project | null>(null)
+const loadingWorldLibraryProjectId = ref<string | null>(null)
 
 function openNewProjectForm() {
   newTitle.value = ''
@@ -206,6 +216,43 @@ async function deleteProject(projectId: string) {
     deletingProjectId.value = null
   }
 }
+
+async function openProjectConfig(project: Project) {
+  if (project.mode !== 'novel') return
+  loadingConfigProjectId.value = project.id
+  try {
+    await Promise.all([
+      characterStore.loadCharacters(project.id),
+      characterEventStore.loadCharacterEvents(project.id),
+      outlineStore.loadOutlines(project.id),
+    ])
+    configProject.value = project
+  } catch (e: unknown) {
+    ui.showToast(friendlyError(e, '加载全书配置失败'), 'error')
+  } finally {
+    loadingConfigProjectId.value = null
+  }
+}
+
+function worldLibraryLabel(project: Project): string {
+  return project.mode === 'article' ? '资料库' : ''
+}
+
+function worldLibraryTitle(project: Project): string {
+  return project.mode === 'article' ? '品牌/产品资料库' : ''
+}
+
+async function openProjectWorldLibrary(project: Project) {
+  loadingWorldLibraryProjectId.value = project.id
+  try {
+    await worldEntryStore.loadWorldEntries(project.id)
+    worldLibraryProject.value = project
+  } catch (e: unknown) {
+    ui.showToast(friendlyError(e, `加载${worldLibraryTitle(project)}失败`), 'error')
+  } finally {
+    loadingWorldLibraryProjectId.value = null
+  }
+}
 </script>
 
 <template>
@@ -313,6 +360,24 @@ async function deleteProject(projectId: string) {
               评测集
             </button>
             <button
+              v-if="project.mode === 'article'"
+              class="btn-card-library"
+              :disabled="loadingWorldLibraryProjectId === project.id"
+              :title="worldLibraryTitle(project)"
+              @click.stop="openProjectWorldLibrary(project)"
+            >
+              {{ loadingWorldLibraryProjectId === project.id ? '加载中' : worldLibraryLabel(project) }}
+            </button>
+            <button
+              v-if="project.mode === 'novel'"
+              class="btn-card-config"
+              :disabled="loadingConfigProjectId === project.id"
+              title="全书配置"
+              @click.stop="openProjectConfig(project)"
+            >
+              {{ loadingConfigProjectId === project.id ? '加载中' : '全书配置' }}
+            </button>
+            <button
               class="btn-card-delete"
               :disabled="deletingProjectId === project.id"
               title="删除项目"
@@ -347,6 +412,30 @@ async function deleteProject(projectId: string) {
       @confirm="confirmDeleteProject"
       @cancel="projectPendingDelete = null"
     />
+
+    <Teleport to="body">
+      <div v-if="configProject" class="project-config-overlay" @click.self="configProject = null">
+        <section class="project-config-modal" role="dialog" aria-modal="true" aria-label="全书配置">
+          <NovelConfig
+            :project-id="configProject.id"
+            :project-mode="configProject.mode"
+            @close="configProject = null"
+          />
+        </section>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="worldLibraryProject" class="project-config-overlay" @click.self="worldLibraryProject = null">
+        <section class="project-config-modal" role="dialog" aria-modal="true" :aria-label="worldLibraryTitle(worldLibraryProject)">
+          <ProjectWorldLibrary
+            :project-id="worldLibraryProject.id"
+            :project-mode="worldLibraryProject.mode"
+            @close="worldLibraryProject = null"
+          />
+        </section>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -705,16 +794,18 @@ async function deleteProject(projectId: string) {
 }
 .card-header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
   gap: var(--sp-2);
-  margin-bottom: var(--sp-2);
+  margin-bottom: var(--sp-3);
 }
 .card-actions {
-  flex-shrink: 0;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
   gap: var(--sp-2);
+  width: 100%;
 }
 .card-title {
   font-size: 1.05rem;
@@ -722,6 +813,8 @@ async function deleteProject(projectId: string) {
   color: var(--text);
   margin: 0;
   line-height: 1.3;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .status-badge {
   flex-shrink: 0;
@@ -767,6 +860,42 @@ async function deleteProject(projectId: string) {
   background: color-mix(in srgb, var(--accent-subtle) 70%, var(--bg-panel));
   border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
 }
+.btn-card-library {
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--status-reviewing) 34%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--status-reviewing-bg) 78%, transparent);
+  color: var(--status-reviewing);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  transition: background var(--transition), border-color var(--transition), opacity var(--transition);
+}
+.btn-card-library:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-reviewing-bg) 58%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--status-reviewing) 58%, var(--border));
+}
+.btn-card-library:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+.btn-card-config {
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--status-final) 34%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--status-final-bg) 78%, transparent);
+  color: var(--status-final);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  transition: background var(--transition), border-color var(--transition), opacity var(--transition);
+}
+.btn-card-config:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-final-bg) 58%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--status-final) 58%, var(--border));
+}
+.btn-card-config:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
 .btn-card-delete:hover:not(:disabled) {
   background: color-mix(in srgb, var(--status-error, #ef4444) 12%, var(--bg-panel));
   border-color: color-mix(in srgb, var(--status-error, #ef4444) 64%, var(--border));
@@ -803,6 +932,26 @@ async function deleteProject(projectId: string) {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
 }
+.project-config-overlay {
+  position: fixed;
+  inset: var(--desktop-status-bar-height, 0px) 0 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(10px);
+}
+.project-config-modal {
+  width: min(1120px, calc(100vw - 48px));
+  height: min(820px, calc(100vh - var(--desktop-status-bar-height, 0px) - 48px));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-panel);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+}
 
 @media (max-width: 720px) {
   .project-list-page {
@@ -815,6 +964,14 @@ async function deleteProject(projectId: string) {
   .header-actions {
     width: 100%;
     flex-wrap: wrap;
+  }
+  .project-config-overlay {
+    padding: 14px;
+  }
+  .project-config-modal {
+    width: calc(100vw - 28px);
+    height: calc(100vh - var(--desktop-status-bar-height, 0px) - 28px);
+    border-radius: 12px;
   }
 }
 </style>

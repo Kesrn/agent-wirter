@@ -1,11 +1,11 @@
 import {
   API_BASE_URL,
   type ApiProject, type ApiChapter, type ApiDocument, type ApiDocumentVersion, type ApiExpert, type ApiWorldEntry, type ApiCharacter,
-  type ApiCharacterRelation, type ApiOutline, type ApiHiddenThread,
-  type ProjectCreatePayload, type ChapterCreatePayload, type DocumentCreatePayload, type DocumentUpdatePayload, type ExpertCreatePayload,
+  type ApiCharacterRelation, type ApiCharacterEvent, type ApiOutline, type ApiHiddenThread,
+  type ProjectCreatePayload, type ProjectUpdatePayload, type ChapterCreatePayload, type DocumentCreatePayload, type DocumentUpdatePayload, type ExpertCreatePayload,
   type WorldEntryCreatePayload, type WorldEntryUpdatePayload,
-  type CharacterCreatePayload, type CharacterUpdatePayload,
-  type CharacterRelationCreatePayload, type CharacterRelationUpdatePayload,
+  type CharacterCreatePayload, type CharacterUpdatePayload, type CharacterMergePayload,
+  type CharacterRelationCreatePayload, type CharacterRelationUpdatePayload, type CharacterEventUpsertPayload,
   type OutlineCreatePayload, type OutlineUpdatePayload,
   type HiddenThreadCreatePayload, type HiddenThreadUpdatePayload,
   type GenerateRequest, type SSEEnvelope,
@@ -187,6 +187,8 @@ export const api = {
   getProject: (id: string) => request<ApiProject>(`/projects/${id}`),
   createProject: (data: ProjectCreatePayload) =>
     request<ApiProject>('/projects', { method: 'POST', body: JSON.stringify(data) }),
+  updateProject: (id: string, data: ProjectUpdatePayload) =>
+    request<ApiProject>(`/projects/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteProject: (id: string) =>
     request<void>(`/projects/${id}`, { method: 'DELETE' }),
   importTxtProject: async (data: { file: File; title?: string; description?: string; target_words?: number }) => {
@@ -270,8 +272,21 @@ export const api = {
     request<ApiCharacter>(`/projects/${projectId}/characters`, { method: 'POST', body: JSON.stringify(data) }),
   updateCharacter: (projectId: string, characterId: string, data: CharacterUpdatePayload) =>
     request<ApiCharacter>(`/projects/${projectId}/characters/${characterId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  mergeCharacter: (projectId: string, characterId: string, data: CharacterMergePayload) =>
+    request<ApiCharacter>(`/projects/${projectId}/characters/${characterId}/merge`, { method: 'POST', body: JSON.stringify(data) }),
   deleteCharacter: (projectId: string, characterId: string) =>
     request<void>(`/projects/${projectId}/characters/${characterId}`, { method: 'DELETE' }),
+  listCharacterEvents: (projectId: string, params?: { character_id?: string; sequence_number?: number }) => {
+    const search = new URLSearchParams()
+    if (params?.character_id) search.set('character_id', params.character_id)
+    if (params?.sequence_number) search.set('sequence_number', String(params.sequence_number))
+    const suffix = search.toString() ? `?${search.toString()}` : ''
+    return request<ApiCharacterEvent[]>(`/projects/${projectId}/character-events${suffix}`)
+  },
+  upsertCharacterEvent: (projectId: string, characterId: string, sequenceNumber: number, data: CharacterEventUpsertPayload) =>
+    request<ApiCharacterEvent>(`/projects/${projectId}/characters/${characterId}/chapter-events/${sequenceNumber}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCharacterEvent: (projectId: string, characterId: string, sequenceNumber: number) =>
+    request<void>(`/projects/${projectId}/characters/${characterId}/chapter-events/${sequenceNumber}`, { method: 'DELETE' }),
 
   // ─── Character Relations ───
   listCharacterRelations: (projectId: string) => request<ApiCharacterRelation[]>(`/projects/${projectId}/character-relations`),

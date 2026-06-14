@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
-import { useProjectStore, useChapterStore, useDocumentStore, useRelationStore, useWorldEntryStore, useCharacterStore, useOutlineStore, useHiddenThreadStore, useExpertStore, useUiStore, friendlyError } from '../stores'
+import { useProjectStore, useChapterStore, useDocumentStore, useRelationStore, useWorldEntryStore, useCharacterStore, useCharacterEventStore, useOutlineStore, useHiddenThreadStore, useExpertStore, useUiStore, friendlyError } from '../stores'
 import { API_BASE_URL, type OutlineItem, type HiddenThread, type Character, type WorldEntry, type WritingUnit, type StructureExtractPayload } from '../api/types'
 import { api } from '../api/client'
 import WritingEditor from '../components/WritingEditor.vue'
+import ChapterConfig from "../components/ChapterConfig.vue"
 import AgentPanel from '../components/AgentPanel.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import StructureExtractPreview from '../components/StructureExtractPreview.vue'
@@ -20,6 +21,7 @@ const documentStore = useDocumentStore()
 const relationStore = useRelationStore()
 const worldEntryStore = useWorldEntryStore()
 const characterStore = useCharacterStore()
+const characterEventStore = useCharacterEventStore()
 const outlineStore = useOutlineStore()
 const hiddenThreadStore = useHiddenThreadStore()
 const expertStore = useExpertStore()
@@ -34,7 +36,7 @@ const unitLabel = computed(() => projectMode.value === 'article' ? '稿件' : '�
 const switchProjectLabel = computed(() => projectMode.value === 'article' ? '切换项目' : '切换小说')
 const unitSequenceLabel = computed(() => `${unitLabel.value}序号`)
 const unitSummaryLabel = computed(() => projectMode.value === 'article' ? '内容摘要' : '章节大纲/摘要')
-const outlineLabel = computed(() => projectMode.value === 'article' ? '内容结构' : '大纲')
+const outlineLabel = computed(() => projectMode.value === 'article' ? '内容结构' : '章节大纲')
 const outlineAddLabel = computed(() => projectMode.value === 'article' ? '添加选题规划' : `添加${unitLabel.value}大纲`)
 const outlineTitleLabel = computed(() => projectMode.value === 'article' ? '选题标题' : '大纲标题')
 const turningPointLabel = computed(() => projectMode.value === 'article' ? '核心角度' : '转折点')
@@ -42,12 +44,25 @@ const hiddenThreadLabel = computed(() => projectMode.value === 'article' ? '内�
 const characterLabel = computed(() => projectMode.value === 'article' ? '受众画像' : '角色')
 const worldLabel = computed(() => projectMode.value === 'article' ? '品牌/产品资料' : '世界观')
 const worldEntryLabel = computed(() => projectMode.value === 'article' ? '资料' : '设定')
-const searchPlaceholder = computed(() => projectMode.value === 'article' ? '搜索稿件正文、受众、资料' : '搜索章节正文、角色、设定')
+const characterLibraryLabel = computed(() => characterLabel.value)
+const worldLibraryLabel = computed(() => worldLabel.value)
+const showArticleLibraries = computed(() => projectMode.value === 'article')
+const searchPlaceholder = computed(() => projectMode.value === 'article' ? '搜索稿件正文、受众、资料' : '搜索章节正文、章节资料')
 const characterRoleOptions = computed(() => [
   { value: 'protagonist', label: projectMode.value === 'article' ? '核心受众' : '主角' },
   { value: 'antagonist', label: projectMode.value === 'article' ? '反对人群' : '反派' },
   { value: 'supporting', label: projectMode.value === 'article' ? '影响者' : '配角' },
   { value: 'minor', label: projectMode.value === 'article' ? '泛受众' : '路人' },
+])
+const characterScopeOptions = computed(() => [
+  { value: 'core', label: projectMode.value === 'article' ? '核心画像' : '主角团' },
+  { value: 'recurring', label: projectMode.value === 'article' ? '常用画像' : '常驻角色' },
+  { value: 'chapter', label: projectMode.value === 'article' ? '单篇画像' : '章节角色' },
+  { value: 'cameo', label: projectMode.value === 'article' ? '轻量画像' : '客串角色' },
+])
+const worldScopeOptions = computed(() => [
+  { value: 'global', label: projectMode.value === 'article' ? '全局资料' : '全局设定' },
+  { value: 'chapter', label: projectMode.value === 'article' ? '单篇资料' : '章节设定' },
 ])
 const confidenceOptions = [
   { value: 'low', label: '低' },
@@ -63,10 +78,20 @@ const projectsLoading = ref(false)
 // Mobile: which panel to show
 const mobilePanel = ref<'editor' | 'units' | 'characters' | 'world' | 'agent'>('editor')
 
+watch(projectMode, (mode) => {
+  if (mode === 'novel') {
+    if (activeTab.value !== 'units') activeTab.value = 'units'
+    if (mobilePanel.value === 'characters' || mobilePanel.value === 'world') {
+      mobilePanel.value = 'units'
+    }
+  }
+})
+
 watch(projectId, (id) => {
   projectStore.setCurrent(id)
   worldEntryStore.loadWorldEntries(id)
   characterStore.loadCharacters(id)
+  characterEventStore.loadCharacterEvents(id).catch(() => {})
   relationStore.loadRelations(id)
   outlineStore.loadOutlines(id)
   hiddenThreadStore.loadHiddenThreads(id)
@@ -97,10 +122,27 @@ watch([projectId, currentProject], ([id, project]) => {
 const writingUnits = computed(() => projectMode.value === 'article' ? documentStore.documentsForProject(projectId.value) : chapterStore.chaptersForProject(projectId.value))
 const currentWritingUnit = computed(() => projectMode.value === 'article' ? documentStore.currentDocumentForProject(projectId.value) : chapterStore.currentChapterForProject(projectId.value))
 const currentUnitNum = computed(() => projectMode.value === 'article' ? documentStore.currentDocumentPosition : chapterStore.currentChapterNum)
-const characters = computed(() => characterStore.charactersForProject(projectId.value))
+const characters = computed(() => {
+  const order = { core: 0, recurring: 1, chapter: 2, cameo: 3 }
+  return [...characterStore.charactersForProject(projectId.value)]
+    .sort((a, b) => order[a.scope_type] - order[b.scope_type] || a.name.localeCompare(b.name))
+})
 const outline = computed(() => outlineStore.entriesForProject(projectId.value))
-const worldEntries = computed(() => worldEntryStore.entriesForProject(projectId.value))
+const worldEntries = computed(() => {
+  const order = { global: 0, chapter: 1 }
+  return [...worldEntryStore.entriesForProject(projectId.value)]
+    .sort((a, b) => order[a.scope_type] - order[b.scope_type] || a.category.localeCompare(b.category))
+})
 const hiddenThreads = computed(() => hiddenThreadStore.threadsForProject(projectId.value))
+const viewMode = ref<'editor' | 'chapterConfig'>('editor')
+const configChapterNum = ref(0)
+const configChapterTitle = ref('')
+
+function openChapterConfig(ch: any) {
+  viewMode.value = 'chapterConfig'
+  configChapterNum.value = unitPosition(ch)
+  configChapterTitle.value = unitDisplayTitle(ch)
+}
 
 type SearchTab = 'units' | 'outline' | 'characters' | 'world'
 type SearchResult = {
@@ -211,40 +253,43 @@ const projectSearchResults = computed<SearchResult[]>(() => {
         label: item.title,
         detail: titleMatched ? `${unitOrdinalNumberText(item.chapter_num)} · ${outlineLabel.value}` : `${outlineLabel.value} · ${summarySnippet ?? turningPointSnippet}`,
         badge: outlineLabel.value,
-        tab: 'outline',
+        tab: projectMode.value === 'novel' ? 'units' : 'outline',
+        unitNum: projectMode.value === 'novel' ? item.chapter_num : undefined,
       })
     }
   }
 
-  for (const char of characters.value) {
-    const nameMatched = matchesSearch(char.name, query)
-    const factionSnippet = searchSnippet(char.faction, query)
-    const profileSnippet = searchSnippet(char.profile, query)
-    if (nameMatched || factionSnippet || profileSnippet) {
-      results.push({
-        id: `character-${char.id}`,
-        targetId: `character-${char.id}`,
-        label: char.name,
-        detail: nameMatched ? (char.faction || `${characterLabel.value}档案`) : `${characterLabel.value} · ${factionSnippet ?? profileSnippet}`,
-        badge: characterLabel.value,
-        tab: 'characters',
-      })
+  if (projectMode.value === 'article') {
+    for (const char of characters.value) {
+      const nameMatched = matchesSearch(char.name, query)
+      const factionSnippet = searchSnippet(char.faction, query)
+      const profileSnippet = searchSnippet(char.profile, query)
+      if (nameMatched || factionSnippet || profileSnippet) {
+        results.push({
+          id: `character-${char.id}`,
+          targetId: `character-${char.id}`,
+          label: char.name,
+          detail: nameMatched ? (char.faction || `${characterLabel.value}档案`) : `${characterLabel.value} · ${factionSnippet ?? profileSnippet}`,
+          badge: characterLabel.value,
+          tab: 'characters',
+        })
+      }
     }
-  }
 
-  for (const entry of worldEntries.value) {
-    const titleMatched = matchesSearch(entry.title, query)
-    const categorySnippet = searchSnippet(entry.category, query)
-    const contentSnippet = searchSnippet(entry.content, query)
-    if (titleMatched || categorySnippet || contentSnippet) {
-      results.push({
-        id: `world-${entry.id}`,
-        targetId: `world-${entry.id}`,
-        label: entry.title,
-        detail: titleMatched ? (entry.category || `${worldLabel.value}${worldEntryLabel.value}`) : `${worldLabel.value} · ${categorySnippet ?? contentSnippet}`,
-        badge: worldEntryLabel.value,
-        tab: 'world',
-      })
+    for (const entry of worldEntries.value) {
+      const titleMatched = matchesSearch(entry.title, query)
+      const categorySnippet = searchSnippet(entry.category, query)
+      const contentSnippet = searchSnippet(entry.content, query)
+      if (titleMatched || categorySnippet || contentSnippet) {
+        results.push({
+          id: `world-${entry.id}`,
+          targetId: `world-${entry.id}`,
+          label: entry.title,
+          detail: titleMatched ? (entry.category || `${worldLabel.value}${worldEntryLabel.value}`) : `${worldLabel.value} · ${categorySnippet ?? contentSnippet}`,
+          badge: worldEntryLabel.value,
+          tab: 'world',
+        })
+      }
     }
   }
 
@@ -258,7 +303,8 @@ const projectSearchResults = computed<SearchResult[]>(() => {
         label: thread.name,
         detail: nameMatched ? hiddenThreadLabel.value : `${hiddenThreadLabel.value} · ${descriptionSnippet}`,
         badge: hiddenThreadLabel.value,
-        tab: 'outline',
+        tab: projectMode.value === 'novel' ? 'units' : 'outline',
+        unitNum: projectMode.value === 'novel' ? thread.chapter_nums?.[0] : undefined,
       })
     }
   }
@@ -298,6 +344,14 @@ function openSearchResult(result: SearchResult) {
 
   if (typeof result.unitNum === 'number') {
     selectWritingUnit(result.unitNum)
+    if (projectMode.value === 'novel' && result.id.startsWith('outline-')) {
+      const unit = writingUnits.value.find(item => unitPosition(item) === result.unitNum)
+      if (unit) openChapterConfig(unit)
+    }
+    if (projectMode.value === 'novel' && result.id.startsWith('hidden-')) {
+      const unit = writingUnits.value.find(item => unitPosition(item) === result.unitNum)
+      if (unit) openChapterConfig(unit)
+    }
   }
 
   searchOpen.value = false
@@ -447,15 +501,16 @@ async function extractCurrentChapterStructure() {
     return
   }
   if (!unit.draft.trim()) {
-    ui.showToast('当前章节正文为空，无法提炼', 'error')
+    ui.showToast('当前章节正文为空，无法更新记忆', 'error')
     return
   }
 
   extractingStructure.value = true
   try {
+    await chapterStore.saveCurrentChapter(projectId.value)
     const result = await api.extractChapterStructure(projectId.value, unitPosition(unit), {
       mode: 'preview',
-      targets: ['outlines', 'characters', 'world_entries', 'hidden_threads', 'character_relations'],
+      targets: ['outlines', 'characters', 'world_entries', 'hidden_threads', 'character_relations', 'character_events'],
       include_existing_context: true,
     })
     structurePayload.value = result.extraction
@@ -470,12 +525,12 @@ async function extractCurrentChapterStructure() {
 function structureExtractionError(e: unknown) {
   const message = friendlyError(e, '结构提炼失败')
   if (message.includes('API Key') || message.includes('模型配置')) {
-    return '结构提炼失败：模型配置不可用，请到设置里重新保存 API Key 后再试'
+    return '章节记忆更新失败：模型配置不可用，请到设置里重新保存 API Key 后再试'
   }
   if (message.includes('模型服务') || message.includes('服务器异常') || message.includes('Internal Server Error')) {
-    return '结构提炼失败：模型服务暂时不可用，请检查模型配置或稍后重试'
+    return '章节记忆更新失败：模型服务暂时不可用，请检查模型配置或稍后重试'
   }
-  return `结构提炼失败：${message}`
+  return `章节记忆更新失败：${message}`
 }
 
 async function applyExtractedStructure(payload: StructureExtractPayload) {
@@ -491,19 +546,56 @@ async function applyExtractedStructure(payload: StructureExtractPayload) {
     await Promise.all([
       outlineStore.loadOutlines(projectId.value),
       characterStore.loadCharacters(projectId.value),
+      characterEventStore.loadCharacterEvents(projectId.value),
       worldEntryStore.loadWorldEntries(projectId.value),
       hiddenThreadStore.loadHiddenThreads(projectId.value),
       relationStore.loadRelations(projectId.value),
     ])
     showStructurePreview.value = false
     structurePayload.value = null
-    const count = Object.values(result.applied?.counts ?? {}).reduce((sum, value) => sum + value, 0)
-    ui.showToast(`已写入 ${count} 项结构资料`, 'success')
+    ui.showToast(`章节记忆已写入：${formatStructureCounts(result.applied?.counts)}`, 'success')
   } catch (e: unknown) {
-    ui.showToast(friendlyError(e, '写入结构资料失败'), 'error')
+    ui.showToast(friendlyError(e, '写入章节记忆失败'), 'error')
   } finally {
     applyingStructure.value = false
   }
+}
+
+function formatStructureCounts(counts: Record<string, number> | undefined) {
+  const labels: Record<string, string> = {
+    outlines: '大纲',
+    characters: '角色',
+    world_entries: '世界观',
+    hidden_threads: '暗线',
+    character_relations: '关系',
+    character_events: '事件',
+  }
+  const parts = Object.entries(counts ?? {})
+    .filter(([, value]) => value > 0)
+    .map(([key, value]) => `${labels[key] ?? key} ${value}`)
+  return parts.length ? parts.join('、') : '无新增条目'
+}
+
+function characterRecentEvents(char: Character) {
+  return characterEventStore.eventsForCharacter(projectId.value, char.id).slice(-3).reverse()
+}
+
+function appearanceTypeLabel(type: string) {
+  return ({ appeared: '出场', mentioned: '提及', absent: '未出场' } as Record<string, string>)[type] ?? type
+}
+
+function characterScopeLabel(scope: string) {
+  return (projectMode.value === 'article'
+    ? { core: '核心画像', recurring: '常用画像', chapter: '单篇画像', cameo: '轻量画像' }
+    : { core: '主角团', recurring: '常驻角色', chapter: '章节角色', cameo: '客串角色' }
+  )[scope as 'core' | 'recurring' | 'chapter' | 'cameo'] ?? scope
+}
+
+function worldScopeLabel(scope: string) {
+  return (projectMode.value === 'article'
+    ? { global: '全局资料', chapter: '单篇资料' }
+    : { global: '全局设定', chapter: '章节设定' }
+  )[scope as 'global' | 'chapter'] ?? scope
 }
 
 // New writing unit form
@@ -766,6 +858,7 @@ async function deleteHiddenThreadConfirm(ht: HiddenThread) {
 const showNewCharacter = ref(false)
 const newCharName = ref('')
 const newCharRoleType = ref<'protagonist' | 'antagonist' | 'supporting' | 'minor'>('supporting')
+const newCharScopeType = ref<'core' | 'recurring' | 'chapter' | 'cameo'>('recurring')
 const newCharProfile = ref('')
 const newCharFaction = ref('')
 const newCharError = ref('')
@@ -773,12 +866,14 @@ const newCharError = ref('')
 const editingCharId = ref<string | null>(null)
 const editCharName = ref('')
 const editCharRoleType = ref<'protagonist' | 'antagonist' | 'supporting' | 'minor'>('supporting')
+const editCharScopeType = ref<'core' | 'recurring' | 'chapter' | 'cameo'>('recurring')
 const editCharProfile = ref('')
 const editCharFaction = ref('')
 
 function openNewCharacterForm() {
   newCharName.value = ''
   newCharRoleType.value = 'supporting'
+  newCharScopeType.value = 'recurring'
   newCharProfile.value = ''
   newCharFaction.value = ''
   newCharError.value = ''
@@ -794,6 +889,7 @@ async function submitNewCharacter() {
     await characterStore.addCharacter(projectId.value, {
       name: newCharName.value.trim(),
       role_type: newCharRoleType.value,
+      scope_type: newCharScopeType.value,
       profile: newCharProfile.value.trim(),
       faction: newCharFaction.value.trim(),
     })
@@ -810,6 +906,7 @@ function startEditCharacter(char: Character) {
   editingCharId.value = char.id
   editCharName.value = char.name
   editCharRoleType.value = char.role_type
+  editCharScopeType.value = char.scope_type
   editCharProfile.value = char.profile ?? ''
   editCharFaction.value = char.faction ?? ''
 }
@@ -824,6 +921,7 @@ async function saveEditCharacter(char: Character) {
     await characterStore.updateCharacter(projectId.value, char.id, {
       name: editCharName.value.trim(),
       role_type: editCharRoleType.value,
+      scope_type: editCharScopeType.value,
       profile: editCharProfile.value.trim(),
       faction: editCharFaction.value.trim(),
     })
@@ -850,6 +948,7 @@ async function deleteCharacterConfirm(char: Character) {
 const showNewWorldEntry = ref(false)
 const newWETitle = ref('')
 const newWECategory = ref('')
+const newWEScopeType = ref<'global' | 'chapter'>('global')
 const newWEContent = ref('')
 const newWEConfidence = ref<'low' | 'medium' | 'high'>('medium')
 const newWEError = ref('')
@@ -857,12 +956,14 @@ const newWEError = ref('')
 const editingWEId = ref<string | null>(null)
 const editWETitle = ref('')
 const editWECategory = ref('')
+const editWEScopeType = ref<'global' | 'chapter'>('global')
 const editWEContent = ref('')
 const editWEConfidence = ref<'low' | 'medium' | 'high'>('medium')
 
 function openNewWorldEntryForm() {
   newWETitle.value = ''
   newWECategory.value = ''
+  newWEScopeType.value = 'global'
   newWEContent.value = ''
   newWEConfidence.value = 'medium'
   newWEError.value = ''
@@ -878,6 +979,7 @@ async function submitNewWorldEntry() {
     await worldEntryStore.addWorldEntry(projectId.value, {
       title: newWETitle.value.trim(),
       category: newWECategory.value.trim() || undefined,
+      scope_type: newWEScopeType.value,
       content: newWEContent.value.trim(),
       confidence: newWEConfidence.value,
     })
@@ -893,6 +995,7 @@ function startEditWorldEntry(entry: WorldEntry) {
   editingWEId.value = entry.id
   editWETitle.value = entry.title
   editWECategory.value = entry.category ?? ''
+  editWEScopeType.value = entry.scope_type
   editWEContent.value = entry.content ?? ''
   editWEConfidence.value = entry.confidence
 }
@@ -907,6 +1010,7 @@ async function saveEditWorldEntry(entry: WorldEntry) {
     await worldEntryStore.updateWorldEntry(projectId.value, entry.id, {
       title: editWETitle.value.trim(),
       category: editWECategory.value.trim() || undefined,
+      scope_type: editWEScopeType.value,
       content: editWEContent.value.trim(),
       confidence: editWEConfidence.value,
     })
@@ -1004,9 +1108,9 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
         <div class="sidebar-inner">
         <nav class="sidebar-tabs">
           <button :class="{ active: activeTab === 'units' }" @click="activeTab = 'units'">{{ unitLabel }}</button>
-          <button :class="{ active: activeTab === 'outline' }" @click="activeTab = 'outline'">{{ outlineLabel }}</button>
-          <button :class="{ active: activeTab === 'characters' }" @click="activeTab = 'characters'">{{ characterLabel }}</button>
-          <button :class="{ active: activeTab === 'world' }" @click="activeTab = 'world'">{{ worldLabel }}</button>
+          <button v-if="projectMode === 'article'" :class="{ active: activeTab === 'outline' }" @click="activeTab = 'outline'">{{ outlineLabel }}</button>
+          <button v-if="showArticleLibraries" :class="{ active: activeTab === 'characters' }" @click="activeTab = 'characters'">{{ characterLibraryLabel }}</button>
+          <button v-if="showArticleLibraries" :class="{ active: activeTab === 'world' }" @click="activeTab = 'world'">{{ worldLibraryLabel }}</button>
         </nav>
 
         <div class="sidebar-content">
@@ -1020,7 +1124,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 :disabled="!canExtractStructure"
                 @click="extractCurrentChapterStructure"
               >
-                {{ extractingStructure ? '提炼中...' : '提炼结构' }}
+                {{ extractingStructure ? '提炼中...' : '更新记忆' }}
               </button>
             </div>
             <div v-if="showNewUnit" class="unit-form">
@@ -1061,6 +1165,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 <span class="unit-num">{{ unitDisplayNum(ch) }}</span>
                 <span class="unit-title">{{ unitDisplayTitle(ch) }}</span>
                 <span class="unit-status" :class="ch.status">{{ ch.status === 'final' ? '终稿' : ch.status === 'reviewing' ? '审核' : ch.status === 'revision' ? '修订' : '草稿' }}</span>
+                <button v-if="projectMode === 'novel'" class="chapter-meta-btn" title="本章资料" @click.stop="openChapterConfig(ch)">资料</button>
               </template>
             </div>
           </div>
@@ -1178,7 +1283,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
           </div>
 
           <!-- Characters -->
-          <div v-if="activeTab === 'characters'" class="tab-pane">
+          <div v-if="activeTab === 'characters' && showArticleLibraries" class="tab-pane">
             <button class="btn-add-unit" @click="openNewCharacterForm">+ 新增{{ characterLabel }}</button>
             <div v-if="showNewCharacter" class="unit-form" style="margin: 0;">
               <div class="form-row">
@@ -1188,6 +1293,10 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
               <div class="form-row">
                 <label>{{ characterLabel }}类型</label>
                 <BaseSelect v-model="newCharRoleType" :options="characterRoleOptions" />
+              </div>
+              <div v-if="projectMode === 'novel'" class="form-row">
+                <label>叙事层级</label>
+                <BaseSelect v-model="newCharScopeType" :options="characterScopeOptions" />
               </div>
               <div class="form-row">
                 <label>{{ projectMode === 'article' ? '细分人群' : '阵营' }}</label>
@@ -1220,6 +1329,10 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                     <label>{{ characterLabel }}类型</label>
                     <BaseSelect v-model="editCharRoleType" :options="characterRoleOptions" />
                   </div>
+                  <div v-if="projectMode === 'novel'" class="form-row">
+                    <label>叙事层级</label>
+                    <BaseSelect v-model="editCharScopeType" :options="characterScopeOptions" />
+                  </div>
                   <div class="form-row">
                     <label>{{ projectMode === 'article' ? '细分人群' : '阵营' }}</label>
                     <input v-model="editCharFaction" type="text" class="form-input" />
@@ -1238,6 +1351,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 <div class="char-name">
                   {{ char.name }}
                   <span class="char-role-type" :class="char.role_type">{{ projectMode === 'article' ? { protagonist: '核心受众', antagonist: '反对人群', supporting: '影响者', minor: '泛受众' }[char.role_type] : { protagonist: '主角', antagonist: '反派', supporting: '配角', minor: '路人' }[char.role_type] }}</span>
+                  <span v-if="projectMode === 'novel'" class="char-scope-type" :class="char.scope_type">{{ characterScopeLabel(char.scope_type) }}</span>
                   <span class="outline-actions">
                     <button class="icon-btn" title="编辑" @click.stop="startEditCharacter(char)">&#9998;</button>
                     <button class="icon-btn icon-btn-danger" title="删除" @click.stop="deleteCharacterConfirm(char)">&#10005;</button>
@@ -1246,13 +1360,20 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 <p v-if="char.faction" class="char-faction">{{ projectMode === 'article' ? '细分人群' : '阵营' }}: {{ char.faction }}</p>
                 <p class="char-profile">{{ char.profile }}</p>
                 <div v-if="projectMode === 'novel' && char.appearance_count" class="char-appearance">出场次数: {{ char.appearance_count }}</div>
+                <div v-if="projectMode === 'novel' && characterRecentEvents(char).length" class="char-events">
+                  <div v-for="event in characterRecentEvents(char)" :key="event.id" class="char-event">
+                    <span class="char-event-chapter">第{{ event.chapter_sequence_number }}章</span>
+                    <span class="char-event-type">{{ appearanceTypeLabel(event.appearance_type) }}</span>
+                    <span class="char-event-summary">{{ event.event_summary || event.state_change || '未填写事件' }}</span>
+                  </div>
+                </div>
               </template>
             </div>
             <div v-if="!characters.length && !showNewCharacter" class="empty-hint">暂无{{ characterLabel }}</div>
           </div>
 
           <!-- World -->
-          <div v-if="activeTab === 'world'" class="tab-pane">
+          <div v-if="activeTab === 'world' && showArticleLibraries" class="tab-pane">
             <button class="btn-add-unit" @click="openNewWorldEntryForm">+ 新增{{ worldEntryLabel }}</button>
             <div v-if="showNewWorldEntry" class="unit-form" style="margin: 0;">
               <div class="form-row">
@@ -1262,6 +1383,10 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
               <div class="form-row">
                 <label>分类</label>
                 <input v-model="newWECategory" type="text" :placeholder="projectMode === 'article' ? '可选，如：品牌、产品、案例、数据' : '可选，如：地理、历史、魔法'" class="form-input" />
+              </div>
+              <div v-if="projectMode === 'novel'" class="form-row">
+                <label>设定层级</label>
+                <BaseSelect v-model="newWEScopeType" :options="worldScopeOptions" />
               </div>
               <div class="form-row">
                 <label>内容</label>
@@ -1294,6 +1419,10 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                     <label>分类</label>
                     <input v-model="editWECategory" type="text" class="form-input" />
                   </div>
+                  <div v-if="projectMode === 'novel'" class="form-row">
+                    <label>设定层级</label>
+                    <BaseSelect v-model="editWEScopeType" :options="worldScopeOptions" />
+                  </div>
                   <div class="form-row">
                     <label>内容</label>
                     <textarea v-model="editWEContent" class="form-textarea" rows="3"></textarea>
@@ -1312,6 +1441,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 <div class="world-label">
                   {{ entry.title }}
                   <span v-if="entry.category" class="world-category">· {{ entry.category }}</span>
+                  <span v-if="projectMode === 'novel'" class="world-scope" :class="entry.scope_type">{{ worldScopeLabel(entry.scope_type) }}</span>
                   <span class="we-confidence" :class="entry.confidence">{{ { low: '低', medium: '中', high: '高' }[entry.confidence] }}</span>
                   <span class="outline-actions">
                     <button class="icon-btn" title="编辑" @click.stop="startEditWorldEntry(entry)">&#9998;</button>
@@ -1329,7 +1459,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 
       <!-- Center: editor -->
       <main class="editor-area">
-        <WritingEditor v-if="currentWritingUnit" :project-id="projectId" :mode="projectMode" />
+        <ChapterConfig v-if="viewMode === 'chapterConfig'" :project-id="projectId" :project-mode="projectMode" :chapter-num="configChapterNum" :chapter-title="configChapterTitle" @close="viewMode = 'editor'" />
+        <WritingEditor v-else-if="currentWritingUnit" :project-id="projectId" :mode="projectMode" />
         <div v-else class="empty-hint" style="padding-top: 120px;">选择一个{{ unitLabel }}开始写作</div>
       </main>
 
@@ -1363,8 +1494,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 
     <nav class="mobile-nav">
       <button :class="{ active: mobilePanel === 'units' }" @click="mobilePanel = 'units'">{{ unitLabel }}</button>
-      <button :class="{ active: mobilePanel === 'characters' }" @click="mobilePanel = 'characters'">{{ characterLabel }}</button>
-      <button :class="{ active: mobilePanel === 'world' }" @click="mobilePanel = 'world'">{{ worldLabel }}</button>
+      <button v-if="showArticleLibraries" :class="{ active: mobilePanel === 'characters' }" @click="mobilePanel = 'characters'">{{ characterLabel }}</button>
+      <button v-if="showArticleLibraries" :class="{ active: mobilePanel === 'world' }" @click="mobilePanel = 'world'">{{ worldLabel }}</button>
       <button :class="{ active: mobilePanel === 'editor' }" @click="mobilePanel = 'editor'">编辑</button>
       <button :class="{ active: mobilePanel === 'agent' }" @click="mobilePanel = 'agent'">Agent</button>
     </nav>
@@ -1378,7 +1509,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
           :disabled="!canExtractStructure"
           @click="extractCurrentChapterStructure"
         >
-          {{ extractingStructure ? '提炼中...' : '提炼结构' }}
+          {{ extractingStructure ? '提炼中...' : '更新记忆' }}
         </button>
       </div>
       <div v-if="showNewUnit" class="unit-form">
@@ -1419,12 +1550,14 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
           <span class="unit-num">{{ unitDisplayNum(ch) }}</span>
           <span class="unit-title">{{ unitDisplayTitle(ch) }}</span>
           <span class="unit-status" :class="ch.status">{{ ch.status === 'final' ? '终稿' : '草稿' }}</span>
+                <button v-if="projectMode === 'novel'" class="chapter-meta-btn" title="本章资料" @click.stop="openChapterConfig(ch)">资料</button>
         </template>
       </div>
     </div>
 
     <div v-if="mobilePanel === 'editor'" class="mobile-pane mobile-editor">
-      <WritingEditor v-if="currentWritingUnit" :project-id="projectId" :mode="projectMode" />
+      <ChapterConfig v-if="viewMode === 'chapterConfig'" :project-id="projectId" :project-mode="projectMode" :chapter-num="configChapterNum" :chapter-title="configChapterTitle" @close="viewMode = 'editor'; mobilePanel = 'editor'" />
+      <WritingEditor v-else-if="currentWritingUnit" :project-id="projectId" :mode="projectMode" />
       <div v-else class="empty-hint">选择一个{{ unitLabel }}开始写作</div>
     </div>
 
@@ -1453,7 +1586,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   <StructureExtractPreview
     :show="showStructurePreview"
     :payload="structurePayload"
-    :confirm-text="applyingStructure ? '写入中...' : '确认写入'"
+    title="章节记忆预览"
+    :confirm-text="applyingStructure ? '写入中...' : '写入记忆'"
     @close="showStructurePreview = false"
     @confirm="applyExtractedStructure"
   />
@@ -1882,6 +2016,22 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 .unit-status.reviewing { background: var(--status-reviewing-bg); color: var(--status-reviewing); }
 .unit-status.revision { background: var(--status-revision-bg); color: var(--status-revision); }
 .unit-status.final { background: var(--status-final-bg); color: var(--status-final); }
+.chapter-meta-btn {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 7px;
+  padding: 2px 7px;
+  background: color-mix(in srgb, var(--accent-subtle) 76%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.chapter-meta-btn:hover {
+  background: var(--accent-subtle);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
 
 /* Outline */
 .outline-item {
@@ -1928,6 +2078,37 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   padding: 2px 7px;
   border-radius: 8px;
 }
+.overview-panel {
+  padding: var(--sp-3);
+  background: color-mix(in srgb, var(--bg-panel) 86%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 14px;
+}
+.overview-textarea {
+  min-height: 220px;
+  resize: vertical;
+}
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+.overview-grid > div {
+  padding: var(--sp-3);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.overview-metric {
+  display: block;
+  color: var(--text);
+  font-size: var(--text-lg);
+  font-weight: 700;
+}
+.overview-label {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
 
 /* Characters */
 .character-card {
@@ -1956,6 +2137,30 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 .char-role-type.antagonist { background: var(--status-error-bg, #fef2f2); color: var(--status-error, #ef4444); }
 .char-role-type.supporting { background: var(--accent-subtle); color: var(--accent); }
 .char-role-type.minor { background: var(--bg-hover); color: var(--text-tertiary); }
+.char-scope-type,
+.world-scope {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+  background: var(--bg-hover);
+  color: var(--text-tertiary);
+}
+.char-scope-type.core,
+.world-scope.global {
+  background: var(--status-final-bg);
+  color: var(--status-final);
+}
+.char-scope-type.recurring {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+.char-scope-type.chapter,
+.world-scope.chapter {
+  background: var(--status-reviewing-bg);
+  color: var(--status-reviewing);
+}
 .char-faction {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
@@ -1971,6 +2176,31 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   font-size: 10px;
   color: var(--text-tertiary);
   margin-top: var(--sp-1);
+}
+.char-events {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: var(--sp-2);
+  padding-top: var(--sp-2);
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+.char-event {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+.char-event-chapter,
+.char-event-type {
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+.char-event-summary {
+  min-width: 0;
 }
 
 /* World */

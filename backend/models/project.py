@@ -11,6 +11,7 @@ class Project(UUIDMixin, TimestampMixin, Base):
 
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    overall_outline: Mapped[str | None] = mapped_column(Text, nullable=True)
     genre: Mapped[str | None] = mapped_column(String(200), nullable=True)
     style: Mapped[str | None] = mapped_column(String(200), nullable=True)
     target_words: Mapped[int] = mapped_column(Integer, default=200000)

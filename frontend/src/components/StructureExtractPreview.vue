@@ -3,7 +3,7 @@ import { computed, watch } from 'vue'
 import { reactive } from 'vue'
 import type { StructureExtractPayload } from '../api/types'
 
-type ExtractGroupKey = 'outlines' | 'characters' | 'world_entries' | 'hidden_threads' | 'character_relations'
+type ExtractGroupKey = 'outlines' | 'characters' | 'world_entries' | 'hidden_threads' | 'character_relations' | 'character_events'
 type ExtractRecord = Record<string, unknown>
 
 interface EditableField {
@@ -62,6 +62,7 @@ const GROUP_DEFINITIONS: Array<Omit<EditableGroup, 'items'>> = [
     fields: [
       { key: 'name', label: '姓名', type: 'text' },
       { key: 'role_type', label: '角色类型', type: 'text' },
+      { key: 'scope_type', label: '叙事层级', type: 'text' },
       { key: 'faction', label: '阵营', type: 'text' },
       { key: 'profile', label: '档案', type: 'textarea' },
     ],
@@ -73,6 +74,7 @@ const GROUP_DEFINITIONS: Array<Omit<EditableGroup, 'items'>> = [
     fields: [
       { key: 'title', label: '标题', type: 'text' },
       { key: 'category', label: '分类', type: 'text' },
+      { key: 'scope_type', label: '设定层级', type: 'text' },
       { key: 'confidence', label: '置信度', type: 'text' },
       { key: 'content', label: '内容', type: 'textarea' },
     ],
@@ -95,6 +97,21 @@ const GROUP_DEFINITIONS: Array<Omit<EditableGroup, 'items'>> = [
       { key: 'source', label: '来源角色', type: 'text' },
       { key: 'target', label: '目标角色', type: 'text' },
       { key: 'description', label: '描述', type: 'textarea' },
+    ],
+  },
+  {
+    key: 'character_events',
+    label: '角色事件',
+    emptyText: '未提炼到角色事件',
+    fields: [
+      { key: 'character_name', label: '角色', type: 'text' },
+      { key: 'sequence_number', label: '章节', type: 'number' },
+      { key: 'appearance_type', label: '出场类型', type: 'text' },
+      { key: 'event_summary', label: '本章事件', type: 'textarea' },
+      { key: 'state_change', label: '状态变化', type: 'textarea' },
+      { key: 'location', label: '地点', type: 'text' },
+      { key: 'emotion', label: '情绪', type: 'text' },
+      { key: 'importance', label: '重要度', type: 'number' },
     ],
   },
 ]
@@ -204,6 +221,9 @@ function parseCsvNumbers(value: string): number[] {
 }
 
 function itemTitle(item: EditableItem, group: EditableGroup): string {
+  if (group.key === 'character_events') {
+    return `${item.data.character_name || '未命名角色'} · 第${item.data.sequence_number || '?'}章`
+  }
   const preferredKey = group.key === 'hidden_threads' ? 'name' : 'title'
   const fallbackKey = group.key === 'characters' || group.key === 'character_relations' ? 'name' : 'description'
   return String(item.data[preferredKey] || item.data[fallbackKey] || '未命名条目')

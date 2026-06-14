@@ -462,6 +462,7 @@ def test_extract_chapter_structure_preview_and_apply():
     assert extraction["outlines"]
     assert extraction["characters"]
     assert extraction["world_entries"]
+    assert extraction["character_events"]
 
     apply_resp = client.post(
         f"/api/projects/{project_id}/chapters/1/extract-structure",
@@ -472,19 +473,211 @@ def test_extract_chapter_structure_preview_and_apply():
     counts = apply_resp.json()["applied"]["counts"]
     assert counts["outlines"] >= 1
     assert counts["characters"] >= 1
+    assert counts["character_events"] >= 1
 
     outlines_resp = client.get(f"/api/projects/{project_id}/outlines", headers=headers)
     chars_resp = client.get(f"/api/projects/{project_id}/characters", headers=headers)
     world_resp = client.get(f"/api/projects/{project_id}/world-entries", headers=headers)
     hidden_resp = client.get(f"/api/projects/{project_id}/hidden-threads", headers=headers)
+    events_resp = client.get(f"/api/projects/{project_id}/character-events", headers=headers)
     assert outlines_resp.status_code == 200
     assert chars_resp.status_code == 200
     assert world_resp.status_code == 200
     assert hidden_resp.status_code == 200
+    assert events_resp.status_code == 200
     assert len(outlines_resp.json()) >= 1
     assert len(chars_resp.json()) >= 1
     assert len(world_resp.json()) >= 1
     assert len(hidden_resp.json()) >= 1
+    assert len(events_resp.json()) >= 1
+
+
+def test_extract_chapter_structure_respects_targets():
+    headers = _auth_headers("extract-targets", "extractpass")
+    project_resp = client.post("/api/projects", json={"title": "提炼范围测试"}, headers=headers)
+    project_id = project_resp.json()["id"]
+
+    chapter_resp = client.post(
+        f"/api/projects/{project_id}/chapters",
+        json={"title": "第一章", "sequence_number": 1},
+        headers=headers,
+    )
+    assert chapter_resp.status_code == 200
+
+    patch_resp = client.patch(
+        f"/api/projects/{project_id}/chapters/1",
+        json={"content": "林澈在旧城档案馆发现了失踪档案。"},
+        headers=headers,
+    )
+    assert patch_resp.status_code == 200
+
+    preview_resp = client.post(
+        f"/api/projects/{project_id}/chapters/1/extract-structure",
+        json={"mode": "preview", "targets": ["characters"]},
+        headers=headers,
+    )
+    assert preview_resp.status_code == 200, preview_resp.text
+    extraction = preview_resp.json()["extraction"]
+    assert extraction["characters"]
+    assert extraction["outlines"] == []
+    assert extraction["world_entries"] == []
+    assert extraction["character_events"] == []
+
+    apply_resp = client.post(
+        f"/api/projects/{project_id}/chapters/1/extract-structure",
+        json={"mode": "apply", "targets": ["characters"], "extraction": extraction},
+        headers=headers,
+    )
+    assert apply_resp.status_code == 200, apply_resp.text
+    counts = apply_resp.json()["applied"]["counts"]
+    assert counts["characters"] >= 1
+    assert counts["world_entries"] == 0
+    assert counts["character_events"] == 0
+
+    world_resp = client.get(f"/api/projects/{project_id}/world-entries", headers=headers)
+    assert world_resp.status_code == 200
+    assert world_resp.json() == []
+
+
+def test_character_chapter_event_can_be_updated():
+    headers = _auth_headers("event-editor", "eventpass")
+    project_resp = client.post("/api/projects", json={"title": "角色轨迹测试"}, headers=headers)
+    project_id = project_resp.json()["id"]
+
+    char_resp = client.post(
+        f"/api/projects/{project_id}/characters",
+        json={"name": "林澈", "role_type": "protagonist"},
+        headers=headers,
+    )
+    assert char_resp.status_code == 200
+    character_id = char_resp.json()["id"]
+
+    first_resp = client.put(
+        f"/api/projects/{project_id}/characters/{character_id}/chapter-events/1",
+        json={
+            "appearance_type": "appeared",
+            "event_summary": "林澈发现旧档案。",
+            "actions": ["发现旧档案"],
+            "state_change": "获得线索",
+            "importance": 4,
+        },
+        headers=headers,
+    )
+    assert first_resp.status_code == 200, first_resp.text
+    event_id = first_resp.json()["id"]
+
+    update_resp = client.put(
+        f"/api/projects/{project_id}/characters/{character_id}/chapter-events/1",
+        json={
+            "appearance_type": "mentioned",
+            "event_summary": "林澈只在他人口中被提及。",
+            "actions": ["被提及"],
+            "importance": 2,
+        },
+        headers=headers,
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    updated = update_resp.json()
+    assert updated["id"] == event_id
+    assert updated["appearance_type"] == "mentioned"
+    assert updated["event_summary"] == "林澈只在他人口中被提及。"
+
+    events_resp = client.get(
+        f"/api/projects/{project_id}/character-events?character_id={character_id}",
+        headers=headers,
+    )
+    assert events_resp.status_code == 200
+    events = events_resp.json()
+    assert len(events) == 1
+    assert events[0]["chapter_sequence_number"] == 1
+
+    char_after_resp = client.get(f"/api/projects/{project_id}/characters", headers=headers)
+    assert char_after_resp.status_code == 200
+    assert char_after_resp.json()[0]["appearance_count"] == 1
+
+
+def test_extract_chapter_structure_falls_back_when_model_returns_empty():
+    headers = _auth_headers("extract-fallback", "extractpass")
+    project_resp = client.post("/api/projects", json={"title": "兜底提炼测试"}, headers=headers)
+    project_id = project_resp.json()["id"]
+
+    char_resp = client.post(
+        f"/api/projects/{project_id}/characters",
+        json={"name": "程璇", "role_type": "protagonist"},
+        headers=headers,
+    )
+    assert char_resp.status_code == 200
+
+    chapter_resp = client.post(
+        f"/api/projects/{project_id}/chapters",
+        json={"title": "硬刚穆卓云！", "sequence_number": 6},
+        headers=headers,
+    )
+    assert chapter_resp.status_code == 200
+
+    patch_resp = client.patch(
+        f"/api/projects/{project_id}/chapters/6",
+        json={"content": "程璇站在训练场中央，抬头直视穆卓云。穆卓云沉声质问，程璇当场反驳。"},
+        headers=headers,
+    )
+    assert patch_resp.status_code == 200
+
+    preview_resp = client.post(
+        f"/api/projects/{project_id}/chapters/6/extract-structure",
+        json={"mode": "preview", "extraction": {}},
+        headers=headers,
+    )
+    assert preview_resp.status_code == 200, preview_resp.text
+    extraction = preview_resp.json()["extraction"]
+    assert extraction["outlines"]
+    assert extraction["characters"]
+    assert extraction["character_events"]
+    assert extraction["character_events"][0]["character_name"] == "程璇"
+
+
+def test_extract_chapter_structure_fills_missing_groups_from_fallback():
+    headers = _auth_headers("extract-partial-fallback", "extractpass")
+    project_resp = client.post("/api/projects", json={"title": "分组兜底测试"}, headers=headers)
+    project_id = project_resp.json()["id"]
+
+    char_resp = client.post(
+        f"/api/projects/{project_id}/characters",
+        json={"name": "程璇", "role_type": "protagonist"},
+        headers=headers,
+    )
+    assert char_resp.status_code == 200
+
+    chapter_resp = client.post(
+        f"/api/projects/{project_id}/chapters",
+        json={"title": "硬刚穆卓云！", "sequence_number": 6},
+        headers=headers,
+    )
+    assert chapter_resp.status_code == 200
+
+    patch_resp = client.patch(
+        f"/api/projects/{project_id}/chapters/6",
+        json={"content": "程璇站在训练场中央，抬头直视穆卓云。穆卓云沉声质问，程璇当场反驳。"},
+        headers=headers,
+    )
+    assert patch_resp.status_code == 200
+
+    preview_resp = client.post(
+        f"/api/projects/{project_id}/chapters/6/extract-structure",
+        json={
+            "mode": "preview",
+            "extraction": {
+                "outlines": [{"sequence_number": 6, "title": "硬刚穆卓云！", "summary": "模型只给了大纲"}],
+                "characters": [],
+                "character_events": [],
+            },
+        },
+        headers=headers,
+    )
+    assert preview_resp.status_code == 200, preview_resp.text
+    extraction = preview_resp.json()["extraction"]
+    assert extraction["outlines"][0]["summary"] == "模型只给了大纲"
+    assert extraction["characters"]
+    assert extraction["character_events"]
 
 
 def test_same_sequence_number_different_projects():
@@ -756,6 +949,90 @@ def test_character_update_persists_and_can_clear_fields():
     assert listed_after_clear["profile"] == ""
     assert listed_after_clear["faction"] == ""
     assert listed_after_clear["metadata"] is None
+
+
+def test_character_merge_moves_events_and_deletes_duplicate():
+    headers = _auth_headers("merge-character", "mergepass")
+    project_resp = client.post("/api/projects", json={"title": "角色合并测试"}, headers=headers)
+    project_id = project_resp.json()["id"]
+
+    target_resp = client.post(
+        f"/api/projects/{project_id}/characters",
+        json={"name": "程璇", "role_type": "protagonist", "scope_type": "core", "profile": "主角"},
+        headers=headers,
+    )
+    source_resp = client.post(
+        f"/api/projects/{project_id}/characters",
+        json={"name": "程旋", "role_type": "supporting", "scope_type": "recurring", "profile": "误提取的同名角色"},
+        headers=headers,
+    )
+    assert target_resp.status_code == 200
+    assert source_resp.status_code == 200
+    target_id = target_resp.json()["id"]
+    source_id = source_resp.json()["id"]
+
+    event_resp = client.put(
+        f"/api/projects/{project_id}/characters/{source_id}/chapter-events/1",
+        json={"appearance_type": "appeared", "event_summary": "程旋在本章觉醒。", "actions": ["觉醒"], "importance": 4},
+        headers=headers,
+    )
+    assert event_resp.status_code == 200
+
+    merge_resp = client.post(
+        f"/api/projects/{project_id}/characters/{source_id}/merge",
+        json={"target_character_id": target_id},
+        headers=headers,
+    )
+    assert merge_resp.status_code == 200, merge_resp.text
+    assert merge_resp.json()["id"] == target_id
+    assert "程旋" in merge_resp.json()["metadata"]["aliases"]
+
+    chars_resp = client.get(f"/api/projects/{project_id}/characters", headers=headers)
+    assert chars_resp.status_code == 200
+    names = [item["name"] for item in chars_resp.json()]
+    assert names == ["程璇"]
+
+    events_resp = client.get(f"/api/projects/{project_id}/character-events?character_id={target_id}", headers=headers)
+    assert events_resp.status_code == 200
+    events = events_resp.json()
+    assert len(events) == 1
+    assert events[0]["event_summary"] == "程旋在本章觉醒。"
+
+
+def test_story_layer_fields_roundtrip():
+    headers = _auth_headers("story_layers_user", "layer_pass")
+    project_resp = client.post(
+        "/api/projects",
+        json={"title": "分层小说", "overall_outline": "全书主线：主角团从觉醒走向决战。"},
+        headers=headers,
+    )
+    assert project_resp.status_code == 200
+    project_id = project_resp.json()["id"]
+    assert project_resp.json()["overall_outline"] == "全书主线：主角团从觉醒走向决战。"
+
+    patch_resp = client.patch(
+        f"/api/projects/{project_id}",
+        json={"overall_outline": "更新后的全书大纲"},
+        headers=headers,
+    )
+    assert patch_resp.status_code == 200
+    assert patch_resp.json()["overall_outline"] == "更新后的全书大纲"
+
+    char_resp = client.post(
+        f"/api/projects/{project_id}/characters",
+        json={"name": "程璇", "role_type": "protagonist", "scope_type": "core"},
+        headers=headers,
+    )
+    assert char_resp.status_code == 200
+    assert char_resp.json()["scope_type"] == "core"
+
+    world_resp = client.post(
+        f"/api/projects/{project_id}/world-entries",
+        json={"title": "魔法体系", "category": "规则", "scope_type": "global", "content": "全书通用规则"},
+        headers=headers,
+    )
+    assert world_resp.status_code == 200
+    assert world_resp.json()["scope_type"] == "global"
 
 
 # ==================== Experts ====================

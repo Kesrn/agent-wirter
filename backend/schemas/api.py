@@ -9,16 +9,28 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 class ProjectCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str | None = None
+    overall_outline: str | None = Field(default=None, max_length=50000)
     genre: str | None = Field(default=None, max_length=200)
     style: str | None = Field(default=None, max_length=200)
     target_words: int = 200000
     mode: str = Field(default="novel", pattern=r"^(novel|article)$")
 
 
+class ProjectUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = None
+    overall_outline: str | None = Field(default=None, max_length=50000)
+    genre: str | None = Field(default=None, max_length=200)
+    style: str | None = Field(default=None, max_length=200)
+    target_words: int | None = Field(default=None, ge=1)
+    status: str | None = Field(default=None, pattern=r"^(active|archived|completed)$")
+
+
 class ProjectResponse(BaseModel):
     id: uuid.UUID
     title: str
     description: str | None
+    overall_outline: str | None
     genre: str | None
     style: str | None
     target_words: int
@@ -172,7 +184,7 @@ class TxtImportResponse(BaseModel):
 
 
 class ChapterStructureExtractRequest(BaseModel):
-    targets: list[str] = Field(default_factory=lambda: ["outlines", "characters", "world_entries", "hidden_threads"])
+    targets: list[str] = Field(default_factory=lambda: ["outlines", "characters", "world_entries", "hidden_threads", "character_relations", "character_events"])
     mode: str = Field(default="preview", pattern=r"^(preview|apply)$")
     merge_strategy: str = Field(default="upsert", pattern=r"^(upsert|create_only)$")
     include_existing_context: bool = True
@@ -227,6 +239,7 @@ class SSEEvent(BaseModel):
 class WorldEntryCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     category: str = Field(default="general", max_length=50)
+    scope_type: str = Field(default="global", pattern=r"^(global|chapter)$")
     content: str = Field(default="", max_length=10000)
     rules: dict | None = None
     confidence: str = Field(default="medium", pattern=r"^(low|medium|high)$")
@@ -235,6 +248,7 @@ class WorldEntryCreate(BaseModel):
 class WorldEntryUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     category: str | None = Field(default=None, max_length=50)
+    scope_type: str | None = Field(default=None, pattern=r"^(global|chapter)$")
     content: str | None = Field(default=None, max_length=10000)
     rules: dict | None = None
     confidence: str | None = Field(default=None, pattern=r"^(low|medium|high)$")
@@ -245,6 +259,7 @@ class WorldEntryResponse(BaseModel):
     project_id: uuid.UUID
     title: str
     category: str
+    scope_type: str
     content: str
     rules: dict | None
     confidence: str
@@ -258,6 +273,7 @@ class WorldEntryResponse(BaseModel):
 class CharacterCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     role_type: str = Field(default="supporting", pattern=r"^(protagonist|antagonist|supporting|minor)$")
+    scope_type: str = Field(default="recurring", pattern=r"^(core|recurring|chapter|cameo)$")
     profile: str | None = Field(default=None, max_length=5000)
     faction: str | None = Field(default=None, max_length=100)
     metadata_: dict | None = Field(default=None, alias="metadata")
@@ -266,9 +282,14 @@ class CharacterCreate(BaseModel):
 class CharacterUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     role_type: str | None = Field(default=None, pattern=r"^(protagonist|antagonist|supporting|minor)$")
+    scope_type: str | None = Field(default=None, pattern=r"^(core|recurring|chapter|cameo)$")
     profile: str | None = Field(default=None, max_length=5000)
     faction: str | None = Field(default=None, max_length=100)
     metadata_: dict | None = Field(default=None, alias="metadata")
+
+
+class CharacterMergeRequest(BaseModel):
+    target_character_id: uuid.UUID
 
 
 class CharacterResponse(BaseModel):
@@ -276,6 +297,7 @@ class CharacterResponse(BaseModel):
     project_id: uuid.UUID
     name: str
     role_type: str
+    scope_type: str
     profile: str | None
     faction: str | None
     appearance_count: int
@@ -284,6 +306,35 @@ class CharacterResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class CharacterEventUpsert(BaseModel):
+    appearance_type: str = Field(default="appeared", pattern=r"^(appeared|mentioned|absent)$")
+    event_summary: str | None = Field(default=None, max_length=10000)
+    actions: list[str] | None = None
+    state_change: str | None = Field(default=None, max_length=10000)
+    location: str | None = Field(default=None, max_length=200)
+    emotion: str | None = Field(default=None, max_length=100)
+    importance: int = Field(default=3, ge=1, le=5)
+
+
+class CharacterEventResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    character_id: uuid.UUID
+    chapter_sequence_number: int
+    appearance_type: str
+    appeared: bool
+    event_summary: str | None
+    actions: list[str] | None
+    state_change: str | None
+    location: str | None
+    emotion: str | None
+    importance: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 # --- 大纲 ---

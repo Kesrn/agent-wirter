@@ -227,6 +227,19 @@ class MockProvider(LLMProvider):
                     }
                 ],
                 "character_relations": [],
+                "character_events": [
+                    {
+                        "character_name": "林澈",
+                        "sequence_number": sequence,
+                        "appearance_type": "appeared",
+                        "event_summary": "林澈在旧城档案馆发现失踪档案，并意识到它与当前事件有关。",
+                        "actions": ["进入旧城档案馆", "发现失踪档案"],
+                        "state_change": "掌握新的调查线索",
+                        "location": "旧城档案馆",
+                        "emotion": "警觉",
+                        "importance": 4,
+                    }
+                ],
             },
             ensure_ascii=False,
         )

@@ -37,6 +37,14 @@ const currentWritingUnitWordCount = computed(() => {
   return draft.replace(/\s+/g, '').length || 1200
 })
 const candidateDraftPreview = computed(() => cleanGeneratedContent(projectState.value.finalDraft))
+const panelTitle = computed(() => isNovel.value ? '章节助手' : '内容助手')
+const unitTypeLabel = computed(() => isNovel.value ? '当前章节' : '当前稿件')
+const currentUnitTitle = computed(() => currentWritingUnit.value?.title?.trim() || (isNovel.value ? '未选择章节' : '未选择稿件'))
+const currentUnitOrdinal = computed(() => currentWritingUnit.value ? (isNovel.value ? `第 ${currentUnitPosition.value} 章` : `第 ${currentUnitPosition.value} 篇`) : '未选择')
+const reviewComments = computed(() => {
+  if (!isNovel.value || !currentWritingUnit.value) return []
+  return chapterStore.reviewCommentsForChapter(currentWritingUnit.value.id)
+})
 
 function unitPosition(unit: WritingUnit): number {
   return 'position' in unit ? unit.position : unit.chapter_num
@@ -718,10 +726,21 @@ defineExpose({ testExpert, cancelStream })
 
 <template>
   <div class="agent-panel">
-    <div class="panel-header">
-      <h3>Agent 协作</h3>
-      <div class="panel-actions">
-        <router-link :to="`/projects/${projectId}/experts`" class="link-configure">配置 Agent</router-link>
+    <section class="agent-command">
+      <div class="command-top">
+        <div class="command-heading">
+          <span class="command-kicker">{{ unitTypeLabel }}</span>
+          <h3>{{ panelTitle }}</h3>
+        </div>
+        <router-link :to="`/projects/${projectId}/experts`" class="link-configure">配置</router-link>
+      </div>
+
+      <div class="unit-context" :class="{ muted: !currentWritingUnit }">
+        <span class="unit-ordinal">{{ currentUnitOrdinal }}</span>
+        <span class="unit-title">{{ currentUnitTitle }}</span>
+      </div>
+
+      <div class="primary-action">
         <button
           v-if="projectState.isGenerating"
           class="btn-cancel-stream"
@@ -738,22 +757,29 @@ defineExpose({ testExpert, cancelStream })
           {{ GENERATE_LABEL }}
         </button>
       </div>
-    </div>
+    </section>
 
     <div class="quick-actions">
-      <button v-for="action in QUICK_ACTIONS" :key="action.key" @click="handleQuickAction(action.key)">
+      <button
+        v-for="action in QUICK_ACTIONS"
+        :key="action.key"
+        :disabled="!currentWritingUnit || projectState.isGenerating"
+        @click="handleQuickAction(action.key)"
+      >
         {{ quickActionLabel(action) }}
       </button>
     </div>
 
     <!-- Workflow progress -->
-    <AgentWorkflow v-if="pendingMode === 'full_pipeline'" :project-id="projectId" :mode="props.mode" />
+    <section v-if="pendingMode === 'full_pipeline'" class="workflow-section">
+      <AgentWorkflow :project-id="projectId" :mode="props.mode" />
+    </section>
 
     <!-- Review comments -->
-    <div v-if="isNovel && currentWritingUnit" class="review-section">
+    <div v-if="reviewComments.length" class="review-section">
       <div class="section-label">审核意见</div>
       <div
-        v-for="comment in chapterStore.reviewCommentsForChapter(currentWritingUnit.id)"
+        v-for="comment in reviewComments"
         :key="comment.id"
         class="review-comment"
         :class="comment.severity"
@@ -842,25 +868,73 @@ defineExpose({ testExpert, cancelStream })
 .agent-panel {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
 }
-.panel-header {
+.agent-command {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-panel) 84%, transparent);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.035) inset, var(--shadow-sm);
+}
+.command-top {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--sp-3);
 }
-.panel-header h3 {
-  font-size: 1rem;
+.command-heading {
+  min-width: 0;
+}
+.command-kicker {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-tertiary);
+}
+.command-heading h3 {
+  font-size: var(--text-lg);
   font-weight: 800;
   margin: 0;
+  color: var(--text);
 }
-.panel-actions {
+.unit-context {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg) 74%, transparent);
+}
+.unit-context.muted {
+  opacity: 0.65;
+}
+.unit-ordinal {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.unit-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+.primary-action {
+  display: flex;
 }
 .link-configure {
+  flex: 0 0 auto;
   font-size: var(--text-xs);
   color: var(--text-tertiary);
   transition: color var(--transition);
@@ -870,8 +944,9 @@ defineExpose({ testExpert, cancelStream })
   text-decoration: none;
 }
 .btn-generate {
-  height: 40px;
-  padding: 0 18px;
+  width: 100%;
+  height: 44px;
+  padding: 0 16px;
   background: var(--accent);
   color: var(--text-inverse);
   border: 1px solid var(--accent);
@@ -894,8 +969,9 @@ defineExpose({ testExpert, cancelStream })
   box-shadow: 0 14px 30px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 .btn-cancel-stream {
-  height: 40px;
-  padding: 0 18px;
+  width: 100%;
+  height: 44px;
+  padding: 0 16px;
   background: var(--status-error);
   color: var(--text-inverse);
   border: 1px solid var(--status-error);
@@ -911,28 +987,36 @@ defineExpose({ testExpert, cancelStream })
 }
 
 .quick-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 .quick-actions button {
-  flex: 1;
-  min-height: 52px;
-  padding: 0 16px;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 10px;
   border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
-  border-radius: 14px;
+  border-radius: 10px;
   background: color-mix(in srgb, var(--bg-panel) 86%, transparent);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   font-weight: 720;
   color: var(--text-secondary);
-  text-align: left;
+  text-align: center;
+  white-space: nowrap;
   box-shadow: 0 1px 0 rgba(255,255,255,0.035) inset, var(--shadow-sm);
-  transition: background var(--transition), border-color var(--transition), color var(--transition);
+  transition: background var(--transition), border-color var(--transition), color var(--transition), opacity var(--transition);
 }
 .quick-actions button:hover {
   background: color-mix(in srgb, var(--accent-subtle) 72%, var(--bg-panel));
   border-color: var(--border-focus);
   color: var(--accent);
+}
+.quick-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+.workflow-section {
+  min-width: 0;
 }
 
 .section-label {

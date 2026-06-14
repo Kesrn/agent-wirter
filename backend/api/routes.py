@@ -26,18 +26,20 @@ from models.generation_record import GenerationRecord
 from models.evaluation import EvaluationDataset, EvaluationCase, EvaluationRun, EvaluationResult
 from models.world_entry import WorldEntry
 from models.character import Character
+from models.character_event import CharacterEvent
 from models.character_relation import CharacterRelation
 from models.outline import Outline
 from models.hidden_thread import HiddenThread
 from schemas.api import (
-    ProjectCreate, ProjectResponse,
+    ProjectCreate, ProjectUpdate, ProjectResponse,
     TxtImportResponse,
     ExpertCreate, ExpertUpdate, ExpertResponse,
     ChapterCreate, ChapterResponse, ChapterUpdate,
     ChapterStructureExtractRequest, ChapterStructureExtractResponse,
     ChapterVersionResponse, ChapterVersionListItemResponse, ChapterVersionDiffRequest, ChapterVersionDiffResponse,
     WorldEntryCreate, WorldEntryUpdate, WorldEntryResponse,
-    CharacterCreate, CharacterUpdate, CharacterResponse,
+    CharacterCreate, CharacterUpdate, CharacterMergeRequest, CharacterResponse,
+    CharacterEventUpsert, CharacterEventResponse,
     CharacterRelationCreate, CharacterRelationUpdate, CharacterRelationResponse,
     OutlineCreate, OutlineUpdate, OutlineResponse,
     HiddenThreadCreate, HiddenThreadUpdate, HiddenThreadResponse,
@@ -67,9 +69,10 @@ from services.document_save import save_document_content
 from services.txt_import import decode_txt_bytes, split_txt_into_chapters, build_import_meta
 from services.structure_extraction import (
     apply_structure_extraction,
+    build_fallback_structure_from_chapter,
     build_structure_preview,
     extract_structure_with_provider,
-    normalize_structure_result,
+    filter_structure_targets,
 )
 from services.generation_record_service import (
     create_generation_record,
@@ -270,6 +273,7 @@ async def _delete_project_tree(project_id: uuid.UUID, db: AsyncSession) -> None:
     await db.execute(delete(GenerationRecord).where(GenerationRecord.project_id == project_id))
     await db.execute(delete(ChapterVersion).where(ChapterVersion.chapter_id.in_(chapter_ids)))
     await db.execute(delete(DocumentVersion).where(DocumentVersion.document_id.in_(document_ids)))
+    await db.execute(delete(CharacterEvent).where(CharacterEvent.project_id == project_id))
     await db.execute(delete(CharacterRelation).where(CharacterRelation.project_id == project_id))
     await db.execute(delete(Outline).where(Outline.project_id == project_id))
     await db.execute(delete(HiddenThread).where(HiddenThread.project_id == project_id))
@@ -384,6 +388,7 @@ async def create_project(
     project = Project(
         title=req.title,
         description=req.description,
+        overall_outline=req.overall_outline,
         genre=(req.genre or "").strip() or None,
         style=(req.style or "").strip() or None,
         target_words=req.target_words,
@@ -455,6 +460,7 @@ async def import_txt_project(
     project = Project(
         title=project_title,
         description=(description or "").strip() or None,
+        overall_outline=None,
         target_words=target_words or 200000,
         mode="novel",
         owner_id=user.id,
@@ -520,6 +526,23 @@ async def get_project(
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
+    return project
+
+
+@router.patch("/projects/{project_id}", response_model=ProjectResponse)
+async def update_project(
+    project_id: str,
+    req: ProjectUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    project = await _verify_project_owner(uid, user.id, db)
+    update_data = req.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(project, field, value)
+    await db.commit()
+    await db.refresh(project)
     return project
 
 
@@ -1052,7 +1075,7 @@ async def extract_chapter_structure(
     if not (chapter.content or "").strip() and req.extraction is None:
         raise HTTPException(status_code=400, detail="章节正文为空，无法提炼")
 
-    extraction = normalize_structure_result(req.extraction) if req.extraction is not None else None
+    extraction = filter_structure_targets(req.extraction, req.targets) if req.extraction is not None else None
     if extraction is None:
         extra_context = None
         if req.include_existing_context:
@@ -1065,11 +1088,23 @@ async def extract_chapter_structure(
                 project_title=project.title,
                 extra_context=extra_context,
             )
+            extraction = filter_structure_targets(extraction, req.targets)
         except LLMConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             logger.exception("章节结构提炼失败")
             raise HTTPException(status_code=502, detail="模型服务暂时不可用，请检查模型配置或稍后重试") from exc
+
+    if _structure_extraction_needs_fallback(extraction, req.targets):
+        char_result = await db.execute(
+            select(Character).where(Character.project_id == uid).order_by(Character.created_at.asc()).limit(80)
+        )
+        fallback = build_fallback_structure_from_chapter(
+            chapter,
+            existing_characters=char_result.scalars().all(),
+            targets=req.targets,
+        )
+        extraction = _merge_structure_fallback(extraction, fallback, req.targets)
 
     preview = build_structure_preview(extraction)
     applied = None
@@ -1088,6 +1123,34 @@ async def extract_chapter_structure(
         "preview": preview,
         "applied": applied,
     }
+
+
+def _structure_extraction_is_empty(extraction: dict) -> bool:
+    return not any(bool(value) for value in (extraction or {}).values())
+
+
+def _structure_extraction_needs_fallback(extraction: dict, targets: list[str]) -> bool:
+    fallback_targets = {"outlines", "characters", "character_events"}
+    requested = set(targets or [])
+    if not requested:
+        requested = fallback_targets
+    return any(
+        target in requested and not (extraction or {}).get(target)
+        for target in fallback_targets
+    )
+
+
+def _merge_structure_fallback(extraction: dict, fallback: dict, targets: list[str]) -> dict:
+    requested = set(targets or [])
+    merged = dict(extraction or {})
+    for key, value in (fallback or {}).items():
+        if requested and key not in requested:
+            continue
+        if key not in {"outlines", "characters", "character_events"}:
+            continue
+        if not merged.get(key) and value:
+            merged[key] = value
+    return merged
 
 
 @router.delete("/projects/{project_id}/chapters/{sequence_number}")
@@ -1143,6 +1206,7 @@ async def create_world_entry(
         project_id=uid,
         title=req.title,
         category=req.category,
+        scope_type=req.scope_type,
         content=req.content,
         rules=req.rules,
         confidence=req.confidence,
@@ -1250,6 +1314,7 @@ async def create_character(
         project_id=uid,
         name=req.name,
         role_type=req.role_type,
+        scope_type=req.scope_type,
         profile=req.profile,
         faction=req.faction,
         metadata_=req.metadata_,
@@ -1302,6 +1367,148 @@ async def update_character(
     return character
 
 
+@router.post("/projects/{project_id}/characters/{character_id}/merge", response_model=CharacterResponse)
+async def merge_character(
+    project_id: str,
+    character_id: str,
+    req: CharacterMergeRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    source_id = _to_uuid(character_id)
+    target_id = req.target_character_id
+    if source_id == target_id:
+        raise HTTPException(status_code=400, detail="不能合并到同一个角色")
+
+    await _verify_project_owner(uid, user.id, db)
+    result = await db.execute(
+        select(Character).where(Character.project_id == uid, Character.id.in_([source_id, target_id]))
+    )
+    characters = {item.id: item for item in result.scalars().all()}
+    source = characters.get(source_id)
+    target = characters.get(target_id)
+    if not source or not target:
+        raise HTTPException(status_code=404, detail="角色不存在")
+
+    if not target.profile and source.profile:
+        target.profile = source.profile
+    elif source.profile and source.profile not in (target.profile or ""):
+        target.profile = f"{target.profile}\n\n合并自「{source.name}」：{source.profile}" if target.profile else source.profile
+    if not target.faction and source.faction:
+        target.faction = source.faction
+
+    target.metadata_ = _merge_character_metadata(target.metadata_, source.metadata_, source.name)
+    target.appearance_count = max(target.appearance_count or 0, source.appearance_count or 0)
+
+    await _merge_character_events(db, uid, source_id, target_id)
+    await _merge_character_relations(db, uid, source_id, target_id)
+    await db.delete(source)
+    await db.flush()
+
+    event_count_result = await db.execute(
+        select(func.count()).select_from(CharacterEvent).where(
+            CharacterEvent.project_id == uid,
+            CharacterEvent.character_id == target_id,
+            CharacterEvent.appearance_type != "absent",
+        )
+    )
+    target.appearance_count = max(target.appearance_count or 0, int(event_count_result.scalar_one() or 0))
+
+    await db.commit()
+    await db.refresh(target)
+
+    embed_text = f"{target.name} {target.profile or ''}"
+    background_tasks.add_task(_update_embedding_bg, Character, target.id, embed_text)
+    return target
+
+
+def _merge_character_metadata(target_meta: dict | None, source_meta: dict | None, source_name: str) -> dict:
+    merged = dict(target_meta or {})
+    for key, value in (source_meta or {}).items():
+        merged.setdefault(key, value)
+    aliases = list(merged.get("aliases") or [])
+    if source_name not in aliases:
+        aliases.append(source_name)
+    merged["aliases"] = aliases
+    return merged
+
+
+async def _merge_character_events(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    source_id: uuid.UUID,
+    target_id: uuid.UUID,
+) -> None:
+    source_result = await db.execute(
+        select(CharacterEvent).where(CharacterEvent.project_id == project_id, CharacterEvent.character_id == source_id)
+    )
+    target_result = await db.execute(
+        select(CharacterEvent).where(CharacterEvent.project_id == project_id, CharacterEvent.character_id == target_id)
+    )
+    target_by_chapter = {event.chapter_sequence_number: event for event in target_result.scalars().all()}
+    for source_event in source_result.scalars().all():
+        target_event = target_by_chapter.get(source_event.chapter_sequence_number)
+        if target_event is None:
+            source_event.character_id = target_id
+            target_by_chapter[source_event.chapter_sequence_number] = source_event
+            continue
+
+        target_event.appearance_type = _stronger_appearance_type(target_event.appearance_type, source_event.appearance_type)
+        target_event.appeared = target_event.appeared or source_event.appeared
+        target_event.event_summary = _merge_optional_text(target_event.event_summary, source_event.event_summary)
+        target_event.actions = _merge_string_lists(target_event.actions, source_event.actions)
+        target_event.state_change = _merge_optional_text(target_event.state_change, source_event.state_change)
+        target_event.location = target_event.location or source_event.location
+        target_event.emotion = target_event.emotion or source_event.emotion
+        target_event.importance = max(target_event.importance or 0, source_event.importance or 0)
+        await db.delete(source_event)
+
+
+async def _merge_character_relations(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    source_id: uuid.UUID,
+    target_id: uuid.UUID,
+) -> None:
+    relation_result = await db.execute(
+        select(CharacterRelation).where(
+            CharacterRelation.project_id == project_id,
+            (CharacterRelation.source_character_id == source_id) | (CharacterRelation.target_character_id == source_id),
+        )
+    )
+    for relation in relation_result.scalars().all():
+        if relation.source_character_id == source_id:
+            relation.source_character_id = target_id
+        if relation.target_character_id == source_id:
+            relation.target_character_id = target_id
+        if relation.source_character_id == relation.target_character_id:
+            await db.delete(relation)
+
+
+def _stronger_appearance_type(a: str | None, b: str | None) -> str:
+    order = {"absent": 0, "mentioned": 1, "appeared": 2}
+    return a if order.get(a or "absent", 0) >= order.get(b or "absent", 0) else (b or "absent")
+
+
+def _merge_optional_text(a: str | None, b: str | None) -> str | None:
+    if not a:
+        return b
+    if not b or b in a:
+        return a
+    return f"{a}\n{b}"
+
+
+def _merge_string_lists(a: list | None, b: list | None) -> list | None:
+    merged: list[str] = []
+    for value in list(a or []) + list(b or []):
+        text = str(value).strip()
+        if text and text not in merged:
+            merged.append(text)
+    return merged or None
+
+
 @router.delete("/projects/{project_id}/characters/{character_id}", status_code=204)
 async def delete_character(
     project_id: str,
@@ -1322,6 +1529,139 @@ async def delete_character(
     await db.delete(character)
     await db.commit()
     return None
+
+
+# ==================== 角色章节轨迹 ====================
+
+@router.get("/projects/{project_id}/character-events", response_model=list[CharacterEventResponse])
+async def list_character_events(
+    project_id: str,
+    character_id: str | None = Query(default=None),
+    sequence_number: int | None = Query(default=None, ge=1),
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    stmt = select(CharacterEvent).where(CharacterEvent.project_id == uid)
+    if character_id:
+        stmt = stmt.where(CharacterEvent.character_id == _to_uuid(character_id))
+    if sequence_number is not None:
+        stmt = stmt.where(CharacterEvent.chapter_sequence_number == sequence_number)
+    result = await db.execute(stmt.order_by(CharacterEvent.chapter_sequence_number.asc(), CharacterEvent.created_at.asc()))
+    return result.scalars().all()
+
+
+@router.get("/projects/{project_id}/characters/{character_id}/chapter-events", response_model=list[CharacterEventResponse])
+async def list_character_chapter_events(
+    project_id: str,
+    character_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    cid = _to_uuid(character_id)
+    await _verify_project_owner(uid, user.id, db)
+    await _get_project_character(uid, cid, db)
+    result = await db.execute(
+        select(CharacterEvent)
+        .where(CharacterEvent.project_id == uid, CharacterEvent.character_id == cid)
+        .order_by(CharacterEvent.chapter_sequence_number.asc())
+    )
+    return result.scalars().all()
+
+
+@router.put("/projects/{project_id}/characters/{character_id}/chapter-events/{sequence_number}", response_model=CharacterEventResponse)
+async def upsert_character_chapter_event(
+    project_id: str,
+    character_id: str,
+    sequence_number: int,
+    req: CharacterEventUpsert,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    cid = _to_uuid(character_id)
+    await _verify_project_owner(uid, user.id, db)
+    character = await _get_project_character(uid, cid, db)
+
+    result = await db.execute(
+        select(CharacterEvent).where(
+            CharacterEvent.project_id == uid,
+            CharacterEvent.character_id == cid,
+            CharacterEvent.chapter_sequence_number == sequence_number,
+        )
+    )
+    event = result.scalar_one_or_none()
+    if event is None:
+        event = CharacterEvent(project_id=uid, character_id=cid, chapter_sequence_number=sequence_number)
+        db.add(event)
+
+    event.appearance_type = req.appearance_type
+    event.appeared = req.appearance_type == "appeared"
+    event.event_summary = req.event_summary
+    event.actions = req.actions
+    event.state_change = req.state_change
+    event.location = req.location
+    event.emotion = req.emotion
+    event.importance = req.importance
+
+    await db.flush()
+    await _refresh_character_appearance_count(db, character)
+    await db.commit()
+    await db.refresh(event)
+    return event
+
+
+@router.delete("/projects/{project_id}/characters/{character_id}/chapter-events/{sequence_number}", status_code=204)
+async def delete_character_chapter_event(
+    project_id: str,
+    character_id: str,
+    sequence_number: int,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    cid = _to_uuid(character_id)
+    await _verify_project_owner(uid, user.id, db)
+    character = await _get_project_character(uid, cid, db)
+    result = await db.execute(
+        select(CharacterEvent).where(
+            CharacterEvent.project_id == uid,
+            CharacterEvent.character_id == cid,
+            CharacterEvent.chapter_sequence_number == sequence_number,
+        )
+    )
+    event = result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=404, detail="角色章节事件不存在")
+
+    await db.delete(event)
+    await db.flush()
+    await _refresh_character_appearance_count(db, character)
+    await db.commit()
+    return None
+
+
+async def _get_project_character(project_id: uuid.UUID, character_id: uuid.UUID, db: AsyncSession) -> Character:
+    result = await db.execute(
+        select(Character).where(Character.id == character_id, Character.project_id == project_id)
+    )
+    character = result.scalar_one_or_none()
+    if not character:
+        raise HTTPException(status_code=404, detail="角色不存在")
+    return character
+
+
+async def _refresh_character_appearance_count(db: AsyncSession, character: Character) -> None:
+    result = await db.execute(
+        select(func.count(CharacterEvent.id)).where(
+            CharacterEvent.project_id == character.project_id,
+            CharacterEvent.character_id == character.id,
+            CharacterEvent.appearance_type.in_(["appeared", "mentioned"]),
+        )
+    )
+    character.appearance_count = int(result.scalar_one() or 0)
 
 
 # ==================== 角色关系 ====================

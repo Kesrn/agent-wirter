@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Project, Chapter, DocumentUnit, Expert, WorkflowStep, ReviewComment, CharacterRelation, ProjectMode, ExpertCreatePayload, WorldEntry, Character, OutlineItem, HiddenThread, ChapterVersion, DocumentRevision, DiffHunk, GenerationRecord } from '../api/types'
+import type { Project, Chapter, DocumentUnit, Expert, WorkflowStep, ReviewComment, CharacterRelation, CharacterEvent, ProjectMode, ExpertCreatePayload, WorldEntry, Character, OutlineItem, HiddenThread, ChapterVersion, DocumentRevision, DiffHunk, GenerationRecord } from '../api/types'
 import type { ApiProject, ApiChapter, ApiDocument, ApiExpert, ApiWorldEntry, ApiCharacter, ApiCharacterRelation, ApiOutline, ApiHiddenThread, ApiChapterVersion, ApiDocumentVersion, ApiGenerationRecordListItem, ApiGenerationRecord } from '../api/types'
-import type { CharacterRelationCreatePayload, CharacterRelationUpdatePayload, OutlineUpdatePayload, HiddenThreadUpdatePayload, WorldEntryCreatePayload, WorldEntryUpdatePayload, CharacterCreatePayload, CharacterUpdatePayload } from '../api/types'
+import type { CharacterRelationCreatePayload, CharacterRelationUpdatePayload, CharacterEventUpsertPayload, OutlineUpdatePayload, HiddenThreadUpdatePayload, WorldEntryCreatePayload, WorldEntryUpdatePayload, CharacterCreatePayload, CharacterUpdatePayload, CharacterMergePayload, ProjectUpdatePayload } from '../api/types'
 import { api, ApiError } from '../api/client'
 import { MOCK_PROJECTS, MOCK_CHAPTERS, DEFAULT_EXPERTS, MOCK_REVIEW_COMMENTS, MOCK_CHARACTER_RELATIONS, MOCK_WORLD_ENTRIES, MOCK_CHARACTERS, MOCK_OUTLINE, MOCK_HIDDEN_THREADS } from '../mock/data'
 
@@ -14,6 +14,7 @@ function apiProjectToProject(ap: ApiProject): Project {
     title: ap.title,
     genre: ap.genre ?? '',
     style: ap.style ?? '',
+    overall_outline: ap.overall_outline ?? '',
     status: ap.status,
     mode: ap.mode as ProjectMode,
     description: ap.description ?? '',
@@ -132,9 +133,16 @@ export const useProjectStore = defineStore('project', () => {
     if (currentProjectId.value === projectId) currentProjectId.value = null
   }
 
+  async function updateProjectRemote(projectId: string, payload: ProjectUpdatePayload): Promise<Project> {
+    const updated = apiProjectToProject(await api.updateProject(projectId, payload))
+    const idx = projects.value.findIndex(p => p.id === projectId)
+    if (idx !== -1) projects.value[idx] = updated
+    return updated
+  }
+
   return {
     projects, currentProjectId, currentProject, loadError,
-    setCurrent, addProject, createProject, loadProjects, createProjectRemote, deleteProjectRemote,
+    setCurrent, addProject, createProject, loadProjects, createProjectRemote, updateProjectRemote, deleteProjectRemote,
   }
 })
 
@@ -617,6 +625,7 @@ function apiWorldEntryToWorldEntry(awe: ApiWorldEntry): WorldEntry {
     project_id: awe.project_id,
     title: awe.title,
     category: awe.category,
+    scope_type: awe.scope_type === 'chapter' ? 'chapter' : 'global',
     content: awe.content,
     rules: awe.rules,
     confidence: (awe.confidence === 'low' || awe.confidence === 'medium' || awe.confidence === 'high')
@@ -701,6 +710,12 @@ const ROLE_TYPE_MAP: Record<string, Character['role_type']> = {
   supporting: 'supporting',
   minor: 'minor',
 }
+const CHARACTER_SCOPE_MAP: Record<string, Character['scope_type']> = {
+  core: 'core',
+  recurring: 'recurring',
+  chapter: 'chapter',
+  cameo: 'cameo',
+}
 
 function apiCharacterToCharacter(ac: ApiCharacter): Character {
   return {
@@ -708,6 +723,7 @@ function apiCharacterToCharacter(ac: ApiCharacter): Character {
     project_id: ac.project_id,
     name: ac.name,
     role_type: ROLE_TYPE_MAP[ac.role_type] ?? 'minor',
+    scope_type: CHARACTER_SCOPE_MAP[ac.scope_type] ?? 'recurring',
     profile: ac.profile,
     faction: ac.faction,
     appearance_count: ac.appearance_count,
@@ -767,6 +783,22 @@ export const useCharacterStore = defineStore('character', () => {
     }
   }
 
+  async function mergeCharacter(projectId: string, characterId: string, payload: CharacterMergePayload) {
+    try {
+      const ac = await api.mergeCharacter(projectId, characterId, payload)
+      const merged = apiCharacterToCharacter(ac)
+      characters.value = characters.value.filter(c => c.id !== characterId)
+      const idx = characters.value.findIndex(c => c.id === merged.id)
+      if (idx !== -1) characters.value[idx] = merged
+      else characters.value.push(merged)
+      return merged
+    } catch (e: unknown) {
+      const msg = e instanceof ApiError ? e.message : '合并角色失败'
+      loadError.value = msg
+      throw e
+    }
+  }
+
   async function removeCharacter(projectId: string, characterId: string) {
     try {
       await api.deleteCharacter(projectId, characterId)
@@ -778,7 +810,56 @@ export const useCharacterStore = defineStore('character', () => {
     }
   }
 
-  return { characters, loading, loadError, charactersForProject, loadCharacters, addCharacter, updateCharacter, removeCharacter }
+  return { characters, loading, loadError, charactersForProject, loadCharacters, addCharacter, updateCharacter, mergeCharacter, removeCharacter }
+})
+
+// ─── Character event store ───
+export const useCharacterEventStore = defineStore('characterEvent', () => {
+  const events = ref<CharacterEvent[]>([])
+  const loading = ref(false)
+  const loadError = ref('')
+
+  function eventsForProject(projectId: string): CharacterEvent[] {
+    return events.value.filter(event => event.project_id === projectId)
+  }
+
+  function eventsForCharacter(projectId: string, characterId: string): CharacterEvent[] {
+    return events.value
+      .filter(event => event.project_id === projectId && event.character_id === characterId)
+      .sort((a, b) => a.chapter_sequence_number - b.chapter_sequence_number)
+  }
+
+  async function loadCharacterEvents(projectId: string) {
+    loading.value = true
+    loadError.value = ''
+    try {
+      const list = await api.listCharacterEvents(projectId)
+      const others = events.value.filter(event => event.project_id !== projectId)
+      events.value = [...others, ...list]
+    } catch (e: unknown) {
+      loadError.value = e instanceof ApiError ? e.message : '加载角色事件失败'
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function upsertCharacterEvent(projectId: string, characterId: string, sequenceNumber: number, payload: CharacterEventUpsertPayload) {
+    const updated = await api.upsertCharacterEvent(projectId, characterId, sequenceNumber, payload)
+    const idx = events.value.findIndex(event => event.id === updated.id)
+    if (idx !== -1) events.value[idx] = updated
+    else events.value.push(updated)
+    return updated
+  }
+
+  async function removeCharacterEvent(projectId: string, characterId: string, sequenceNumber: number) {
+    await api.deleteCharacterEvent(projectId, characterId, sequenceNumber)
+    events.value = events.value.filter(event => {
+      return !(event.project_id === projectId && event.character_id === characterId && event.chapter_sequence_number === sequenceNumber)
+    })
+  }
+
+  return { events, loading, loadError, eventsForProject, eventsForCharacter, loadCharacterEvents, upsertCharacterEvent, removeCharacterEvent }
 })
 
 // ─── Outline store ───

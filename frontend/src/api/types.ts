@@ -96,6 +96,7 @@ export interface Project {
   title: string
   genre: string
   style: string
+  overall_outline: string
   status: string
   mode: ProjectMode
   description: string
@@ -160,6 +161,7 @@ export interface WorldEntry {
   project_id: string
   title: string
   category: string
+  scope_type: 'global' | 'chapter'
   content: string
   rules: Record<string, unknown> | null
   confidence: 'low' | 'medium' | 'high'
@@ -173,6 +175,7 @@ export interface Character {
   project_id: string
   name: string
   role_type: 'protagonist' | 'antagonist' | 'supporting' | 'minor'
+  scope_type: 'core' | 'recurring' | 'chapter' | 'cameo'
   profile: string
   faction: string
   appearance_count: number
@@ -186,6 +189,25 @@ export interface CharacterRelation {
   source_character_id: string
   target_character_id: string
   description: string
+}
+
+export type CharacterAppearanceType = 'appeared' | 'mentioned' | 'absent'
+
+export interface CharacterEvent {
+  id: string
+  project_id: string
+  character_id: string
+  chapter_sequence_number: number
+  appearance_type: CharacterAppearanceType
+  appeared: boolean
+  event_summary: string | null
+  actions: string[] | null
+  state_change: string | null
+  location: string | null
+  emotion: string | null
+  importance: number
+  created_at: string
+  updated_at: string
 }
 
 /** 大纲条目 (UI / store) — mapped from ApiOutline via apiOutlineToOutlineItem */
@@ -233,6 +255,7 @@ export interface ApiProject {
   id: string
   title: string
   description: string | null
+  overall_outline: string | null
   genre: string | null
   style: string | null
   target_words: number
@@ -291,6 +314,7 @@ export interface ApiWorldEntry {
   project_id: string
   title: string
   category: string
+  scope_type: 'global' | 'chapter'
   content: string
   rules: Record<string, unknown> | null
   confidence: string
@@ -304,6 +328,7 @@ export interface ApiCharacter {
   project_id: string
   name: string
   role_type: string
+  scope_type: 'core' | 'recurring' | 'chapter' | 'cameo'
   profile: string
   faction: string
   appearance_count: number
@@ -319,6 +344,23 @@ export interface ApiCharacterRelation {
   source_character_id: string
   target_character_id: string
   description: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ApiCharacterEvent {
+  id: string
+  project_id: string
+  character_id: string
+  chapter_sequence_number: number
+  appearance_type: CharacterAppearanceType
+  appeared: boolean
+  event_summary: string | null
+  actions: string[] | null
+  state_change: string | null
+  location: string | null
+  emotion: string | null
+  importance: number
   created_at: string
   updated_at: string
 }
@@ -352,6 +394,7 @@ export interface ApiHiddenThread {
 export interface ProjectCreatePayload {
   title: string
   description?: string
+  overall_outline?: string
   genre?: string
   style?: string
   target_words?: number
@@ -386,6 +429,16 @@ export interface ChapterCreatePayload {
   title: string
   outline?: string
   sequence_number?: number
+}
+
+export interface ProjectUpdatePayload {
+  title?: string
+  description?: string | null
+  overall_outline?: string | null
+  genre?: string | null
+  style?: string | null
+  target_words?: number
+  status?: string
 }
 
 export interface DocumentCreatePayload {
@@ -427,6 +480,7 @@ export interface ExpertCreatePayload {
 export interface WorldEntryCreatePayload {
   title: string
   category?: string
+  scope_type?: 'global' | 'chapter'
   content: string
   rules?: Record<string, unknown> | null
   confidence?: 'low' | 'medium' | 'high'
@@ -435,6 +489,7 @@ export interface WorldEntryCreatePayload {
 export interface WorldEntryUpdatePayload {
   title?: string
   category?: string
+  scope_type?: 'global' | 'chapter'
   content?: string
   rules?: Record<string, unknown> | null
   confidence?: 'low' | 'medium' | 'high'
@@ -443,6 +498,7 @@ export interface WorldEntryUpdatePayload {
 export interface CharacterCreatePayload {
   name: string
   role_type: 'protagonist' | 'antagonist' | 'supporting' | 'minor'
+  scope_type?: 'core' | 'recurring' | 'chapter' | 'cameo'
   profile?: string
   faction?: string
   appearance_count?: number
@@ -452,9 +508,14 @@ export interface CharacterCreatePayload {
 export interface CharacterUpdatePayload {
   name?: string
   role_type?: 'protagonist' | 'antagonist' | 'supporting' | 'minor'
+  scope_type?: 'core' | 'recurring' | 'chapter' | 'cameo'
   profile?: string
   faction?: string
   metadata?: Record<string, unknown> | null
+}
+
+export interface CharacterMergePayload {
+  target_character_id: string
 }
 
 export interface CharacterRelationCreatePayload {
@@ -467,6 +528,16 @@ export interface CharacterRelationUpdatePayload {
   source_character_id?: string
   target_character_id?: string
   description?: string
+}
+
+export interface CharacterEventUpsertPayload {
+  appearance_type?: CharacterAppearanceType
+  event_summary?: string | null
+  actions?: string[] | null
+  state_change?: string | null
+  location?: string | null
+  emotion?: string | null
+  importance?: number
 }
 
 export interface OutlineCreatePayload {
@@ -509,6 +580,7 @@ export interface ExtractedOutline {
 export interface ExtractedCharacter {
   name: string
   role_type: StructureRoleType
+  scope_type?: 'core' | 'recurring' | 'chapter' | 'cameo'
   profile?: string | null
   faction?: string | null
   appearance_count?: number
@@ -518,6 +590,7 @@ export interface ExtractedCharacter {
 export interface ExtractedWorldEntry {
   title: string
   category?: string
+  scope_type?: 'global' | 'chapter'
   content: string
   rules?: Record<string, unknown> | null
   confidence?: StructureConfidence
@@ -535,12 +608,25 @@ export interface ExtractedCharacterRelation {
   description: string
 }
 
+export interface ExtractedCharacterEvent {
+  character_name: string
+  sequence_number: number
+  appearance_type?: CharacterAppearanceType
+  event_summary?: string | null
+  actions?: string[] | null
+  state_change?: string | null
+  location?: string | null
+  emotion?: string | null
+  importance?: number
+}
+
 export interface StructureExtractPayload {
   outlines?: ExtractedOutline[]
   characters?: ExtractedCharacter[]
   world_entries?: ExtractedWorldEntry[]
   hidden_threads?: ExtractedHiddenThread[]
   character_relations?: ExtractedCharacterRelation[]
+  character_events?: ExtractedCharacterEvent[]
 }
 
 export interface ChapterStructureExtractRequest {
