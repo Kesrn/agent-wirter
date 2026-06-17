@@ -5,7 +5,7 @@ import ToastMessage from './components/ToastMessage.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
 
 const route = useRoute()
-const showThemeToggle = computed(() => !['login', 'register'].includes(String(route.name)))
+const showThemeToggle = computed(() => !['login', 'register', 'knowledge'].includes(String(route.name)))
 const isDesktopRuntime = ref(false)
 const desktopInfo = ref<DesktopInfo | null>(null)
 const backendStatus = ref<BackendStatus | null>(null)

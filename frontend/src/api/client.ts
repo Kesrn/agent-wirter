@@ -416,6 +416,150 @@ export const api = {
       body: JSON.stringify(selectedIds ?? {}),
     }),
 
+  // ─── Knowledge Library ───
+  listKnowledgeSources: (projectId: string, params?: {
+    source_type?: string; q?: string; sort?: string
+  }) => {
+    const qs = new URLSearchParams()
+    if (params?.source_type) qs.set('source_type', params.source_type)
+    if (params?.q) qs.set('q', params.q)
+    if (params?.sort) qs.set('sort', params.sort)
+    const query = qs.toString()
+	    return request<Array<{
+	      id: string; project_id: string; title: string; source_type: string
+	      content_preview: string; content_truncated: boolean
+	      summary: string | null; key_facts: string[] | null
+	      constraints: string[] | null; characters: string[] | null; keywords: string[] | null
+	      tags: string[] | null; always_inject: boolean; chunk_count: number; token_count: number
+	      created_at: string; updated_at: string
+    }>>(`/projects/${projectId}/knowledge/sources${query ? `?${query}` : ''}`)
+  },
+
+  getKnowledgeSource: (projectId: string, sourceId: string) =>
+    request<{
+      id: string; project_id: string; title: string; source_type: string
+      content: string; summary: string | null; key_facts: string[] | null
+      constraints: string[] | null; characters: string[] | null; keywords: string[] | null
+      tags: string[] | null; always_inject: boolean; chunk_count: number; token_count: number
+      created_at: string; updated_at: string
+    }>(`/projects/${projectId}/knowledge/sources/${sourceId}`),
+
+  createKnowledgeSource: (projectId: string, data: {
+    title: string; source_type?: string; content?: string
+    tags?: string[]; always_inject?: boolean
+  }) =>
+    request<{ id: string }>(`/projects/${projectId}/knowledge/sources`, {
+      method: 'POST', body: JSON.stringify(data),
+    }),
+
+  updateKnowledgeSource: (projectId: string, sourceId: string, data: {
+    title?: string; source_type?: string; content?: string
+    tags?: string[]; always_inject?: boolean
+  }) =>
+    request<{ id: string }>(`/projects/${projectId}/knowledge/sources/${sourceId}`, {
+      method: 'PATCH', body: JSON.stringify(data),
+    }),
+
+  deleteKnowledgeSource: (projectId: string, sourceId: string) =>
+    request<void>(`/projects/${projectId}/knowledge/sources/${sourceId}`, { method: 'DELETE' }),
+
+  reindexSource: (projectId: string, sourceId: string) =>
+    request<{ source_id: string; chunk_count: number }>(
+      `/projects/${projectId}/knowledge/sources/${sourceId}/reindex`, { method: 'POST' },
+    ),
+
+  summarizeSource: (projectId: string, sourceId: string) =>
+    request<{ source_id: string; chunk_count: number; summary: string; key_facts: string[] }>(
+      `/projects/${projectId}/knowledge/sources/${sourceId}/summarize`, { method: 'POST' },
+    ),
+
+  listKnowledgeChunks: (projectId: string, sourceId: string, params?: { offset?: number; limit?: number }) => {
+    const qs = new URLSearchParams()
+    if (params?.offset !== undefined) qs.set('offset', String(params.offset))
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit))
+    const query = qs.toString()
+    return request<Array<{
+      id: string; source_id: string; chunk_index: number
+      content: string; summary: string | null; facts: string[] | null
+      constraints: string[] | null; keywords: string[] | null; token_count: number
+      created_at: string
+    }>>(`/projects/${projectId}/knowledge/sources/${sourceId}/chunks${query ? `?${query}` : ''}`)
+  },
+
+  listKnowledgeSessions: (projectId: string) =>
+    request<Array<{
+      id: string; project_id: string; title: string; summary: string | null
+      message_count: number; created_at: string; updated_at: string
+    }>>(`/projects/${projectId}/knowledge/sessions`),
+
+  createKnowledgeSession: (projectId: string) =>
+    request<{
+      id: string; project_id: string; title: string; summary: string | null
+      message_count: number; created_at: string; updated_at: string
+    }>(`/projects/${projectId}/knowledge/sessions`, { method: 'POST' }),
+
+  updateKnowledgeSession: (projectId: string, sessionId: string, data: { title?: string }) =>
+    request<{
+      id: string; project_id: string; title: string; summary: string | null
+      message_count: number; created_at: string; updated_at: string
+    }>(`/projects/${projectId}/knowledge/sessions/${sessionId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
+  deleteKnowledgeSession: (projectId: string, sessionId: string) =>
+    request<void>(`/projects/${projectId}/knowledge/sessions/${sessionId}`, {
+      method: 'DELETE',
+    }),
+
+  listKnowledgeSessionMessages: (projectId: string, sessionId: string) =>
+    request<Array<{
+      id: string; session_id: string; role: string; content: string
+      citations: Array<{
+        source_kind: string; source_id: string; chunk_id: string | null
+        title: string; snippet: string; evidence_type?: string; matched_query?: string; score?: number
+      }> | null
+      created_at: string
+    }>>(`/projects/${projectId}/knowledge/sessions/${sessionId}/messages`),
+
+  searchKnowledge: (projectId: string, query: string) =>
+    request<{ results: Array<{
+      source_kind: string; source_id: string; chunk_id: string
+      title: string; snippet: string; score: number
+    }> }>(`/projects/${projectId}/knowledge/search`, {
+      method: 'POST', body: JSON.stringify({ query }),
+    }),
+
+  askKnowledge: (projectId: string, data: {
+    question: string; conversation_id?: string; chapter_num?: number; include_structured?: boolean
+    include_web?: boolean
+  }) =>
+    request<{
+      answer: string; citations: Array<{
+        source_kind: string; source_id: string; chunk_id: string | null
+        title: string; snippet: string
+        url?: string; evidence_type?: string; matched_query?: string; score?: number
+      }>; conversation_id: string; conversation_summary_updated: boolean
+      query_plan?: { intent: string; entities: string[]; search_queries: string[] }
+      retrieval_stats?: { structured_hits: number; chunk_hits: number; web_hits?: number }
+    }>(`/projects/${projectId}/knowledge/ask`, {
+      method: 'POST', body: JSON.stringify(data),
+    }),
+
+  uploadKnowledgeFile: async (projectId: string, formData: FormData) => {
+    const res = await fetch(`${API_BASE_URL}/projects/${projectId}/knowledge/upload`, {
+      method: 'POST',
+      headers: formAuthHeaders(),
+      body: formData,
+    })
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      if (res.status === 401) { clearAuthSession(); redirectToLogin() }
+      throw new ApiError(res.status, parseApiError(res.status, body))
+    }
+    return res.json() as Promise<{ id: string; title: string; chunk_count: number }>
+  },
+
   // ─── Document Versions ───
   listDocumentVersions: (projectId: string, documentId: string) =>
     request<ApiDocumentVersion[]>(`/projects/${projectId}/documents/${documentId}/versions`),

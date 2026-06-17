@@ -1087,6 +1087,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
         </div>
       </div>
       <div class="top-right">
+        <router-link v-if="projectMode === 'novel'" class="top-btn top-btn-link" :to="`/projects/${projectId}/knowledge`">资料库</router-link>
         <router-link class="top-btn top-btn-link" :to="`/projects/${projectId}/evaluations`">评测集</router-link>
         <div class="export-group">
           <button class="top-btn" :disabled="exporting" @click="showExportMenu = !showExportMenu">{{ exporting ? '导出中...' : '导出' }}</button>

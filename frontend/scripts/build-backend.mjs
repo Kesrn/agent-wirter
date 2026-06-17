@@ -13,6 +13,29 @@ const pythonPath = process.platform === 'win32'
   ? path.join(backendRoot, 'venv', 'Scripts', 'python.exe')
   : path.join(backendRoot, 'venv', 'bin', 'python')
 
+const hiddenImports = [
+  'aiosqlite',
+  'sqlalchemy.dialects.sqlite.aiosqlite',
+  'docx',
+  'openpyxl',
+  'pypdf',
+  'lxml',
+  'lxml.etree',
+  'et_xmlfile',
+]
+
+const collectedPackages = [
+  'docx',
+  'openpyxl',
+  'pypdf',
+  'lxml',
+  'et_xmlfile',
+]
+
+function collectOptions(flag, values) {
+  return values.flatMap((value) => [flag, value])
+}
+
 async function ensurePyInstaller() {
   try {
     await execFileAsync(pythonPath, ['-m', 'PyInstaller', '--version'])
@@ -46,10 +69,9 @@ async function main() {
     path.join(frontendRoot, '.pyinstaller-spec'),
     '--add-data',
     `${path.join(backendRoot, 'skills')}${separator}skills`,
-    '--hidden-import',
-    'aiosqlite',
-    '--hidden-import',
-    'sqlalchemy.dialects.sqlite.aiosqlite',
+    ...collectOptions('--hidden-import', hiddenImports),
+    ...collectOptions('--collect-submodules', collectedPackages),
+    ...collectOptions('--collect-data', collectedPackages),
     path.join(backendRoot, 'desktop_server.py'),
   ]
 

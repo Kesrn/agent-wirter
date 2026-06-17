@@ -6,6 +6,7 @@ import Workspace from '../views/Workspace.vue'
 import AgentStudio from '../views/AgentStudio.vue'
 import Settings from '../views/Settings.vue'
 import EvaluationLab from '../views/EvaluationLab.vue'
+import KnowledgeLibrary from '../components/KnowledgeLibrary.vue'
 import { hasAuthSession } from '../utils/authSession'
 
 const router = createRouter({
@@ -16,6 +17,7 @@ const router = createRouter({
     { path: '/', redirect: () => hasAuthSession() ? '/projects' : '/login' },
     { path: '/projects', name: 'projects', component: ProjectList },
     { path: '/projects/:id', name: 'workspace', component: Workspace },
+    { path: '/projects/:id/knowledge', name: 'knowledge', component: KnowledgeLibrary, props: route => ({ projectId: route.params.id as string }) },
     { path: '/projects/:id/experts', name: 'experts', component: AgentStudio },
     { path: '/projects/:id/evaluations', name: 'evaluations', component: EvaluationLab },
     { path: '/settings', name: 'settings', component: Settings },
