@@ -63,6 +63,11 @@ class MockProvider(LLMProvider):
             or ("只输出严格 json" in prompt_lower and "character_relations" in prompt_lower)
             or ("world_entries" in prompt_lower and "hidden_threads" in prompt_lower)
         )
+        is_query_planner_request = (
+            "query planner" in prompt_lower
+            and "rewritten_question" in prompt_lower
+            and "sub_queries" in prompt_lower
+        )
         is_evaluation_judge_request = (
             "评测裁判" in prompt_lower
             or ("overall_score" in prompt_lower and "\"scores\"" in prompt_lower and "候选输出" in prompt_lower)
@@ -85,8 +90,21 @@ class MockProvider(LLMProvider):
                 },
                 ensure_ascii=False,
             )
+        if is_query_planner_request:
+            return self._mock_query_plan(user_prompt)
         if is_structure_extraction_request:
             return self._mock_structure_extraction(user_prompt)
+        is_knowledge_qa_request = (
+            "小说资料库的 ai 助手" in prompt_lower
+            or ("输出格式" in prompt_lower and "\"citations\"" in prompt_lower and "用户问题" in prompt_lower)
+            or ("## 用户问题" in user_prompt and (
+                "人物直接证据" in user_prompt
+                or "普通资料" in user_prompt
+                or "技能表 / 能力设定" in user_prompt
+            ))
+        )
+        if is_knowledge_qa_request:
+            return self._mock_knowledge_qa(user_prompt)
 
         if is_direction_request:
             # Direction/suggestion generation requests (step 1 only)
@@ -178,6 +196,96 @@ class MockProvider(LLMProvider):
             "表达上保持具体，少用空泛形容词，多给读者能立刻理解的例子。\n\n"
             "如果目标是转化，结尾不要停在总结，而要给出明确行动：了解更多、预约咨询、下载资料或开始试用。"
         )
+
+    def _mock_knowledge_qa(self, user_prompt: str) -> str:
+        question = ""
+        if "## 用户问题" in user_prompt:
+            question = user_prompt.rsplit("## 用户问题", 1)[1].strip().splitlines()[0].strip()
+
+        evidence_text = user_prompt.split("## 用户问题", 1)[0]
+        if "（未找到相关证据）" in evidence_text or not evidence_text.strip():
+            answer = "当前资料中没有找到足够证据回答这个问题。"
+        else:
+            known_systems = (
+                "雷霆系", "寒冰系", "火炎系", "凌水系", "圣光系",
+                "暗影系", "召唤系", "空间系", "混沌系", "治愈系", "亡灵系", "心灵系",
+                "诅咒系", "植物系", "音系", "毒系", "土系", "火系", "雷系", "冰系",
+                "水系", "风系", "光系",
+            )
+            normalize = {"雷霆系": "雷系", "寒冰系": "冰系", "火炎系": "火系", "凌水系": "水系", "圣光系": "光系"}
+            systems: list[str] = []
+            for raw in known_systems:
+                if raw not in evidence_text:
+                    continue
+                name = normalize.get(raw, raw)
+                if name not in systems:
+                    systems.append(name)
+            if "什么系" in question and systems:
+                answer = "根据当前资料，明确提到的法系包括：\n\n" + "\n".join(f"- {name}" for name in systems[:8])
+            else:
+                lines = [
+                    re.sub(r"^\s*-\s*\[[^\]]+\]\s*", "", line).strip()
+                    for line in evidence_text.splitlines()
+                    if line.strip().startswith("- [")
+                ]
+                summary = lines[0][:220] if lines else evidence_text.strip()[:220]
+                answer = f"根据当前资料片段：{summary}"
+
+        return json.dumps({"answer": answer, "citations": []}, ensure_ascii=False)
+
+    def _mock_query_plan(self, user_prompt: str) -> str:
+        question = ""
+        if "## 当前问题" in user_prompt:
+            question = user_prompt.split("## 当前问题", 1)[1].strip().splitlines()[0].strip()
+        try:
+            from services.knowledge_query_plan import build_knowledge_query_plan
+
+            plan = build_knowledge_query_plan(question)
+            intent_map = {
+                "ability": "character_ability",
+                "character_profile": "character_profile",
+                "character_by_ability": "character_by_ability",
+                "relationship": "relationship",
+                "worldbuilding": "worldbuilding",
+                "timeline": "timeline",
+                "plot": "plot_event",
+                "general": "general",
+            }
+            attributes = [entity for entity in plan.entities if entity.endswith("系")]
+            entities = [entity for entity in plan.entities if entity not in attributes]
+            payload = {
+                "rewritten_question": None,
+                "intent": intent_map.get(plan.intent, "general"),
+                "entities": entities,
+                "attributes": attributes,
+                "relation_targets": [],
+                "time_scope": None,
+                "sub_queries": plan.search_queries,
+                "required_terms": plan.required_terms,
+                "optional_terms": plan.keywords,
+                "evidence_policy": "基于资料片段回答。",
+                "answer_policy": "如资料不足则说明不足，不编造。",
+                "confidence": 0.1,
+            }
+            return json.dumps(payload, ensure_ascii=False)
+        except Exception:
+            return json.dumps(
+                {
+                    "rewritten_question": question,
+                    "intent": "general",
+                    "entities": [],
+                    "attributes": [],
+                    "relation_targets": [],
+                    "time_scope": None,
+                    "sub_queries": [question] if question else [],
+                    "required_terms": [],
+                    "optional_terms": [],
+                    "evidence_policy": "基于资料片段回答。",
+                    "answer_policy": "如资料不足则说明不足，不编造。",
+                    "confidence": 0.5,
+                },
+                ensure_ascii=False,
+            )
 
     def _mock_structure_extraction(self, user_prompt: str) -> str:
         title_match = re.search(r"###\s*第?(\d+|\?)章\s+(.+)", user_prompt)

@@ -30,6 +30,10 @@ from models.character_event import CharacterEvent
 from models.character_relation import CharacterRelation
 from models.outline import Outline
 from models.hidden_thread import HiddenThread
+from models.project_source import ProjectSource
+from models.project_source_chunk import ProjectSourceChunk
+from models.knowledge_qa_session import KnowledgeQaSession
+from models.knowledge_qa_message import KnowledgeQaMessage
 from schemas.api import (
     ProjectCreate, ProjectUpdate, ProjectResponse,
     TxtImportResponse,
@@ -51,6 +55,10 @@ from schemas.api import (
     GenerationRecordUpdate, GenerationRecordDiffRequest, GenerationRecordDiffResponse,
     EvaluationDatasetCreate, EvaluationDatasetUpdate, EvaluationDatasetResponse,
     EvaluationCaseCreate, EvaluationCaseUpdate, EvaluationCaseResponse,
+    ProjectSourceCreate, ProjectSourceUpdate, ProjectSourceResponse,
+    ProjectSourceListResponse, ProjectSourceChunkResponse,
+    KnowledgeQaSessionResponse, KnowledgeQaSessionUpdateRequest, KnowledgeQaMessageResponse,
+    KnowledgeSearchRequest, KnowledgeAskRequest,
     EvaluationRunCreate, EvaluationRunResponse, EvaluationResultResponse,
     AuthUser,
 )
@@ -271,6 +279,10 @@ async def _delete_project_tree(project_id: uuid.UUID, db: AsyncSession) -> None:
     await db.execute(delete(EvaluationCase).where(EvaluationCase.project_id == project_id))
     await db.execute(delete(EvaluationDataset).where(EvaluationDataset.project_id == project_id))
     await db.execute(delete(GenerationRecord).where(GenerationRecord.project_id == project_id))
+    await db.execute(delete(KnowledgeQaMessage).where(KnowledgeQaMessage.project_id == project_id))
+    await db.execute(delete(ProjectSourceChunk).where(ProjectSourceChunk.project_id == project_id))
+    await db.execute(delete(KnowledgeQaSession).where(KnowledgeQaSession.project_id == project_id))
+    await db.execute(delete(ProjectSource).where(ProjectSource.project_id == project_id))
     await db.execute(delete(ChapterVersion).where(ChapterVersion.chapter_id.in_(chapter_ids)))
     await db.execute(delete(DocumentVersion).where(DocumentVersion.document_id.in_(document_ids)))
     await db.execute(delete(CharacterEvent).where(CharacterEvent.project_id == project_id))
@@ -3655,3 +3667,525 @@ async def diff_document_versions(
         version_b=ver_b.version_number,
         diff=diff,
     )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 资料库 CRUD (Project Knowledge)
+# ═══════════════════════════════════════════════════════════════════
+
+
+@router.get("/projects/{project_id}/knowledge/sources", response_model=list[ProjectSourceListResponse])
+async def list_knowledge_sources(
+    project_id: str,
+    source_type: str | None = None,
+    q: str | None = None,
+    sort: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """列出项目的所有资料库条目。支持 source_type 过滤、q 关键词搜索、sort 排序。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    preview_limit = 1200
+    stmt = select(
+        ProjectSource.id,
+        ProjectSource.project_id,
+        ProjectSource.title,
+        ProjectSource.source_type,
+        func.substr(ProjectSource.content, 1, preview_limit).label("content_preview"),
+        func.length(ProjectSource.content).label("content_length"),
+        ProjectSource.summary,
+        ProjectSource.key_facts,
+        ProjectSource.constraints,
+        ProjectSource.characters,
+        ProjectSource.keywords,
+        ProjectSource.tags,
+        ProjectSource.always_inject,
+        ProjectSource.chunk_count,
+        ProjectSource.token_count,
+        ProjectSource.created_at,
+        ProjectSource.updated_at,
+    ).where(ProjectSource.project_id == uid)
+    if source_type:
+        stmt = stmt.where(ProjectSource.source_type == source_type)
+    if q:
+        pattern = f"%{q}%"
+        stmt = stmt.where(
+            ProjectSource.title.ilike(pattern) | ProjectSource.content.ilike(pattern)
+        )
+    sort_map = {
+        "created_at": ProjectSource.created_at.asc(),
+        "-created_at": ProjectSource.created_at.desc(),
+        "title": ProjectSource.title.asc(),
+        "-title": ProjectSource.title.desc(),
+        "updated_at": ProjectSource.updated_at.asc(),
+        "-updated_at": ProjectSource.updated_at.desc(),
+    }
+    stmt = stmt.order_by(sort_map.get(sort, ProjectSource.created_at.desc()))
+    result = await db.execute(stmt)
+    items = []
+    for row in result.mappings().all():
+        content_preview = row["content_preview"] or ""
+        content_length = row["content_length"] or 0
+        items.append({
+            "id": row["id"],
+            "project_id": row["project_id"],
+            "title": row["title"],
+            "source_type": row["source_type"],
+            "content_preview": content_preview,
+            "content_truncated": content_length > preview_limit,
+            "summary": row["summary"],
+            "key_facts": row["key_facts"],
+            "constraints": row["constraints"],
+            "characters": row["characters"],
+            "keywords": row["keywords"],
+            "tags": row["tags"],
+            "always_inject": row["always_inject"],
+            "chunk_count": row["chunk_count"],
+            "token_count": row["token_count"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        })
+    return items
+
+
+@router.post("/projects/{project_id}/knowledge/sources", response_model=ProjectSourceResponse)
+async def create_knowledge_source(
+    project_id: str,
+    req: ProjectSourceCreate,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """新建资料库条目。同人规则默认 always_inject=True。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    always_inject = req.always_inject
+    if req.source_type == "fanfic_rule" and not req.always_inject:
+        always_inject = True
+
+    source = ProjectSource(
+        project_id=uid,
+        title=req.title,
+        source_type=req.source_type,
+        content=req.content,
+        always_inject=always_inject,
+        tags=req.tags,
+        metadata_=req.metadata_,
+        token_count=len(req.content),
+    )
+    db.add(source)
+    await db.commit()
+
+    # 自动切片（短资料也能保底存一个 chunk）
+    from services.knowledge_source import chunk_and_save
+    await chunk_and_save(db, uid, str(source.id))
+
+    # 重新查询确保所有列（含 server_default 的 updated_at）被正确加载
+    result = await db.execute(select(ProjectSource).where(ProjectSource.id == source.id))
+    return result.scalar_one()
+
+
+@router.post("/projects/{project_id}/knowledge/upload")
+async def upload_knowledge_file(
+    project_id: str,
+    file: UploadFile = File(...),
+    title: str = Form(default=""),
+    source_type: str = Form(default="upload"),
+    tags: str = Form(default=""),
+    always_inject: bool = Form(default=False),
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """上传文件到资料库。文件内容读取后保存为可检索文本 + 自动切片。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    # source_type 白名单校验
+    allowed_types = {"upload", "fanfic_rule", "timeline", "note", "reference"}
+    if source_type not in allowed_types:
+        raise HTTPException(status_code=400, detail=f"source_type 必须是 {allowed_types} 之一")
+
+    filename = file.filename or "upload.txt"
+    if not title.strip():
+        title = filename
+
+    raw = await file.read()
+    if len(raw) > settings.KNOWLEDGE_UPLOAD_MAX_BYTES:
+        limit_mb = settings.KNOWLEDGE_UPLOAD_MAX_BYTES // (1024 * 1024)
+        raise HTTPException(status_code=413, detail=f"文件大小不能超过 {limit_mb}MB")
+
+    from services.knowledge_file_parser import extract_knowledge_text
+
+    try:
+        content, file_metadata = extract_knowledge_text(filename, raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"文件解析失败：{exc}") from exc
+
+    if source_type == "fanfic_rule":
+        always_inject = True
+
+    source = ProjectSource(
+        project_id=uid,
+        title=title,
+        source_type=source_type,
+        content=content,
+        always_inject=always_inject,
+        tags=tags.split(",") if tags.strip() else None,
+        token_count=len(content),
+        metadata_={**file_metadata, "content_type": file.content_type},
+    )
+    db.add(source)
+    await db.commit()
+    await db.refresh(source)
+
+    from services.knowledge_source import chunk_and_save
+    await chunk_and_save(db, uid, str(source.id))
+
+    return {"id": str(source.id), "title": source.title, "chunk_count": source.chunk_count}
+
+
+@router.get("/projects/{project_id}/knowledge/sources/{source_id}", response_model=ProjectSourceResponse)
+async def get_knowledge_source(
+    project_id: str,
+    source_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(source_id)
+
+    result = await db.execute(
+        select(ProjectSource).where(ProjectSource.id == sid, ProjectSource.project_id == uid)
+    )
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail="资料不存在")
+    return source
+
+
+@router.patch("/projects/{project_id}/knowledge/sources/{source_id}", response_model=ProjectSourceResponse)
+async def update_knowledge_source(
+    project_id: str,
+    source_id: str,
+    req: ProjectSourceUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(source_id)
+
+    result = await db.execute(
+        select(ProjectSource).where(ProjectSource.id == sid, ProjectSource.project_id == uid)
+    )
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail="资料不存在")
+
+    update_data = req.model_dump(exclude_unset=True)
+    # 如果改成 fanfic_rule，强制 always_inject = True
+    if "source_type" in update_data and update_data["source_type"] == "fanfic_rule":
+        source.always_inject = True
+    for field, value in update_data.items():
+        if field == "always_inject" and source.source_type == "fanfic_rule" and value is False:
+            continue  # 同人规则不允许关闭 always_inject
+        if field == "content" and value is not None:
+            source.token_count = len(value)
+        setattr(source, field, value)
+
+    await db.commit()
+
+    # 内容变更后自动重建切片
+    if "content" in update_data and update_data["content"] is not None:
+        from services.knowledge_source import chunk_and_save
+        await chunk_and_save(db, uid, sid)
+
+    # 重新查询确保所有列被正确加载
+    result = await db.execute(select(ProjectSource).where(ProjectSource.id == sid, ProjectSource.project_id == uid))
+    return result.scalar_one()
+
+
+@router.delete("/projects/{project_id}/knowledge/sources/{source_id}", status_code=204)
+async def delete_knowledge_source(
+    project_id: str,
+    source_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """删除资料条目，级联删除关联的 chunks。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(source_id)
+
+    result = await db.execute(
+        select(ProjectSource).where(ProjectSource.id == sid, ProjectSource.project_id == uid)
+    )
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail="资料不存在")
+
+    # 级联删除 chunks
+    chunks_result = await db.execute(
+        select(ProjectSourceChunk).where(
+            ProjectSourceChunk.source_id == sid, ProjectSourceChunk.project_id == uid
+        )
+    )
+    for chunk in chunks_result.scalars().all():
+        await db.delete(chunk)
+
+    await db.delete(source)
+    await db.commit()
+
+
+@router.get("/projects/{project_id}/knowledge/sources/{source_id}/chunks", response_model=list[ProjectSourceChunkResponse])
+async def list_source_chunks(
+    project_id: str,
+    source_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """分页列出资料条目下的切片，避免大资料一次性渲染卡住页面。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(source_id)
+
+    result = await db.execute(
+        select(ProjectSourceChunk)
+        .where(ProjectSourceChunk.source_id == sid, ProjectSourceChunk.project_id == uid)
+        .order_by(ProjectSourceChunk.chunk_index)
+        .offset(offset)
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
+# ── QA Session CRUD ──
+
+@router.get("/projects/{project_id}/knowledge/sessions", response_model=list[KnowledgeQaSessionResponse])
+async def list_knowledge_sessions(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    result = await db.execute(
+        select(KnowledgeQaSession)
+        .where(KnowledgeQaSession.project_id == uid)
+        .order_by(KnowledgeQaSession.updated_at.desc())
+    )
+    return result.scalars().all()
+
+
+@router.post("/projects/{project_id}/knowledge/sessions", response_model=KnowledgeQaSessionResponse)
+async def create_knowledge_session(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    session = KnowledgeQaSession(project_id=uid, title="资料问答")
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+    return session
+
+
+@router.get("/projects/{project_id}/knowledge/sessions/{session_id}/messages", response_model=list[KnowledgeQaMessageResponse])
+async def list_session_messages(
+    project_id: str,
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(session_id)
+
+    result = await db.execute(
+        select(KnowledgeQaMessage)
+        .where(KnowledgeQaMessage.session_id == sid, KnowledgeQaMessage.project_id == uid)
+        .order_by(KnowledgeQaMessage.created_at)
+    )
+    return result.scalars().all()
+
+
+@router.patch("/projects/{project_id}/knowledge/sessions/{session_id}", response_model=KnowledgeQaSessionResponse)
+async def update_knowledge_session(
+    project_id: str,
+    session_id: str,
+    req: KnowledgeQaSessionUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """更新问答会话标题。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(session_id)
+
+    result = await db.execute(
+        select(KnowledgeQaSession).where(
+            KnowledgeQaSession.id == sid,
+            KnowledgeQaSession.project_id == uid,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    if req.title is not None:
+        session.title = req.title
+
+    await db.commit()
+    await db.refresh(session)
+    return session
+
+
+@router.delete("/projects/{project_id}/knowledge/sessions/{session_id}")
+async def delete_knowledge_session(
+    project_id: str,
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """删除问答会话及其所有消息。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(session_id)
+
+    result = await db.execute(
+        select(KnowledgeQaSession).where(
+            KnowledgeQaSession.id == sid,
+            KnowledgeQaSession.project_id == uid,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    # 删除所有消息
+    await db.execute(
+        delete(KnowledgeQaMessage).where(KnowledgeQaMessage.session_id == sid)
+    )
+
+    # 删除会话
+    await db.delete(session)
+    await db.commit()
+
+    return Response(status_code=204)
+
+
+# ── 知识源切片与搜索 ──
+
+@router.post("/projects/{project_id}/knowledge/sources/{source_id}/reindex")
+async def reindex_single_source(
+    project_id: str,
+    source_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """重新切片单个资料条目。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(source_id)
+
+    from services.knowledge_source import chunk_and_save
+
+    chunk_count = await chunk_and_save(db, uid, sid)
+    return {"source_id": source_id, "chunk_count": chunk_count}
+
+
+@router.post("/projects/{project_id}/knowledge/reindex")
+async def reindex_all_sources(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """重新切片项目的所有资料条目。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    from services.knowledge_source import reindex_project_sources
+
+    result = await reindex_project_sources(db, uid)
+    return result
+
+
+@router.post("/projects/{project_id}/knowledge/search")
+async def search_knowledge(
+    project_id: str,
+    req: KnowledgeSearchRequest,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """纯检索：在资料库中搜索匹配片段。不调用 LLM。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    from services.knowledge_source import search_project_knowledge
+
+    results = await search_project_knowledge(
+        db, uid, req.query,
+        source_type=req.source_type,
+        limit=req.limit,
+    )
+    return {"results": results}
+
+
+@router.post("/projects/{project_id}/knowledge/sources/{source_id}/summarize")
+async def summarize_knowledge_source(
+    project_id: str,
+    source_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """对资料条目进行 AI 摘要（chunk + 源级）。
+
+    原文永远保存。摘要失败时只返回错误，不清空已有数据。
+    """
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(source_id)
+
+    # 先确保切片存在
+    from services.knowledge_source import chunk_and_save, summarize_project_source
+
+    await chunk_and_save(db, uid, sid)
+    result = await summarize_project_source(db, uid, sid, user.id)
+    return result
+
+
+@router.post("/projects/{project_id}/knowledge/ask")
+async def ask_knowledge(
+    project_id: str,
+    req: KnowledgeAskRequest,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """资料问答：检索资料库 + 结构化表，调用 LLM 生成带引用的回答。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    from services.knowledge_source import ask_knowledge_question
+
+    result = await ask_knowledge_question(
+        db, uid, user.id, req.question,
+        conversation_id=req.conversation_id,
+        chapter_num=req.chapter_num,
+        include_structured=req.include_structured,
+        include_web=req.include_web,
+        web_provider=req.web_provider,
+        web_api_key=req.web_api_key,
+        web_base_url=req.web_base_url,
+    )
+    return result

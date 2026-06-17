@@ -760,3 +760,144 @@ class EvaluationRunResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ── 资料库 (Project Knowledge) ─────────────────────────────────────
+
+class ProjectSourceCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    source_type: str = Field(default="upload", pattern=r"^(upload|fanfic_rule|timeline|note|reference)$")
+    content: str = Field(default="", max_length=50_000_000)
+    tags: list[str] | None = None
+    always_inject: bool = False
+    metadata_: dict | None = None
+
+
+class ProjectSourceUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    source_type: str | None = Field(default=None, pattern=r"^(upload|fanfic_rule|timeline|note|reference)$")
+    content: str | None = Field(default=None, max_length=50_000_000)
+    tags: list[str] | None = None
+    always_inject: bool | None = None
+
+
+class ProjectSourceResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    title: str
+    source_type: str
+    content: str
+    summary: str | None = None
+    key_facts: list | None = None
+    constraints: list | None = None
+    characters: list | None = None
+    keywords: list | None = None
+    tags: list | None = None
+    always_inject: bool
+    chunk_count: int
+    token_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ProjectSourceListResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    title: str
+    source_type: str
+    content_preview: str = ""
+    content_truncated: bool = False
+    summary: str | None = None
+    key_facts: list | None = None
+    constraints: list | None = None
+    characters: list | None = None
+    keywords: list | None = None
+    tags: list | None = None
+    always_inject: bool
+    chunk_count: int
+    token_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProjectSourceChunkResponse(BaseModel):
+    id: uuid.UUID
+    source_id: uuid.UUID
+    chunk_index: int
+    content: str
+    summary: str | None = None
+    facts: list | None = None
+    constraints: list | None = None
+    keywords: list | None = None
+    token_count: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class KnowledgeQaSessionResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    title: str
+    summary: str | None = None
+    message_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class KnowledgeQaSessionUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+
+
+class KnowledgeQaMessageResponse(BaseModel):
+    id: uuid.UUID
+    session_id: uuid.UUID
+    role: str
+    content: str
+    citations: list | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class KnowledgeAskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=4000)
+    conversation_id: str | None = None
+    chapter_num: int | None = None
+    include_structured: bool = True
+    include_web: bool = False
+    web_provider: str | None = Field(default=None, max_length=50)
+    web_api_key: str | None = Field(default=None, max_length=500)
+    web_base_url: str | None = Field(default=None, max_length=500)
+
+
+class KnowledgeSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=2000)
+    source_type: str | None = None
+    chapter_num: int | None = None
+    limit: int = Field(default=10, ge=1, le=50)
+
+
+class Citation(BaseModel):
+    source_kind: str  # project_source_chunk | character | character_event | outline | world_entry | hidden_thread | chapter | web_search
+    source_id: str
+    chunk_id: str | None = None
+    title: str
+    snippet: str
+    url: str | None = None
+    evidence_type: str | None = None
+    matched_query: str | None = None
+    score: float | None = None
+
+
+class KnowledgeAskResponse(BaseModel):
+    answer: str
+    citations: list[Citation]
+    conversation_id: str
+    conversation_summary_updated: bool = False
+    query_plan: dict | None = None
+    retrieval_stats: dict | None = None

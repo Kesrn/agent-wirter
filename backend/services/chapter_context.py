@@ -5,9 +5,8 @@
 设计原则：
 - 结构化数据（角色、事件、大纲、设定、暗线）直接查原表，不落 project_sources。
 - selected_*_ids 作为附加加载，不替代自动聚合。
-- fanfic_rules / retrieved_sources 结构预留，Phase 2 串接 project_sources。
-
-参见：DeepSeek执行指导_章节助手与资料库改造.md 阶段一。
+- fanfic_rules / retrieved_sources 从 project_sources 加载：always_inject 资料无条件注入，
+  其余按本章角色名 / 大纲关键词自动检索匹配。
 """
 
 from __future__ import annotations
@@ -94,7 +93,8 @@ class RetrievedSourceInfo:
     id: str
     title: str
     snippet: str
-    source_type: str
+    source_type: str = ""
+    always_inject: bool = False
 
 
 @dataclass
@@ -254,7 +254,7 @@ async def build_chapter_context(
     - 最近 3 章前文
     - 用户通过 selected_*_ids 显式选择的条目（追加不替代）
 
-    Phase 2 接入 project_sources 后，fanfic_rules / retrieved_sources 将从资料库加载。
+    project_sources 已接入：always_inject 资料无条件注入，其余按关键词自动检索。
     """
     import uuid as _uuid
 
@@ -312,9 +312,66 @@ async def build_chapter_context(
         stats,
     )
 
-    # ── Phase 2: 同人规则 / 检索资料（预留） ──
-    # await _load_fanfic_rules(db, pid, ctx)
-    # await _load_retrieved_sources(db, pid, seq, user_query, ctx, stats)
+    # ── 接入 project_sources（同人规则 + 检索资料） ──
+    try:
+        from models.project_source import ProjectSource as _PS
+        from sqlalchemy import or_ as _or, func as _func
+
+        # 1. always_inject 资料无条件加载
+        ai_result = await db.execute(
+            select(_PS).where(_PS.project_id == pid, _PS.always_inject == True)
+        )
+        ai_sources = list(ai_result.scalars().all())
+
+        # 2. 自动检索：按本章角色名 + 大纲标题关键词匹配
+        auto_hits: list = []
+        search_kws: list[str] = []
+        for c in (ctx.characters or [])[:3]:
+            if c.name:
+                search_kws.append(c.name)
+        if ctx.outline and ctx.outline.title:
+            search_kws.extend(ctx.outline.title.split()[:3])
+        if ctx.chapter and ctx.chapter.title:
+            search_kws.extend(ctx.chapter.title.split()[:3])
+
+        if search_kws:
+            conds = []
+            for kw in search_kws[:5]:
+                conds.append(_PS.content.ilike(f"%{kw}%"))
+                conds.append(_PS.title.ilike(f"%{kw}%"))
+            hit_result = await db.execute(
+                select(_PS).where(
+                    _PS.project_id == pid,
+                    _PS.always_inject == False,
+                    _or(*conds),
+                ).limit(5)
+            )
+            auto_hits = list(hit_result.scalars().all())
+
+        # 去重合并
+        seen: set[str] = set()
+        merged: list = []
+        for s in ai_sources + auto_hits:
+            sid = str(s.id)
+            if sid not in seen:
+                seen.add(sid)
+                merged.append(s)
+
+        for s in merged:
+            snippet = (s.summary or s.content or "")[:200]
+            ctx.retrieved_sources.append(
+                RetrievedSourceInfo(
+                    id=str(s.id),
+                    title=s.title,
+                    snippet=snippet,
+                    source_type=s.source_type,
+                    always_inject=s.always_inject,
+                )
+            )
+        stats.sources = len(merged)
+    except Exception as e:
+        # 表可能不存在（首次迁移前），静默跳过
+        logger.warning("_load_knowledge_sources skipped: %s", e)
 
     logger.info(
         "chapter_context built: project=%s chapter=%d stats=%s intent=%s",
