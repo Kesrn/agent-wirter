@@ -66,10 +66,18 @@ class Settings:
 
     # --- 应用 ---
     DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
+    SQL_ECHO: bool = os.getenv("SQL_ECHO", "false").lower() == "true"
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:3000,null")
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
     MAX_UPLOAD_BYTES: int = int(os.getenv("MAX_UPLOAD_BYTES", str(5 * 1024 * 1024)))
     MAX_TXT_IMPORT_BYTES: int = int(os.getenv("MAX_TXT_IMPORT_BYTES", str(50 * 1024 * 1024)))
+    KNOWLEDGE_UPLOAD_MAX_BYTES: int = int(os.getenv("KNOWLEDGE_UPLOAD_MAX_BYTES", str(50 * 1024 * 1024)))
+    WEB_SEARCH_ENABLED: bool = os.getenv("WEB_SEARCH_ENABLED", "true").lower() == "true"
+    WEB_SEARCH_PROVIDER: str = os.getenv("WEB_SEARCH_PROVIDER", "duckduckgo")
+    WEB_SEARCH_API_KEY: str = os.getenv("WEB_SEARCH_API_KEY", "")
+    WEB_SEARCH_BASE_URL: str = os.getenv("WEB_SEARCH_BASE_URL", "")
+    WEB_SEARCH_MAX_RESULTS: int = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
+    WEB_SEARCH_TIMEOUT_SECONDS: float = float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "8"))
 
 
 settings = Settings()
