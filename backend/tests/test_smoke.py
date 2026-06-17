@@ -1,11 +1,12 @@
 """最小冒烟测试 — 使用 SQLite 内存数据库，无需 PostgreSQL"""
 
+import asyncio
 import os
 import re
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event, JSON, String, Float
+from sqlalchemy import event, JSON, String, Float, func, select
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID, ARRAY
 from sqlalchemy.dialects.sqlite.base import SQLiteTypeCompiler
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -24,7 +25,7 @@ def compile_uuid_sqlite(type_, compiler, **kw):
 
 
 from models.base import Base
-from models import Project, Chapter, Expert, WorldEntry, Character, User, ChapterVersion, Document, DocumentVersion, EvaluationDataset, EvaluationCase, EvaluationRun, EvaluationResult  # noqa: F401
+from models import Project, Chapter, Expert, WorldEntry, Character, User, ChapterVersion, Document, DocumentVersion, EvaluationDataset, EvaluationCase, EvaluationRun, EvaluationResult, ProjectSource, ProjectSourceChunk, KnowledgeQaSession, KnowledgeQaMessage  # noqa: F401
 from db.session import get_db, set_engine
 from main import app
 from services.diff_service import compute_diff
@@ -262,6 +263,39 @@ def test_delete_project_removes_project_and_children():
     )
     assert character_resp.status_code == 200
 
+    source_resp = client.post(
+        f"/api/projects/{project_id}/knowledge/sources",
+        json={"title": "待删除资料", "content": "需要一起删除的资料库内容。" * 20},
+        headers=headers,
+    )
+    assert source_resp.status_code == 200
+
+    session_resp = client.post(f"/api/projects/{project_id}/knowledge/sessions", headers=headers)
+    assert session_resp.status_code == 200
+    session_id = session_resp.json()["id"]
+
+    async def _insert_message_and_count():
+        async with test_session_factory() as session:
+            session.add(
+                KnowledgeQaMessage(
+                    session_id=session_id,
+                    project_id=project_id,
+                    role="user",
+                    content="这条问答消息也应随项目删除。",
+                )
+            )
+            await session.commit()
+            counts = {}
+            for model in (ProjectSource, ProjectSourceChunk, KnowledgeQaSession, KnowledgeQaMessage):
+                result = await session.execute(
+                    select(func.count()).select_from(model).where(model.project_id == project_id)
+                )
+                counts[model.__tablename__] = result.scalar_one()
+            return counts
+
+    knowledge_counts = asyncio.run(_insert_message_and_count())
+    assert all(count > 0 for count in knowledge_counts.values())
+
     other_headers = _auth_headers("otherdeleter", "deletepass")
     forbidden_resp = client.delete(f"/api/projects/{project_id}", headers=other_headers)
     assert forbidden_resp.status_code == 404
@@ -273,6 +307,23 @@ def test_delete_project_removes_project_and_children():
     list_resp = client.get("/api/projects", headers=headers)
     assert all(item["id"] != project_id for item in list_resp.json())
     assert client.get(f"/api/projects/{project_id}/chapters", headers=headers).status_code == 404
+
+    async def _knowledge_counts():
+        async with test_session_factory() as session:
+            counts = {}
+            for model in (ProjectSource, ProjectSourceChunk, KnowledgeQaSession, KnowledgeQaMessage):
+                result = await session.execute(
+                    select(func.count()).select_from(model).where(model.project_id == project_id)
+                )
+                counts[model.__tablename__] = result.scalar_one()
+            return counts
+
+    assert asyncio.run(_knowledge_counts()) == {
+        "project_sources": 0,
+        "project_source_chunks": 0,
+        "knowledge_qa_sessions": 0,
+        "knowledge_qa_messages": 0,
+    }
 
 
 def test_evaluation_dataset_case_and_run():

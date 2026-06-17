@@ -29,6 +29,11 @@ Thumbs.db
 # Runtime uploads
 backend/uploads/
 
+# Dev databases
+backend/dev-web.sqlite3
+backend/dev-*.sqlite3
+backend/*.sqlite3
+
 # Build
 *.pyc
 frontend/.pyinstaller-build/
