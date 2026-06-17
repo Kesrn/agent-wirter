@@ -15,5 +15,16 @@ from .chapter_version import ChapterVersion
 from .document_version import DocumentVersion
 from .generation_record import GenerationRecord
 from .evaluation import EvaluationDataset, EvaluationCase, EvaluationRun, EvaluationResult
+from .project_source import ProjectSource
+from .project_source_chunk import ProjectSourceChunk
+from .knowledge_qa_session import KnowledgeQaSession
+from .knowledge_qa_message import KnowledgeQaMessage
 
-__all__ = ["Base", "UUIDMixin", "TimestampMixin", "Project", "Chapter", "Document", "Expert", "WorldEntry", "Character", "CharacterRelation", "CharacterEvent", "Outline", "HiddenThread", "User", "LLMConfig", "ChapterVersion", "DocumentVersion", "GenerationRecord", "EvaluationDataset", "EvaluationCase", "EvaluationRun", "EvaluationResult"]
+__all__ = [
+    "Base", "UUIDMixin", "TimestampMixin", "Project", "Chapter", "Document",
+    "Expert", "WorldEntry", "Character", "CharacterRelation", "CharacterEvent",
+    "Outline", "HiddenThread", "User", "LLMConfig", "ChapterVersion",
+    "DocumentVersion", "GenerationRecord", "EvaluationDataset", "EvaluationCase",
+    "EvaluationRun", "EvaluationResult", "ProjectSource", "ProjectSourceChunk",
+    "KnowledgeQaSession", "KnowledgeQaMessage",
+]
