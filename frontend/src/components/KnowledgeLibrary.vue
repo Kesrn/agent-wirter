@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { api } from '../api/client'
 import { friendlyError, useUiStore } from '../stores'
 import { renderMarkdown } from '../utils/markdown'
+import NovelExtraction from './NovelExtraction.vue'
 
 const props = defineProps<{ projectId: string }>()
 const ui = useUiStore()
@@ -14,6 +15,7 @@ interface Source {
   summary: string | null; key_facts: string[] | null
   constraints: string[] | null; characters: string[] | null; keywords: string[] | null
   tags: string[] | null; always_inject: boolean; chunk_count: number; token_count: number
+  metadata_?: Record<string, any> | null
   created_at: string; updated_at: string
 }
 
@@ -64,6 +66,7 @@ const pendingQaDeleteId = ref<string | null>(null)
 const SOURCE_TYPES = [
   { value: '', label: '全部' },
   { value: 'upload', label: '上传资料' },
+  { value: 'novel', label: '小说原文' },
   { value: 'fanfic_rule', label: '同人规则' },
   { value: 'timeline', label: '时间线' },
   { value: 'note', label: '笔记' },
@@ -187,7 +190,7 @@ async function reindexSource(id: string) {
   actionLoading.value = 'reindex-' + id
   try {
     const r = await api.reindexSource(props.projectId, id)
-    ui.showToast(`切片完成：${r.chunk_count} 个片段`, 'success')
+    ui.showToast(`切片完成：${r.chunk_count} 个片段，事实 ${r.fact_count} 条`, 'success')
     if (selectedId.value === id) {
       showChunks.value = false
       chunks.value = []
@@ -197,6 +200,17 @@ async function reindexSource(id: string) {
     await loadSources()
   } catch (e: unknown) {
     ui.showToast(friendlyError(e, '切片失败'), 'error')
+  }
+  finally { actionLoading.value = null }
+}
+
+async function rebuildFacts() {
+  actionLoading.value = 'rebuild-facts'
+  try {
+    const r = await api.rebuildFacts(props.projectId)
+    ui.showToast(`已重建事实索引：${r.fact_count} 条`, 'success')
+  } catch (e: unknown) {
+    ui.showToast(friendlyError(e, '重建事实索引失败'), 'error')
   }
   finally { actionLoading.value = null }
 }
@@ -468,6 +482,8 @@ function handleCitationClick(c: NonNullable<QaMessage['citations']>[number]) {
 
 // ── File upload ──
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const uploadAsNovel = ref(false)
+const uploadGenre = ref<'magic_fantasy' | 'historical'>('magic_fantasy')
 
 function triggerUpload() {
   fileInputRef.value?.click()
@@ -480,6 +496,12 @@ async function handleFileUpload(e: Event) {
   const fd = new FormData()
   fd.append('file', file)
   fd.append('title', file.name.replace(/\.(txt|md)$/i, ''))
+  // 勾选"上传为小说原文"时传 source_type=novel + genre + canon_level
+  if (uploadAsNovel.value) {
+    fd.append('source_type', 'novel')
+    fd.append('genre', uploadGenre.value)
+    fd.append('canon_level', 'original')
+  }
   try {
     loading.value = true
     const uploaded = await api.uploadKnowledgeFile(props.projectId, fd)
@@ -508,6 +530,14 @@ async function handleFileUpload(e: Event) {
       </div>
       <div class="topbar-actions">
         <button class="btn-secondary compact" @click="startAdd">新建资料</button>
+        <label class="upload-novel-toggle">
+          <input type="checkbox" v-model="uploadAsNovel" />
+          <span>上传为小说原文</span>
+        </label>
+        <select v-if="uploadAsNovel" v-model="uploadGenre" class="upload-genre-select">
+          <option value="magic_fantasy">魔法玄幻</option>
+          <option value="historical">历史</option>
+        </select>
         <button class="btn-primary compact" @click="triggerUpload">上传文件</button>
         <input ref="fileInputRef" type="file" accept=".txt,.md,.text,.csv,.tsv,.docx,.xlsx,.xlsm,.pdf" style="display:none" @change="handleFileUpload" />
       </div>
@@ -558,6 +588,7 @@ async function handleFileUpload(e: Event) {
         <div class="form-row"><label>类型</label>
           <select v-model="editType">
             <option value="upload">上传资料</option>
+            <option value="novel">小说原文</option>
             <option value="fanfic_rule">同人规则</option>
             <option value="timeline">时间线</option>
             <option value="note">笔记</option>
@@ -582,6 +613,7 @@ async function handleFileUpload(e: Event) {
           <div class="detail-actions">
             <button class="btn-sm" @click="startEdit">编辑</button>
             <button class="btn-sm" :disabled="actionLoading === 'reindex-' + selectedId" @click="reindexSource(selectedId!)">切片</button>
+            <button class="btn-sm" :disabled="actionLoading === 'rebuild-facts'" @click="rebuildFacts">重建事实索引</button>
             <button class="btn-sm" :disabled="actionLoading === 'summarize-' + selectedId" @click="summarizeSource(selectedId!)">AI摘要</button>
             <button class="btn-sm btn-danger" :disabled="actionLoading === 'delete-' + selectedId" @click="requestDeleteSource(selectedId!)">删除</button>
           </div>
@@ -611,6 +643,7 @@ async function handleFileUpload(e: Event) {
           <div class="form-row"><label>类型</label>
             <select v-model="editType">
               <option value="upload">上传资料</option>
+              <option value="novel">小说原文</option>
               <option value="fanfic_rule">同人规则</option>
               <option value="timeline">时间线</option>
               <option value="note">笔记</option>
@@ -679,6 +712,14 @@ async function handleFileUpload(e: Event) {
             </div>
           </div>
         </template>
+
+        <!-- 小说结构化抽取（仅 novel 类型显示） -->
+        <NovelExtraction
+          :project-id="projectId"
+          :source-id="selectedId!"
+          :source-type="selectedSource.source_type"
+          :initial-genre="selectedSource.metadata_?.genre"
+        />
       </template>
 
       <div v-else class="empty-detail">
@@ -701,7 +742,7 @@ async function handleFileUpload(e: Event) {
             v-for="session in qaSessions"
             :key="session.id"
             class="qa-session-item"
-            :class="{ active: qaConversationId === session.id }"
+            :class="{ active: qaConversationId === session.id, confirming: pendingQaDeleteId === session.id }"
             @click="openQaSession(session.id)"
           >
             <form
@@ -716,17 +757,20 @@ async function handleFileUpload(e: Event) {
               </button>
               <button class="session-action-btn" :disabled="actionLoading === 'rename-session-' + session.id" type="button" @click="cancelRenameQaSession">取消</button>
             </form>
+            <div v-else-if="pendingQaDeleteId === session.id" class="qa-session-confirm" @click.stop>
+              <div class="qa-session-confirm-copy">
+                <span class="qa-session-confirm-title">删除此对话？</span>
+                <span class="qa-session-confirm-name">{{ session.title }}</span>
+              </div>
+              <button class="session-action-btn danger strong" :disabled="actionLoading === 'delete-session-' + session.id" @click="deleteQaSession(session.id)">
+                {{ actionLoading === 'delete-session-' + session.id ? '删除中' : '确认' }}
+              </button>
+              <button class="session-action-btn" :disabled="actionLoading === 'delete-session-' + session.id" @click="pendingQaDeleteId = null">取消</button>
+            </div>
             <template v-else>
               <span class="qa-session-title">{{ session.title }}</span>
               <span class="qa-session-meta">{{ session.message_count }} 条 · {{ new Date(session.updated_at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) }}</span>
-              <div v-if="pendingQaDeleteId === session.id" class="qa-session-confirm" @click.stop>
-                <span>删除此对话？</span>
-                <button class="session-action-btn danger strong" :disabled="actionLoading === 'delete-session-' + session.id" @click="deleteQaSession(session.id)">
-                  {{ actionLoading === 'delete-session-' + session.id ? '删除中' : '确认' }}
-                </button>
-                <button class="session-action-btn" :disabled="actionLoading === 'delete-session-' + session.id" @click="pendingQaDeleteId = null">取消</button>
-              </div>
-              <div v-else class="qa-session-actions">
+              <div class="qa-session-actions">
                 <button class="session-action-btn" @click.stop="beginRenameQaSession(session.id)" title="重命名">改</button>
                 <button class="session-action-btn danger" @click.stop="requestDeleteQaSession(session.id)" title="删除">删</button>
               </div>
@@ -831,6 +875,24 @@ async function handleFileUpload(e: Event) {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+.upload-novel-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-soft);
+  cursor: pointer;
+}
+.upload-novel-toggle input { cursor: pointer; }
+.upload-genre-select {
+  padding: 2px 6px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
 }
 
 .knowledge-library {
@@ -1156,6 +1218,9 @@ async function handleFileUpload(e: Event) {
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
+.qa-session-item.confirming {
+  cursor: default;
+}
 .qa-session-title {
   display: block;
   padding-right: 46px;
@@ -1232,16 +1297,30 @@ async function handleFileUpload(e: Event) {
   border-color: var(--accent);
 }
 .qa-session-confirm {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 4px;
-  margin-top: 5px;
+  gap: 6px;
   color: var(--text-secondary);
   font-size: 11px;
 }
-.qa-session-confirm > span {
-  flex: 1;
+.qa-session-confirm-copy {
   min-width: 0;
+}
+.qa-session-confirm-title,
+.qa-session-confirm-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qa-session-confirm-title {
+  color: var(--text);
+  font-weight: 600;
+}
+.qa-session-confirm-name {
+  margin-top: 2px;
+  color: var(--text-secondary);
 }
 .qa-session-empty {
   padding: 8px 4px;

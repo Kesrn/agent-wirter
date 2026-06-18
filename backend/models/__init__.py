@@ -17,6 +17,11 @@ from .generation_record import GenerationRecord
 from .evaluation import EvaluationDataset, EvaluationCase, EvaluationRun, EvaluationResult
 from .project_source import ProjectSource
 from .project_source_chunk import ProjectSourceChunk
+from .project_knowledge_fact import ProjectKnowledgeFact
+from .extraction_pipeline import ProjectSourceChapter, ExtractionJob, ExtractionStaging
+from .structured_knowledge import (
+    CharacterProfile, AbilityProfile, EventTimeline, WorldRule,
+)
 from .knowledge_qa_session import KnowledgeQaSession
 from .knowledge_qa_message import KnowledgeQaMessage
 
@@ -26,5 +31,8 @@ __all__ = [
     "Outline", "HiddenThread", "User", "LLMConfig", "ChapterVersion",
     "DocumentVersion", "GenerationRecord", "EvaluationDataset", "EvaluationCase",
     "EvaluationRun", "EvaluationResult", "ProjectSource", "ProjectSourceChunk",
+    "ProjectKnowledgeFact",
+    "ProjectSourceChapter", "ExtractionJob", "ExtractionStaging",
+    "CharacterProfile", "AbilityProfile", "EventTimeline", "WorldRule",
     "KnowledgeQaSession", "KnowledgeQaMessage",
 ]

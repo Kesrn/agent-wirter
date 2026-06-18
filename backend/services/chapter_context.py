@@ -337,8 +337,10 @@ async def build_chapter_context(
         if search_kws:
             conds = []
             for kw in search_kws[:5]:
-                conds.append(_PS.content.ilike(f"%{kw}%"))
-                conds.append(_PS.title.ilike(f"%{kw}%"))
+                # 转义 LIKE 通配符，避免角色名/标题中的 % _ 污染匹配
+                escaped = kw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                conds.append(_PS.content.ilike(f"%{escaped}%", escape="\\"))
+                conds.append(_PS.title.ilike(f"%{escaped}%", escape="\\"))
             hit_result = await db.execute(
                 select(_PS).where(
                     _PS.project_id == pid,

@@ -10,7 +10,7 @@ class ProjectSourceChunk(UUIDMixin, TimestampMixin, Base):
     """资料条目的切片片段。
 
     每个 chunk 对应资料原文的一段，附带 AI 生成的压缩索引。
-    embedding 用于向量检索，全文检索走 SQLite FTS5。
+    embedding 字段预留给向量检索，当前检索走关键词匹配（ILIKE），暂不填充。
     """
 
     __tablename__ = "project_source_chunks"

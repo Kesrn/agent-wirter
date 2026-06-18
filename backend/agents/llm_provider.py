@@ -63,6 +63,11 @@ class MockProvider(LLMProvider):
             or ("只输出严格 json" in prompt_lower and "character_relations" in prompt_lower)
             or ("world_entries" in prompt_lower and "hidden_threads" in prompt_lower)
         )
+        # 小说知识库结构化抽取（章节级人物/能力/事件/世界规则）
+        is_novel_extraction_request = (
+            "小说知识库结构化抽取引擎" in prompt_lower
+            and "章节正文" in prompt_lower
+        )
         is_query_planner_request = (
             "query planner" in prompt_lower
             and "rewritten_question" in prompt_lower
@@ -94,6 +99,8 @@ class MockProvider(LLMProvider):
             return self._mock_query_plan(user_prompt)
         if is_structure_extraction_request:
             return self._mock_structure_extraction(user_prompt)
+        if is_novel_extraction_request:
+            return self._mock_novel_extraction(user_prompt)
         is_knowledge_qa_request = (
             "小说资料库的 ai 助手" in prompt_lower
             or ("输出格式" in prompt_lower and "\"citations\"" in prompt_lower and "用户问题" in prompt_lower)
@@ -286,6 +293,77 @@ class MockProvider(LLMProvider):
                 },
                 ensure_ascii=False,
             )
+
+    def _mock_novel_extraction(self, user_prompt: str) -> str:
+        """Mock 小说章节结构化抽取，返回符合 Schema 的 JSON。
+
+        根据章节正文里的关键词生成人物/能力/事件/世界规则，便于测试流水线。
+        """
+        import json as _json
+        # 提取章节编号
+        no_match = re.search(r"章节编号：(\d+)", user_prompt)
+        chapter_no = int(no_match.group(1)) if no_match else 1
+        # 提取章节标题
+        title_match = re.search(r"章节标题：([^\n]*)", user_prompt)
+        chapter_title = title_match.group(1).strip() if title_match else ""
+
+        content_lower = user_prompt.lower()
+        characters = []
+        abilities = []
+        events = []
+        world_rules = []
+
+        # 根据正文关键词生成 mock 数据
+        if "莫凡" in user_prompt:
+            characters.append({
+                "name": "莫凡", "aliases": [], "identity": "法师", "status": "觉醒",
+                "importance": 5, "confidence": 0.9, "evidence": "莫凡觉醒了魔法",
+            })
+            if "火系" in user_prompt or "火" in user_prompt:
+                abilities.append({
+                    "character": "莫凡", "ability_type": "magic_element",
+                    "ability_name": "火系", "level": "初阶", "status": "new",
+                    "importance": 5, "confidence": 0.9, "evidence": "莫凡觉醒了火系",
+                })
+            if "雷" in user_prompt:
+                abilities.append({
+                    "character": "莫凡", "ability_type": "magic_element",
+                    "ability_name": "雷系", "level": "初阶", "status": "new",
+                    "importance": 4, "confidence": 0.8, "evidence": "莫凡的雷霆系星尘",
+                })
+        if "张小侯" in user_prompt:
+            characters.append({
+                "name": "张小侯", "aliases": [], "identity": "法师", "status": "活跃",
+                "importance": 3, "confidence": 0.8, "evidence": "张小侯释放风轨",
+            })
+            abilities.append({
+                "character": "张小侯", "ability_type": "magic_element",
+                "ability_name": "风系", "level": "初阶", "status": "used",
+                "importance": 3, "confidence": 0.8, "evidence": "张小侯释放风轨击退敌人",
+            })
+
+        events.append({
+            "event_title": f"第{chapter_no}章事件",
+            "event_desc": "本章主要事件",
+            "characters": [c["name"] for c in characters],
+            "location": "", "cause": "", "effect": "",
+            "importance": 3, "confidence": 0.7, "evidence": "章节事件摘要",
+        })
+        world_rules.append({
+            "category": "魔法体系", "rule_text": "法师可觉醒多种魔法系别",
+            "priority": "medium", "confidence": 0.8, "evidence": "魔法体系设定",
+        })
+
+        result = {
+            "chapter_no": chapter_no,
+            "chapter_title": chapter_title,
+            "chapter_summary": "mock 抽取摘要",
+            "characters": characters,
+            "abilities": abilities,
+            "events": events,
+            "world_rules": world_rules,
+        }
+        return _json.dumps(result, ensure_ascii=False)
 
     def _mock_structure_extraction(self, user_prompt: str) -> str:
         title_match = re.search(r"###\s*第?(\d+|\?)章\s+(.+)", user_prompt)

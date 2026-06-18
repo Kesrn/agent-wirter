@@ -766,16 +766,19 @@ class EvaluationRunResponse(BaseModel):
 
 class ProjectSourceCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
-    source_type: str = Field(default="upload", pattern=r"^(upload|fanfic_rule|timeline|note|reference)$")
+    source_type: str = Field(default="upload", pattern=r"^(upload|fanfic_rule|timeline|note|reference|novel)$")
     content: str = Field(default="", max_length=50_000_000)
     tags: list[str] | None = None
     always_inject: bool = False
     metadata_: dict | None = None
+    # 小说抽取相关（仅 source_type=novel 时有意义，存入 metadata_）
+    genre: str | None = Field(default=None, pattern=r"^(magic_fantasy|historical)$")
+    canon_level: str | None = Field(default=None, pattern=r"^(manual|fanfic|original)$")
 
 
 class ProjectSourceUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=300)
-    source_type: str | None = Field(default=None, pattern=r"^(upload|fanfic_rule|timeline|note|reference)$")
+    source_type: str | None = Field(default=None, pattern=r"^(upload|fanfic_rule|timeline|note|reference|novel)$")
     content: str | None = Field(default=None, max_length=50_000_000)
     tags: list[str] | None = None
     always_inject: bool | None = None
@@ -796,6 +799,7 @@ class ProjectSourceResponse(BaseModel):
     always_inject: bool
     chunk_count: int
     token_count: int
+    metadata_: dict | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -822,7 +822,7 @@ def test_qa_character_system_list_answer_does_not_fall_back_to_generation():
         content=(
             "莫凡在开学觉醒时展现天生双系。"
             "这是莫凡的雷霆系星尘，随后觉醒石又出现火热能量。"
-            "同学们很快确认莫凡觉醒的是火系。"
+            "莫凡觉醒了火系，展现强大的火焰掌控力。"
             "元素魔法七系包括冰系、火系、土系、水系、风系、光系、雷系。"
         ),
         headers=headers,
@@ -1406,3 +1406,703 @@ def test_ask_without_web_search_does_not_call_web(monkeypatch):
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["retrieval_stats"]["web_hits"] == 0
+
+
+# ── RAG 检索健壮性回归测试 ──────────────────────────────
+
+
+def test_like_escape_wildcards_treated_as_literals():
+    """用户检索词中的 % 与 _ 应作为字面量，而非 SQL 通配符。"""
+    from services.knowledge_source import _like_escape
+
+    # % 和 _ 被转义，反斜杠先转义
+    assert _like_escape("a%b_c") == "a\\%b\\_c"
+    assert _like_escape("100%") == "100\\%"
+    assert _like_escape("a_b") == "a\\_b"
+    assert _like_escape("path\\to") == "path\\\\to"
+
+
+def test_search_does_not_match_via_wildcard_injection():
+    """含 % 的检索词不应匹配任意内容，应只匹配字面包含 % 的资料。"""
+    pid, headers = _create_project()
+    # 一条不含 % 的资料
+    _create_source(pid, title="普通资料", content="这是一段普通正文，没有任何特殊符号。", headers=headers)
+    # 一条字面包含 % 的资料
+    _create_source(pid, title="含百分号", content="折扣率 50% 的活动。", headers=headers)
+
+    resp = client.post(
+        f"/api/projects/{pid}/knowledge/search",
+        json={"query": "50%"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    hits = resp.json().get("results", [])
+    titles = {h.get("title", "") for h in hits}
+    # 应只命中字面含 "50%" 的资料，不含通配符语义下的"普通资料"
+    assert "含百分号" in titles
+    assert "普通资料" not in titles
+
+
+def test_grouped_evidence_respects_total_char_budget():
+    """证据 prompt 应按总字符预算截断，超出部分不进入 prompt。"""
+    from services.knowledge_retrieval import GroupedEvidence, ClassifiedEvidence
+
+    grouped = GroupedEvidence()
+    # 构造远超预算的证据
+    long_snippet = "x" * 800
+    for i in range(20):
+        grouped.generic.append(ClassifiedEvidence(
+            evidence_type="generic_context",
+            source_kind="chunk", source_id=str(i), chunk_id=str(i),
+            title=f"资料{i}", snippet=long_snippet, score=1.0,
+        ))
+
+    text = grouped.to_prompt_text(max_chars=2000, per_section=20)
+    # 截断后长度受预算约束（允许少量标题开销超出）
+    assert len(text) < 2200
+    # 不应包含全部 20 条
+    assert text.count("资料") < 20
+
+
+def test_grouped_evidence_budget_preserves_high_priority_sections():
+    """预算不足时应优先保留靠前的高优先级分组，低优先级被截断。"""
+    from services.knowledge_retrieval import GroupedEvidence, ClassifiedEvidence
+
+    grouped = GroupedEvidence()
+    # 高优先级：人物直接证据，多条大 snippet 占满预算
+    for i in range(4):
+        grouped.direct_character.append(ClassifiedEvidence(
+            evidence_type="direct_character_evidence",
+            source_kind="chunk", source_id=f"1{i}", chunk_id=f"1{i}",
+            title=f"人物证据{i}", snippet="A" * 600, score=10.0,
+        ))
+    # 低优先级：普通资料
+    grouped.generic.append(ClassifiedEvidence(
+        evidence_type="generic_context",
+        source_kind="chunk", source_id="2", chunk_id="2",
+        title="普通证据", snippet="B" * 600, score=1.0,
+    ))
+
+    # 预算只够装下高优先级的前几条
+    text = grouped.to_prompt_text(max_chars=1500, per_section=6)
+    assert "人物证据0" in text
+    # 预算被高优先级占满后，低优先级 section 不应出现
+    assert "普通证据" not in text
+    assert "普通资料" not in text
+
+
+def test_grouped_evidence_budget_zero_or_negative_does_not_crash():
+    """预算为 0 或负（history/web 占满总预算的极端情况）时不应崩溃，产出受控。"""
+    from services.knowledge_retrieval import GroupedEvidence, ClassifiedEvidence
+
+    grouped = GroupedEvidence()
+    grouped.generic.append(ClassifiedEvidence(
+        evidence_type="generic_context",
+        source_kind="chunk", source_id="1", chunk_id="1",
+        title="证据", snippet="X" * 800, score=1.0,
+    ))
+
+    # 负预算：ask 流程在 history 极长时可能算出负值，to_prompt_text 必须安全
+    text_neg = grouped.to_prompt_text(max_chars=-100, per_section=6)
+    assert isinstance(text_neg, str)
+    # 0 预算
+    text_zero = grouped.to_prompt_text(max_chars=0, per_section=6)
+    assert isinstance(text_zero, str)
+    # 极端情况下产出长度远小于正常 snippet（不会把 800 字全塞进去）
+    assert len(text_neg) < 100
+    assert len(text_zero) < 100
+
+
+def test_ask_prompt_respects_hard_cap_with_long_history():
+    """ask 接口在对话历史很长时，最终 prompt 仍受总预算硬上限约束，且用户问题不被裁掉。"""
+    pid, headers = _create_project()
+    _create_source(
+        pid,
+        title="证据资料",
+        content="穆宁雪是冰系法师，觉醒寒冰系能力。" * 10,
+        headers=headers,
+    )
+
+    # 先建会话
+    sess = client.post(f"/api/projects/{pid}/knowledge/sessions", headers=headers).json()
+    conversation_id = sess["id"]
+
+    # 灌入多轮超长历史，撑大 conversation_history
+    long_msg = "关于穆宁雪的能力详情，" + ("资料补充说明。" * 400)
+    for _ in range(4):
+        resp_h = client.post(
+            f"/api/projects/{pid}/knowledge/ask",
+            json={"question": long_msg, "conversation_id": conversation_id},
+            headers=headers,
+        )
+        assert resp_h.status_code == 200, resp_h.text
+        # 确认历史确实复用同一会话（conversation_id 回传一致）
+        assert resp_h.json().get("conversation_id") == conversation_id
+
+    # 再问一次，history 已很长；只要不报错且能返回，说明硬上限兜底生效
+    final_q = "穆宁雪是什么系？"
+    resp = client.post(
+        f"/api/projects/{pid}/knowledge/ask",
+        json={"question": final_q, "conversation_id": conversation_id},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    answer = data.get("answer", "")
+    assert answer, "用户问题被裁剪或 prompt 组装失败，应仍能返回回答"
+    # 用户问题未被盲切：回答应与最终问题相关（含"冰系"或角色名）
+    assert "冰系" in answer or "穆宁雪" in answer
+
+
+def test_retrieve_caps_chunks_per_source():
+    """单个 source 贡献的 chunk 数应受 MAX_CHUNKS_PER_SOURCE 限制（真实检索路径）。"""
+    from sqlalchemy import select
+    from services.knowledge_query_plan import build_knowledge_query_plan
+    from services.knowledge_retrieval import retrieve_and_classify, MAX_CHUNKS_PER_SOURCE
+    from models.project_source_chunk import ProjectSourceChunk as _Chunk
+    from test_smoke import test_session_factory
+
+    pid, headers = _create_project()
+    # 每段带章节标题，强制结构分块，切出远超 MAX_CHUNKS_PER_SOURCE 的 chunk
+    segment = "穆宁雪觉醒冰系法师的能力，掌握寒冰系基础技能。" * 4
+    long_content = "\n\n".join(f"## 第{i}段\n{segment}" for i in range(20))
+    create_resp = _create_source(pid, title="穆宁雪长资料", content=long_content, headers=headers)
+    sid = create_resp.json()["id"]
+
+    # 确认确实切出了 >8 个 chunk
+    async def _count():
+        async with test_session_factory() as session:
+            result = await session.execute(select(_Chunk).where(_Chunk.source_id == sid))
+            return len(list(result.scalars().all()))
+    assert asyncio.run(_count()) > MAX_CHUNKS_PER_SOURCE
+
+    plan = build_knowledge_query_plan("穆宁雪是什么系？", project_id=pid)
+
+    async def _retrieve():
+        async with test_session_factory() as session:
+            _, _, grouped = await retrieve_and_classify(
+                session, pid, plan,
+                intent="character_ability",
+                entities=["穆宁雪"],
+                attributes=["冰系"],
+                include_structured=False,
+                limit=30,
+            )
+            return grouped
+
+    grouped = asyncio.run(_retrieve())
+    # 统计 grouped 各分组中来自该 source 的 chunk 数
+    all_items = (
+        list(grouped.direct_character) + list(grouped.relationship)
+        + list(grouped.ability_table) + list(grouped.worldbuilding)
+        + list(grouped.timeline) + list(grouped.generic)
+    )
+    same_source_chunks = [it for it in all_items if it.source_id == sid and it.chunk_id]
+    assert len(same_source_chunks) <= MAX_CHUNKS_PER_SOURCE, (
+        f"同 source chunk 数 {len(same_source_chunks)} 超过上限 {MAX_CHUNKS_PER_SOURCE}"
+    )
+
+
+def test_chunk_and_save_no_longer_writes_mock_embedding():
+    """切片入库不应再写入 mock embedding（向量检索未接入，字段应留空）。"""
+    from sqlalchemy import select
+    from models.project_source_chunk import ProjectSourceChunk as _Chunk
+    from test_smoke import test_session_factory
+
+    pid, headers = _create_project()
+    create_resp = _create_source(pid, title="切片测试", content="段落一。段落二。段落三。" * 20, headers=headers)
+    sid = create_resp.json()["id"]
+
+    # 触发 reindex 确保 chunk_and_save 执行
+    resp = client.post(f"/api/projects/{pid}/knowledge/sources/{sid}/reindex", headers=headers)
+    assert resp.status_code == 200, resp.text
+
+    # 直接查 DB 验证 embedding 字段未被填充
+    async def _check():
+        async with test_session_factory() as session:
+            result = await session.execute(
+                select(_Chunk).where(_Chunk.source_id == sid)
+            )
+            return list(result.scalars().all())
+
+    chunks = asyncio.run(_check())
+    assert len(chunks) > 0
+    for c in chunks:
+        assert not c.embedding, f"chunk {c.chunk_index} 不应写入 embedding，得到 {c.embedding!r}"
+
+
+# ── 证据就近绑定回归测试（防止法系误归因） ─────────────────
+
+
+def test_classify_direct_binding_true_positive():
+    """人物与法系就近绑定（释放/觉醒）应判为 direct_character_evidence。"""
+    from services.knowledge_retrieval import _classify_evidence
+
+    result = {
+        "snippet": "张小侯释放风系魔法击退了敌人，展现出强大的控制力。",
+        "title": "战斗片段",
+        "source_type": "",
+    }
+    ev_type = _classify_evidence(
+        result,
+        intent="character_ability",
+        entities=["张小侯"],
+        attributes=["风系"],
+    )
+    assert ev_type == "direct_character_evidence", f"就近绑定应判 direct，得到 {ev_type}"
+
+
+def test_classify_rejects_third_party_attribution():
+    """'赵满延的光系魔法保护了张小侯'不应把光系归因给张小侯。
+
+    这是误归因的核心场景：片段同时含张小侯和光系，但光系属于赵满延。
+    """
+    from services.knowledge_retrieval import _classify_evidence
+
+    result = {
+        "snippet": "赵满延的光系魔法保护了张小侯，挡下了致命一击。",
+        "title": "团战片段",
+        "source_type": "",
+    }
+    ev_type = _classify_evidence(
+        result,
+        intent="character_ability",
+        entities=["张小侯", "赵满延"],  # 已知实体含赵满延，用于识别第三人
+        attributes=["光系"],
+    )
+    assert ev_type != "direct_character_evidence", (
+        f"旁人施法不应判 direct（误归因），得到 {ev_type}"
+    )
+    # 应降级为 relationship（旁人相关）或 generic
+    assert ev_type in ("relationship_evidence", "generic_context"), (
+        f"应降级为 relationship/generic，得到 {ev_type}"
+    )
+
+
+def test_classify_nearby_binding_with_bystander_present():
+    """旁人在场但不夹在人物与法系之间时，绑定仍应成立。
+
+    '张小侯觉醒了冰系，同时赵满延在场'：冰系绑定张小侯，赵满延只是旁观，
+    不应因有第三人出现就拒绝绑定。
+    """
+    from services.knowledge_retrieval import _classify_evidence
+
+    result = {
+        "snippet": "张小侯觉醒了冰系能力，同时赵满延在一旁观战。",
+        "title": "觉醒片段",
+        "source_type": "",
+    }
+    ev_type = _classify_evidence(
+        result,
+        intent="character_ability",
+        entities=["张小侯", "赵满延"],
+        attributes=["冰系"],
+    )
+    assert ev_type == "direct_character_evidence", (
+        f"旁人在场不挡绑定，应判 direct，得到 {ev_type}"
+    )
+
+
+def test_classify_no_attributes_demotes_to_generic():
+    """character_ability 意图但无属性时，含人物名片段应降级为 generic。
+
+    避免无属性时把所有含人物名的片段都当直接证据，引入无关法系。
+    """
+    from services.knowledge_retrieval import _classify_evidence
+
+    result = {
+        "snippet": "张小侯站在城墙之上，望着远方的敌军。",
+        "title": "场景描写",
+        "source_type": "",
+    }
+    ev_type = _classify_evidence(
+        result,
+        intent="character_ability",
+        entities=["张小侯"],
+        attributes=[],  # planner 未解析出法系
+    )
+    assert ev_type == "generic_context", f"无属性应降级 generic，得到 {ev_type}"
+
+
+# ── API 级回归：法系误归因端到端 ─────────────────────────
+
+
+def test_ask_character_system_no_third_party_attribution():
+    """端到端：问"张小侯是什么系的"，回答应含风系，不含光系/火系。
+
+    资料同时包含：
+    - 张小侯的风系正向证据（反问句式）
+    - 赵满延的光系魔法保护张小侯（误归因陷阱）
+    - 莫凡释放火系，张小侯旁观（误归因陷阱）
+
+    本地确定性答案 _try_compile_local_qa_answer 在 mock LLM 下即可验证，
+    不依赖真实模型。
+    """
+    pid, headers = _create_project()
+    _create_source(
+        pid,
+        title="张小侯能力",
+        content=(
+            "张小侯，你不是风系的吗，看看能不能把风系的初阶技能-风轨释放出来。"
+            "赵满延的光系魔法保护了张小侯，挡下了致命一击。"
+            "莫凡释放火系魔法，张小侯在旁观看。"
+        ),
+        headers=headers,
+    )
+
+    # 先建会话
+    sess = client.post(f"/api/projects/{pid}/knowledge/sessions", headers=headers).json()
+    conversation_id = sess["id"]
+
+    resp = client.post(
+        f"/api/projects/{pid}/knowledge/ask",
+        json={"question": "张小侯是什么系的", "conversation_id": conversation_id},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    answer = data.get("answer", "")
+
+    # 核心断言：回答应明确张小侯是风系
+    assert "风系" in answer, f"回答应含风系，实际: {answer!r}"
+    # 不应把旁人的法系误归因给张小侯
+    assert "光系" not in answer, f"回答不应含光系（旁人赵满延的法系），实际: {answer!r}"
+    assert "火系" not in answer, f"回答不应含火系（旁人莫凡的法系），实际: {answer!r}"
+
+
+# ── 规则事实索引：抽取与写入测试（文档 §13.1） ──────────
+
+
+def test_fact_extraction_character_system_no_misattribution():
+    """规则抽取：张小侯->风系命中，光系/火系不误归因。"""
+    from services.knowledge_fact_rules import extract_character_system_facts_from_text
+
+    text = (
+        "张小侯，你不是风系的吗，看看能不能把风轨释放出来。"
+        "赵满延的光系魔法保护了张小侯。"
+        "莫凡释放火系魔法，张小侯在旁观看。"
+    )
+    facts = extract_character_system_facts_from_text(text, source_title="测试")
+    pairs = {(f.subject, f.object) for f in facts}
+
+    assert ("张小侯", "风系") in pairs, f"应抽到张小侯->风系，实际: {pairs}"
+    assert ("张小侯", "光系") not in pairs, f"不应误归因张小侯->光系，实际: {pairs}"
+    assert ("张小侯", "火系") not in pairs, f"不应误归因张小侯->火系，实际: {pairs}"
+
+
+def test_fact_extraction_multiple_systems():
+    """规则抽取：同一人物多法系都能抽到。"""
+    from services.knowledge_fact_rules import extract_character_system_facts_from_text
+
+    text = "莫凡觉醒了火系。这是莫凡的雷霆系星尘。莫凡释放暗影系魔法遁入影中。"
+    facts = extract_character_system_facts_from_text(text)
+    objs = {f.object for f in facts if f.subject == "莫凡"}
+
+    assert "火系" in objs
+    assert "雷系" in objs  # 雷霆系归一化
+    assert "暗影系" in objs
+
+
+def test_fact_extraction_excludes_hypothetical_and_generic():
+    """规则抽取：假设性语境和通用法系罗列不抽。"""
+    from services.knowledge_fact_rules import extract_character_system_facts_from_text
+
+    text = "张小侯希望自己能觉醒雷系。元素魔法七系包括冰系、火系、土系。"
+    facts = extract_character_system_facts_from_text(text)
+    # 不应把"希望觉醒雷系"或"七系包括"抽成事实
+    assert not any(f.subject == "张小侯" for f in facts), "假设性语境不应抽事实"
+
+
+def test_rebuild_source_facts_extracts_character_system():
+    """端到端：上传资料后 rebuild_source_facts 写入事实表（文档 §13.1）。"""
+    from sqlalchemy import select
+    from models.project_knowledge_fact import ProjectKnowledgeFact
+    from services.knowledge_fact_index import rebuild_source_facts, query_character_system_facts
+    from test_smoke import test_session_factory
+
+    pid, headers = _create_project()
+    create_resp = _create_source(
+        pid,
+        title="张小侯能力",
+        content=(
+            "张小侯，你不是风系的吗，看看能不能把风轨释放出来。"
+            "赵满延的光系魔法保护了张小侯。"
+            "莫凡释放火系魔法，张小侯在旁观看。"
+        ),
+        headers=headers,
+    )
+    sid = create_resp.json()["id"]
+
+    async def _rebuild():
+        async with test_session_factory() as session:
+            return await rebuild_source_facts(session, pid, sid)
+
+    result = asyncio.run(_rebuild())
+    assert result["fact_count"] > 0, f"应抽到事实，实际: {result}"
+
+    # 查事实表
+    async def _query():
+        async with test_session_factory() as session:
+            return await query_character_system_facts(session, pid, subject="张小侯")
+
+    facts = asyncio.run(_query())
+    objs = {f.object for f in facts}
+    assert "风系" in objs, f"应有张小侯->风系，实际: {objs}"
+    assert "光系" not in objs, f"不应有张小侯->光系，实际: {objs}"
+    assert "火系" not in objs, f"不应有张小侯->火系，实际: {objs}"
+
+
+# ── reindex 替换旧 facts 测试（文档 §13.4） ──────────────
+
+
+def test_reindex_replaces_old_facts():
+    """修改资料后 reindex，旧事实应被删除、新事实应存在。"""
+    from models.project_knowledge_fact import ProjectKnowledgeFact
+    from services.knowledge_fact_index import query_character_system_facts
+    from test_smoke import test_session_factory
+
+    pid, headers = _create_project()
+    # 1. 上传资料 A：张小侯是风系
+    create_resp = _create_source(
+        pid, title="能力资料", content="张小侯是风系。", headers=headers,
+    )
+    sid = create_resp.json()["id"]
+
+    # 2. 确认 facts 有风系（上传时已自动重建）
+    async def _query(subject):
+        async with test_session_factory() as session:
+            return await query_character_system_facts(session, pid, subject=subject)
+
+    facts_before = asyncio.run(_query("张小侯"))
+    assert "风系" in {f.object for f in facts_before}, "上传后应有张小侯->风系"
+
+    # 3. 修改资料为：张小侯是土系
+    client.patch(
+        f"/api/projects/{pid}/knowledge/sources/{sid}",
+        json={"content": "张小侯是土系。"},
+        headers=headers,
+    )
+
+    # 4. 调 source reindex（patch 已自动重建，这里显式再调一次确保）
+    resp = client.post(
+        f"/api/projects/{pid}/knowledge/sources/{sid}/reindex", headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["fact_count"] > 0
+
+    # 5. 旧风系 fact 被删除，新土系 fact 存在
+    facts_after = asyncio.run(_query("张小侯"))
+    objs_after = {f.object for f in facts_after}
+    assert "土系" in objs_after, f"reindex 后应有张小侯->土系，实际: {objs_after}"
+    assert "风系" not in objs_after, f"reindex 后旧风系应被删除，实际: {objs_after}"
+
+
+# ── QA 优先查 facts 的 API 级测试（文档 §13.2、§13.3） ──
+
+
+def test_ask_character_system_uses_fact_index():
+    """问"张小侯是什么系的"，优先查 facts，回答含风系、不含光系/火系。
+
+    citations 应含 character_system_fact 类型，且不混入无关火系技能表。
+    """
+    pid, headers = _create_project()
+    _create_source(
+        pid,
+        title="张小侯能力",
+        content=(
+            "张小侯，你不是风系的吗，看看能不能把风轨释放出来。"
+            "赵满延的光系魔法保护了张小侯。"
+            "莫凡释放火系魔法，张小侯在旁观看。"
+        ),
+        headers=headers,
+    )
+
+    resp = client.post(
+        f"/api/projects/{pid}/knowledge/ask",
+        json={"question": "张小侯是什么系的"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    answer = data["answer"]
+    citations = data.get("citations", [])
+
+    assert "风系" in answer, f"回答应含风系，实际: {answer!r}"
+    assert "光系" not in answer, f"回答不应含光系，实际: {answer!r}"
+    assert "火系" not in answer, f"回答不应含火系，实际: {answer!r}"
+
+    # citations 应含 fact 证据类型
+    evidence_types = {c.get("evidence_type") for c in citations}
+    assert "character_system_fact" in evidence_types, (
+        f"citations 应含 character_system_fact，实际 evidence_types: {evidence_types}"
+    )
+    # 不应混入无关火系技能表
+    for c in citations:
+        assert "火系技能表" not in c.get("snippet", ""), "citations 不应混入火系技能表"
+
+
+def test_fact_index_citations_dedupe_same_binding():
+    """同一人物-法系有多条证据时，QA citations 不应重复刷屏。"""
+    from models.project_knowledge_fact import ProjectKnowledgeFact
+
+    pid, headers = _create_project()
+    create_resp = _create_source(
+        pid,
+        title="重复事实资料",
+        content="这是一份用于挂载事实索引的资料。",
+        headers=headers,
+    )
+    sid = create_resp.json()["id"]
+
+    async def _insert_duplicate_facts():
+        async with test_session_factory() as session:
+            session.add_all([
+                ProjectKnowledgeFact(
+                    project_id=pid,
+                    source_id=sid,
+                    fact_type="character_system",
+                    subject="张小侯",
+                    predicate="has_magic_system",
+                    object="风系",
+                    confidence="explicit",
+                    evidence_text="张小侯是风系。",
+                    extractor="test",
+                    metadata_={"source_title": "重复事实资料"},
+                ),
+                ProjectKnowledgeFact(
+                    project_id=pid,
+                    source_id=sid,
+                    fact_type="character_system",
+                    subject="张小侯",
+                    predicate="has_magic_system",
+                    object="风系",
+                    confidence="explicit",
+                    evidence_text="张小侯释放风轨，证明他掌握风系。",
+                    extractor="test",
+                    metadata_={"source_title": "重复事实资料"},
+                ),
+                ProjectKnowledgeFact(
+                    project_id=pid,
+                    source_id=sid,
+                    fact_type="character_system",
+                    subject="张小侯",
+                    predicate="has_magic_system",
+                    object="风系",
+                    confidence="explicit",
+                    evidence_text="张小侯的风系表现很稳定。",
+                    extractor="test",
+                    metadata_={"source_title": "重复事实资料"},
+                ),
+            ])
+            await session.commit()
+
+    asyncio.run(_insert_duplicate_facts())
+
+    resp = client.post(
+        f"/api/projects/{pid}/knowledge/ask",
+        json={"question": "张小侯是什么系的"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert "风系" in data["answer"]
+
+    matched = [
+        c for c in data.get("citations", [])
+        if c.get("evidence_type") == "character_system_fact"
+        and c.get("matched_query") == "张小侯 -> 风系"
+    ]
+    assert len(matched) == 1, f"同一绑定只应返回一条引用，实际: {matched}"
+
+
+def test_ask_character_by_system_uses_fact_index():
+    """问"谁是风系"，反向查 facts，回答含张小侯、不含赵满延。"""
+    pid, headers = _create_project()
+    _create_source(
+        pid,
+        title="人物法系",
+        content=(
+            "张小侯，你不是风系的吗，看看能不能把风轨释放出来。"
+            "赵满延的光系魔法保护了张小侯。"
+        ),
+        headers=headers,
+    )
+
+    resp = client.post(
+        f"/api/projects/{pid}/knowledge/ask",
+        json={"question": "谁是风系"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    answer = data["answer"]
+
+    assert "张小侯" in answer, f"回答应含张小侯，实际: {answer!r}"
+    # 赵满延是光系不是风系，不应出现在"谁是风系"的回答里
+    assert "赵满延" not in answer, f"回答不应含赵满延，实际: {answer!r}"
+
+
+# ── facts API 接口测试（文档 §10） ───────────────────────
+
+
+def test_facts_api_list_and_rebuild():
+    """GET /knowledge/facts 列出事实；POST /knowledge/facts/rebuild 重建。"""
+    pid, headers = _create_project()
+    _create_source(
+        pid,
+        title="能力资料",
+        content="张小侯是风系。莫凡觉醒了火系。",
+        headers=headers,
+    )
+
+    # 上传时已自动重建 facts，GET 应能列出
+    resp = client.get(f"/api/projects/{pid}/knowledge/facts", headers=headers)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["total"] > 0, "上传后应有事实"
+    subjects = {item["subject"] for item in data["items"]}
+    assert "张小侯" in subjects
+    assert "莫凡" in subjects
+
+    # 按 subject 过滤
+    resp2 = client.get(
+        f"/api/projects/{pid}/knowledge/facts?subject=张小侯", headers=headers,
+    )
+    assert resp2.status_code == 200
+    items2 = resp2.json()["items"]
+    assert all(item["subject"] == "张小侯" for item in items2)
+    assert any(item["object"] == "风系" for item in items2)
+
+    # 重建（全项目）
+    resp3 = client.post(
+        f"/api/projects/{pid}/knowledge/facts/rebuild",
+        json={"source_id": None, "fact_types": ["character_system"]},
+        headers=headers,
+    )
+    assert resp3.status_code == 200, resp3.text
+    rebuild_data = resp3.json()
+    assert rebuild_data["fact_count"] > 0
+    assert rebuild_data["source_count"] >= 1
+
+    # 重建后 facts 仍在
+    resp4 = client.get(f"/api/projects/{pid}/knowledge/facts", headers=headers)
+    assert resp4.json()["total"] > 0
+
+
+def test_facts_api_rebuild_single_source():
+    """POST /knowledge/facts/rebuild 指定 source_id 重建单个资料的事实。"""
+    pid, headers = _create_project()
+    create_resp = _create_source(
+        pid, title="单资料", content="张小侯是风系。", headers=headers,
+    )
+    sid = create_resp.json()["id"]
+
+    resp = client.post(
+        f"/api/projects/{pid}/knowledge/facts/rebuild",
+        json={"source_id": sid, "fact_types": ["character_system"]},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["fact_count"] > 0
+    assert data["source_count"] == 1

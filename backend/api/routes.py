@@ -34,6 +34,9 @@ from models.project_source import ProjectSource
 from models.project_source_chunk import ProjectSourceChunk
 from models.knowledge_qa_session import KnowledgeQaSession
 from models.knowledge_qa_message import KnowledgeQaMessage
+from models.structured_knowledge import (
+    CharacterProfile, AbilityProfile, EventTimeline, WorldRule,
+)
 from schemas.api import (
     ProjectCreate, ProjectUpdate, ProjectResponse,
     TxtImportResponse,
@@ -3765,6 +3768,16 @@ async def create_knowledge_source(
     if req.source_type == "fanfic_rule" and not req.always_inject:
         always_inject = True
 
+    # novel 类型：genre/canon_level 存入 metadata_，供抽取阶段读取
+    metadata_ = req.metadata_ or {}
+    if req.source_type == "novel":
+        if req.genre:
+            metadata_["genre"] = req.genre
+        if req.canon_level:
+            metadata_["canon_level"] = req.canon_level
+        elif "canon_level" not in metadata_:
+            metadata_["canon_level"] = "original"
+
     source = ProjectSource(
         project_id=uid,
         title=req.title,
@@ -3772,7 +3785,7 @@ async def create_knowledge_source(
         content=req.content,
         always_inject=always_inject,
         tags=req.tags,
-        metadata_=req.metadata_,
+        metadata_=metadata_ or None,
         token_count=len(req.content),
     )
     db.add(source)
@@ -3781,6 +3794,10 @@ async def create_knowledge_source(
     # 自动切片（短资料也能保底存一个 chunk）
     from services.knowledge_source import chunk_and_save
     await chunk_and_save(db, uid, str(source.id))
+
+    # 上传后自动重建事实索引，不让用户必须手动点 reindex
+    from services.knowledge_fact_index import rebuild_source_facts
+    await rebuild_source_facts(db, uid, str(source.id))
 
     # 重新查询确保所有列（含 server_default 的 updated_at）被正确加载
     result = await db.execute(select(ProjectSource).where(ProjectSource.id == source.id))
@@ -3795,6 +3812,8 @@ async def upload_knowledge_file(
     source_type: str = Form(default="upload"),
     tags: str = Form(default=""),
     always_inject: bool = Form(default=False),
+    genre: str = Form(default=""),
+    canon_level: str = Form(default="original"),
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
@@ -3803,9 +3822,18 @@ async def upload_knowledge_file(
     await _verify_project_owner(uid, user.id, db)
 
     # source_type 白名单校验
-    allowed_types = {"upload", "fanfic_rule", "timeline", "note", "reference"}
+    allowed_types = {"upload", "fanfic_rule", "timeline", "note", "reference", "novel"}
     if source_type not in allowed_types:
         raise HTTPException(status_code=400, detail=f"source_type 必须是 {allowed_types} 之一")
+
+    # novel 类型：genre / canon_level 校验
+    if source_type == "novel":
+        allowed_genres = {"magic_fantasy", "historical"}
+        if genre and genre not in allowed_genres:
+            raise HTTPException(status_code=400, detail=f"genre 必须是 {allowed_genres} 之一")
+        allowed_canons = {"manual", "fanfic", "original"}
+        if canon_level and canon_level not in allowed_canons:
+            raise HTTPException(status_code=400, detail=f"canon_level 必须是 {allowed_canons} 之一")
 
     filename = file.filename or "upload.txt"
     if not title.strip():
@@ -3828,6 +3856,12 @@ async def upload_knowledge_file(
     if source_type == "fanfic_rule":
         always_inject = True
 
+    # metadata：file_metadata + content_type；novel 类型额外存 genre/canon_level
+    source_metadata = {**file_metadata, "content_type": file.content_type}
+    if source_type == "novel":
+        source_metadata["genre"] = genre or "magic_fantasy"
+        source_metadata["canon_level"] = canon_level or "original"
+
     source = ProjectSource(
         project_id=uid,
         title=title,
@@ -3836,7 +3870,7 @@ async def upload_knowledge_file(
         always_inject=always_inject,
         tags=tags.split(",") if tags.strip() else None,
         token_count=len(content),
-        metadata_={**file_metadata, "content_type": file.content_type},
+        metadata_=source_metadata,
     )
     db.add(source)
     await db.commit()
@@ -3845,7 +3879,16 @@ async def upload_knowledge_file(
     from services.knowledge_source import chunk_and_save
     await chunk_and_save(db, uid, str(source.id))
 
-    return {"id": str(source.id), "title": source.title, "chunk_count": source.chunk_count}
+    # 上传后自动重建事实索引
+    from services.knowledge_fact_index import rebuild_source_facts
+    fact_result = await rebuild_source_facts(db, uid, str(source.id))
+
+    return {
+        "id": str(source.id),
+        "title": source.title,
+        "chunk_count": source.chunk_count,
+        "fact_count": fact_result["fact_count"],
+    }
 
 
 @router.get("/projects/{project_id}/knowledge/sources/{source_id}", response_model=ProjectSourceResponse)
@@ -3900,10 +3943,12 @@ async def update_knowledge_source(
 
     await db.commit()
 
-    # 内容变更后自动重建切片
+    # 内容变更后自动重建切片与事实索引
     if "content" in update_data and update_data["content"] is not None:
         from services.knowledge_source import chunk_and_save
         await chunk_and_save(db, uid, sid)
+        from services.knowledge_fact_index import rebuild_source_facts
+        await rebuild_source_facts(db, uid, sid)
 
     # 重新查询确保所有列被正确加载
     result = await db.execute(select(ProjectSource).where(ProjectSource.id == sid, ProjectSource.project_id == uid))
@@ -4094,15 +4139,21 @@ async def reindex_single_source(
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """重新切片单个资料条目。"""
+    """重新切片单个资料条目，并重建其事实索引。"""
     uid = _to_uuid(project_id)
     await _verify_project_owner(uid, user.id, db)
     sid = _to_uuid(source_id)
 
     from services.knowledge_source import chunk_and_save
+    from services.knowledge_fact_index import rebuild_source_facts
 
     chunk_count = await chunk_and_save(db, uid, sid)
-    return {"source_id": source_id, "chunk_count": chunk_count}
+    fact_result = await rebuild_source_facts(db, uid, sid)
+    return {
+        "source_id": source_id,
+        "chunk_count": chunk_count,
+        "fact_count": fact_result["fact_count"],
+    }
 
 
 @router.post("/projects/{project_id}/knowledge/reindex")
@@ -4111,13 +4162,298 @@ async def reindex_all_sources(
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """重新切片项目的所有资料条目。"""
+    """重新切片项目的所有资料条目，并重建项目事实索引。"""
     uid = _to_uuid(project_id)
     await _verify_project_owner(uid, user.id, db)
 
     from services.knowledge_source import reindex_project_sources
+    from services.knowledge_fact_index import rebuild_project_facts
 
     result = await reindex_project_sources(db, uid)
+    fact_result = await rebuild_project_facts(db, uid)
+    return {
+        "source_count": result["total_sources"],
+        "chunk_count": result["total_chunks"],
+        "fact_count": fact_result["fact_count"],
+    }
+
+
+@router.get("/projects/{project_id}/knowledge/facts")
+async def list_knowledge_facts(
+    project_id: str,
+    fact_type: str | None = None,
+    subject: str | None = None,
+    object: str | None = None,
+    source_id: str | None = None,
+    confidence: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """列出规则事实索引。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    from services.knowledge_fact_index import list_facts
+
+    items, total = await list_facts(
+        db, uid,
+        fact_type=fact_type, subject=subject, object_=object,
+        source_id=source_id, confidence=confidence,
+        limit=limit, offset=offset,
+    )
+    return {
+        "items": [
+            {
+                "id": str(f.id),
+                "fact_type": f.fact_type,
+                "subject": f.subject,
+                "predicate": f.predicate,
+                "object": f.object,
+                "confidence": f.confidence,
+                "source_id": str(f.source_id),
+                "chunk_id": str(f.chunk_id) if f.chunk_id else None,
+                "evidence_text": f.evidence_text,
+                "extractor": f.extractor,
+                "created_at": f.created_at.isoformat() if f.created_at else None,
+            }
+            for f in items
+        ],
+        "total": total,
+    }
+
+
+@router.post("/projects/{project_id}/knowledge/facts/rebuild")
+async def rebuild_knowledge_facts(
+    project_id: str,
+    req: dict | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """重建事实索引（单 source 或全项目）。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    from services.knowledge_fact_index import rebuild_source_facts, rebuild_project_facts
+
+    body = req or {}
+    source_id = body.get("source_id")
+    fact_types = body.get("fact_types") or ["character_system"]
+
+    if source_id:
+        result = await rebuild_source_facts(db, uid, source_id, fact_types=fact_types)
+        return {
+            "source_count": 1,
+            "chunk_count": result["chunk_count"],
+            "fact_count": result["fact_count"],
+        }
+    result = await rebuild_project_facts(db, uid, fact_types=fact_types)
+    return result
+
+
+@router.get("/projects/{project_id}/knowledge/structured/{table}")
+async def list_structured_knowledge(
+    project_id: str,
+    table: str,
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """列出结构化知识表数据（人物/能力/事件/世界规则）。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    from sqlalchemy import select, func
+    valid_tables = {
+        "character_profile": CharacterProfile,
+        "ability_profile": AbilityProfile,
+        "event_timeline": EventTimeline,
+        "world_rule": WorldRule,
+    }
+    if table not in valid_tables:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"无效表名: {table}")
+    Model = valid_tables[table]
+
+    base = select(Model).where(Model.project_id == uid)
+    count_base = select(func.count(Model.id)).where(Model.project_id == uid)
+    total = (await db.execute(count_base)).scalar() or 0
+    rows = (await db.execute(
+        base.order_by(Model.source_priority.desc(), Model.confidence.desc())
+        .offset(offset).limit(limit)
+    )).scalars().all()
+
+    items = []
+    for r in rows:
+        item = {
+            "id": str(r.id),
+            "source_id": str(r.source_id) if r.source_id else None,
+            "canon_level": r.canon_level,
+            "origin": r.origin,
+            "source_priority": r.source_priority,
+            "confidence": r.confidence,
+            "evidence": r.evidence or [],
+            "chapter_no": getattr(r, "chapter_no", None) or getattr(r, "first_seen_chapter", None),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        # 各表特有字段
+        if table == "character_profile":
+            item.update({"name": r.name, "aliases": r.aliases or [], "identity_desc": r.identity_desc, "status_desc": r.status_desc})
+        elif table == "ability_profile":
+            item.update({"character_name": r.character_name, "ability_type": r.ability_type, "ability_name": r.ability_name, "level_desc": r.level_desc, "status": r.status})
+        elif table == "event_timeline":
+            item.update({"event_title": r.event_title, "event_desc": r.event_desc, "characters": r.characters or [], "location_desc": r.location_desc, "importance": r.importance})
+        elif table == "world_rule":
+            item.update({"category": r.category, "rule_text": r.rule_text, "priority": r.priority})
+        items.append(item)
+    return {"items": items, "total": total}
+
+
+@router.post("/projects/{project_id}/knowledge/sources/{source_id}/split-chapters")
+async def split_chapters(
+    project_id: str,
+    source_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """切分资料源为章节，写入 project_source_chapters。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(source_id)
+
+    from services.chapter_splitter import split_source_chapters
+
+    result = await split_source_chapters(db, uid, sid)
+    return {
+        "project_id": project_id,
+        "source_id": source_id,
+        "chapter_count": result.chapter_count,
+        "split_type": result.split_type,
+    }
+
+
+@router.post("/projects/{project_id}/knowledge/sources/{source_id}/extract")
+async def start_extraction(
+    project_id: str,
+    source_id: str,
+    req: dict | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """启动（或推进）LLM 结构化抽取任务。
+
+    采用 job 表 + 轮询推进模式：本接口创建/查找 job 并推进若干章，
+    返回 job_id 与当前状态。前端轮询 /extract/status 查进度，
+    再次调用本接口继续推进未完成章节。
+    """
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(source_id)
+
+    from services.extraction_service import advance_extraction_job
+
+    body = req or {}
+    job = await advance_extraction_job(
+        db, uid, sid,
+        user_id=str(user.id),
+        genre=body.get("genre", "magic_fantasy"),
+        canon_level=body.get("canon_level", "original"),
+        origin=body.get("origin", "llm_extracted"),
+        chapter_no_start=body.get("chapter_no_start", 1),
+        chapter_no_end=body.get("chapter_no_end"),
+        max_chapters_per_run=body.get("max_chapters_per_run", 20),
+        force_reextract=body.get("force_reextract", False),
+    )
+    return {
+        "job_id": str(job["id"]),
+        "status": job["status"],
+        "provider": job.get("provider") or "mock",
+        "is_mock": (job.get("provider") or "mock") == "mock",
+        "last_run_outcome": job.get("last_run_outcome", "none"),
+        "total_chapters": job["total_chapters"],
+        "extracted_count": job["extracted_count"],
+        "validated_count": job["validated_count"],
+        "merged_count": job["merged_count"],
+        "failed_count": job["failed_count"],
+    }
+
+
+@router.get("/projects/{project_id}/knowledge/sources/{source_id}/extract/status")
+async def get_extraction_status(
+    project_id: str,
+    source_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """查询抽取任务状态。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(source_id)
+
+    from services.extraction_service import get_latest_job_status, _resolve_provider_name
+
+    # 当前用户的 LLM provider，用于前端区分 mock / 真实数据
+    provider_name = await _resolve_provider_name(str(user.id), db)
+    is_mock = provider_name == "mock"
+
+    status = await get_latest_job_status(db, uid, sid)
+    if not status:
+        return {"job_id": None, "status": "NONE", "total_chapters": 0,
+                "extracted_count": 0, "validated_count": 0,
+                "merged_count": 0, "failed_count": 0,
+                "provider": provider_name, "is_mock": is_mock,
+                "last_run_outcome": "none"}
+    # 兼容文档 §15.4 字段名：id → job_id
+    status["job_id"] = status.get("id")
+    # provider 优先用 job 上记录的（反映抽取时的实际 provider），回退当前配置
+    status["provider"] = status.get("provider") or provider_name
+    status["is_mock"] = status["provider"] == "mock"
+    return status
+
+
+@router.post("/projects/{project_id}/knowledge/sources/{source_id}/extract/reset")
+async def reset_extraction(
+    project_id: str,
+    source_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """重置抽取：清除 staging/job/4 张结构化表，保留原文和 chunks。
+
+    只删当前 project_id + source_id 的数据。重置后 status 回到 NONE，
+    用户可重新切分章节 + 开始抽取。
+    """
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(source_id)
+
+    from services.extraction_service import reset_extraction as _reset
+
+    return await _reset(db, uid, sid)
+
+
+@router.post("/projects/{project_id}/knowledge/structured-qa")
+async def structured_qa(
+    project_id: str,
+    req: dict,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """结构化问答：基于结构化知识表回答人物能力/事件/世界规则三类问题。
+
+    查询优先级：manual > fanfic > ability_profile > project_knowledge_facts > RAG fallback。
+    禁止 LLM 凭常识补充，查不到明确说未找到。
+    """
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    from services.structured_qa import answer_structured_question
+
+    question = req.get("question", "")
+    conversation_id = req.get("conversation_id")
+    result = await answer_structured_question(db, uid, question, conversation_id=conversation_id)
     return result
 
 

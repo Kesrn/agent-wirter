@@ -464,8 +464,21 @@ export const api = {
     request<void>(`/projects/${projectId}/knowledge/sources/${sourceId}`, { method: 'DELETE' }),
 
   reindexSource: (projectId: string, sourceId: string) =>
-    request<{ source_id: string; chunk_count: number }>(
+    request<{ source_id: string; chunk_count: number; fact_count: number }>(
       `/projects/${projectId}/knowledge/sources/${sourceId}/reindex`, { method: 'POST' },
+    ),
+
+  rebuildFacts: (projectId: string, sourceId?: string | null) =>
+    request<{ source_count: number; chunk_count: number; fact_count: number }>(
+      `/projects/${projectId}/knowledge/facts/rebuild`,
+      { method: 'POST', body: JSON.stringify({ source_id: sourceId ?? null, fact_types: ['character_system'] }) },
+    ),
+
+  listFacts: (projectId: string, params?: { subject?: string; object?: string; limit?: number }) =>
+    request<{ items: any[]; total: number }>(
+      `/projects/${projectId}/knowledge/facts` + (params ? '?' + new URLSearchParams(
+        Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]) as any
+      ).toString() : ''),
     ),
 
   summarizeSource: (projectId: string, sourceId: string) =>
@@ -558,6 +571,65 @@ export const api = {
       throw new ApiError(res.status, parseApiError(res.status, body))
     }
     return res.json() as Promise<{ id: string; title: string; chunk_count: number }>
+  },
+
+  // ─── Novel Extraction Pipeline ───
+  splitChapters: (projectId: string, sourceId: string) =>
+    request<{ project_id: string; source_id: string; chapter_count: number; split_type: string }>(
+      `/projects/${projectId}/knowledge/sources/${sourceId}/split-chapters`, { method: 'POST' },
+    ),
+
+  startExtraction: (projectId: string, sourceId: string, params: {
+    genre?: string; canon_level?: string; origin?: string;
+    chapter_no_start?: number; chapter_no_end?: number;
+    max_chapters_per_run?: number; force_reextract?: boolean;
+  }) =>
+    request<{
+      job_id: string; status: string; total_chapters: number;
+      extracted_count: number; validated_count: number;
+      merged_count: number; failed_count: number;
+      provider: string | null; is_mock: boolean; last_run_outcome: string;
+    }>(`/projects/${projectId}/knowledge/sources/${sourceId}/extract`, {
+      method: 'POST', body: JSON.stringify(params),
+    }),
+
+  getExtractionStatus: (projectId: string, sourceId: string) =>
+    request<{
+      job_id: string | null; status: string; total_chapters: number;
+      extracted_count: number; validated_count: number;
+      merged_count: number; failed_count: number; error_message: string | null;
+      provider: string | null; is_mock: boolean; last_run_outcome: string;
+    }>(`/projects/${projectId}/knowledge/sources/${sourceId}/extract/status`),
+
+  resetExtraction: (projectId: string, sourceId: string) =>
+    request<{
+      status: string; deleted_jobs: number; deleted_staging: number;
+      deleted_characters: number; deleted_abilities: number;
+      deleted_events: number; deleted_world_rules: number;
+    }>(`/projects/${projectId}/knowledge/sources/${sourceId}/extract/reset`, { method: 'POST' }),
+
+  structuredQA: (projectId: string, question: string, conversationId?: string) =>
+    request<{
+      answer: string; citations: any[]; query_plan: any;
+      retrieval_stats: any; conversation_id: string;
+    }>(`/projects/${projectId}/knowledge/structured-qa`, {
+      method: 'POST', body: JSON.stringify({
+        question, conversation_id: conversationId ?? null,
+      }),
+    }),
+
+  // 结构化知识表查询（人物/能力/事件/世界规则）
+  listStructuredKnowledge: <T = any>(projectId: string, table: 'character_profile' | 'ability_profile' | 'event_timeline' | 'world_rule', params?: {
+    limit?: number; offset?: number;
+  }) => {
+    const query = params
+      ? '?' + new URLSearchParams(
+          Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]) as any
+        ).toString()
+      : ''
+    return request<{ items: T[]; total: number }>(
+      `/projects/${projectId}/knowledge/structured/${table}${query}`,
+    )
   },
 
   // ─── Document Versions ───

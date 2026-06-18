@@ -4,7 +4,8 @@
 - 切片是纯文本处理，不调用 LLM。
 - 搜索返回命中结果，不生成回答。
 - 摘要/事实/约束等 AI 字段在 Commit 3 的 summarize_project_source 中填充。
-- embedding 在真实模型接入前使用 mock（SHA256 哈希伪向量）。
+- 检索当前走关键词匹配（ILIKE + 打分），向量检索尚未接入：
+  project_source_chunks.embedding 字段已就位但暂不填充，_mock_embedding 已停用。
 """
 
 from __future__ import annotations
@@ -63,6 +64,21 @@ ABILITY_TABLE_TERMS = (
     "技能", "基础技能", "一阶变体", "二阶变体", "三阶变体",
     "初阶", "中阶", "高阶", "超阶", "禁咒", "阶位",
 )
+
+
+def _like_escape(term: str) -> str:
+    """转义 SQL LIKE/ILIKE 通配符 % 与 _，避免用户输入污染匹配语义。
+
+    反斜杠本身也需先转义。配合 ilike 时 SQLAlchemy 默认不启用 ESCAPE 子句，
+    这里用反斜杠转义并依赖各后端的默认 escape 行为（SQLite/Postgres 均支持
+    反斜杠作为 LIKE escape 字符）。
+    """
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _ilike_contains(column, term: str):
+    """构造 column ILIKE '%term%'，term 中的 % / _ 已转义为字面量。"""
+    return column.ilike(f"%{_like_escape(term)}%", escape="\\")
 
 
 def _is_section_heading(line: str) -> bool:
@@ -289,7 +305,13 @@ def _extract_search_keywords(query: str) -> list[str]:
 
 
 def _mock_embedding(text: str, dim: int = 384) -> list[float]:
-    """SHA256 哈希伪向量，仅供链路可跑，不保证语义质量。"""
+    """[已停用] SHA256 哈希伪向量。
+
+    语义上完全无效（同义不同字 → 不同向量），且 SHA256 hex 仅 64 字符只能产生
+    32 个非零分量，维度声明 384 但后半全 0。资料库检索当前走关键词匹配，
+    未调用此函数。保留仅作为将来接入真实 embedding 服务时的签名参考。
+    真正接入前不应在 chunk_and_save 中生成 embedding。
+    """
     import hashlib
     h = hashlib.sha256(text.encode()).hexdigest()
     values = [int(h[i:i + 2], 16) / 255.0 for i in range(0, min(len(h), dim * 2), 2)]
@@ -348,7 +370,8 @@ async def chunk_and_save(
             chunk_index=i,
             content=chunk_content,
             token_count=_estimate_tokens(chunk_content),
-            embedding=_mock_embedding(chunk_content),
+            # embedding 暂不生成：资料库 RAG 当前走关键词检索，向量检索尚未接入。
+            # 真正接入 embedding 服务后再在此填充（见 _mock_embedding 上方说明）。
         )
         db.add(chunk)
 
@@ -391,16 +414,16 @@ async def search_project_knowledge(
     # 搜索 chunks
     conditions = []
     for kw in all_terms:
-        conditions.append(ProjectSourceChunk.content.ilike(f"%{kw}%"))
-        conditions.append(ProjectSourceChunk.summary.ilike(f"%{kw}%"))
+        conditions.append(_ilike_contains(ProjectSourceChunk.content, kw))
+        conditions.append(_ilike_contains(ProjectSourceChunk.summary, kw))
         # 也搜 chunk keywords 字段
-        conditions.append(ProjectSourceChunk.keywords.cast(SAString).ilike(f"%{kw}%"))
+        conditions.append(_ilike_contains(ProjectSourceChunk.keywords.cast(SAString), kw))
 
     # 搜 source 级别的 summary / key_facts / keywords
     for kw in all_terms:
-        conditions.append(ProjectSource.summary.ilike(f"%{kw}%"))
-        conditions.append(ProjectSource.key_facts.cast(SAString).ilike(f"%{kw}%"))
-        conditions.append(ProjectSource.keywords.cast(SAString).ilike(f"%{kw}%"))
+        conditions.append(_ilike_contains(ProjectSource.summary, kw))
+        conditions.append(_ilike_contains(ProjectSource.key_facts.cast(SAString), kw))
+        conditions.append(_ilike_contains(ProjectSource.keywords.cast(SAString), kw))
 
     if not conditions:
         return []
@@ -414,12 +437,13 @@ async def search_project_knowledge(
         stmt = stmt.where(ProjectSource.source_type == source_type)
     for rt in required_terms or []:
         stmt = stmt.where(or_(
-            ProjectSourceChunk.content.ilike(f"%{rt}%"),
-            ProjectSourceChunk.summary.ilike(f"%{rt}%"),
-            ProjectSource.summary.ilike(f"%{rt}%"),
-            ProjectSource.key_facts.cast(SAString).ilike(f"%{rt}%"),
+            _ilike_contains(ProjectSourceChunk.content, rt),
+            _ilike_contains(ProjectSourceChunk.summary, rt),
+            _ilike_contains(ProjectSource.summary, rt),
+            _ilike_contains(ProjectSource.key_facts.cast(SAString), rt),
         ))
-    stmt = stmt.where(or_(*conditions)).limit(min(limit * 10, 200))
+    stmt = stmt.where(or_(*conditions))
+    # 候选上限：多 required_terms 时放宽候选池以便重排，单条件时收紧。
     candidate_limit = min(max(limit * 80, 400), 1500) if required_terms and len(required_terms) >= 2 else min(limit * 10, 200)
     stmt = stmt.limit(candidate_limit)
 
@@ -692,8 +716,8 @@ async def _search_structured_knowledge(
     try:
         char_conds = []
         for t in all_terms[:5]:
-            char_conds.append(Character.name.ilike(f"%{t}%"))
-            char_conds.append(Character.profile.ilike(f"%{t}%"))
+            char_conds.append(_ilike_contains(Character.name, t))
+            char_conds.append(_ilike_contains(Character.profile, t))
         if char_conds:
             chars_result = await db.execute(
                 select(Character).where(
@@ -726,7 +750,7 @@ async def _search_structured_knowledge(
     try:
         ev_conds = []
         for t in all_terms[:5]:
-            ev_conds.append(CharacterEvent.event_summary.ilike(f"%{t}%"))
+            ev_conds.append(_ilike_contains(CharacterEvent.event_summary, t))
         if ev_conds:
             ev_result = await db.execute(
                 select(CharacterEvent, Character.name).join(
@@ -761,8 +785,8 @@ async def _search_structured_knowledge(
     try:
         ol_conds = []
         for t in all_terms[:5]:
-            ol_conds.append(Outline.title.ilike(f"%{t}%"))
-            ol_conds.append(Outline.summary.ilike(f"%{t}%"))
+            ol_conds.append(_ilike_contains(Outline.title, t))
+            ol_conds.append(_ilike_contains(Outline.summary, t))
         if ol_conds:
             ol_result = await db.execute(
                 select(Outline).where(
@@ -792,8 +816,8 @@ async def _search_structured_knowledge(
     try:
         we_conds = []
         for t in all_terms[:5]:
-            we_conds.append(WorldEntry.title.ilike(f"%{t}%"))
-            we_conds.append(WorldEntry.content.ilike(f"%{t}%"))
+            we_conds.append(_ilike_contains(WorldEntry.title, t))
+            we_conds.append(_ilike_contains(WorldEntry.content, t))
         if we_conds:
             we_result = await db.execute(
                 select(WorldEntry).where(
@@ -826,8 +850,8 @@ async def _search_structured_knowledge(
     try:
         ht_conds = []
         for t in all_terms[:5]:
-            ht_conds.append(HiddenThread.name.ilike(f"%{t}%"))
-            ht_conds.append(HiddenThread.description.ilike(f"%{t}%"))
+            ht_conds.append(_ilike_contains(HiddenThread.name, t))
+            ht_conds.append(_ilike_contains(HiddenThread.description, t))
         if ht_conds:
             ht_result = await db.execute(
                 select(HiddenThread).where(
@@ -1149,8 +1173,9 @@ QA_SYSTEM_PROMPT = """\
 
 # 资料库检索上下文预算
 KNOWLEDGE_QA_RECENT_MESSAGES = 6
-KNOWLEDGE_QA_MAX_CONTEXT_CHARS = 24000
-KNOWLEDGE_QA_MAX_CHUNKS_PER_SOURCE = 8
+KNOWLEDGE_QA_MAX_CONTEXT_CHARS = 24000      # 证据+history+web+policy 的总字符预算（硬上限）
+# 每 source 最大 chunk 数：单一来源在 retrieval 层，此处仅引用，避免双常量漂移。
+from services.knowledge_retrieval import MAX_CHUNKS_PER_SOURCE as KNOWLEDGE_QA_MAX_CHUNKS_PER_SOURCE  # noqa: E402
 
 
 def _polish_qa_answer_format(answer: str) -> str:
@@ -1319,13 +1344,16 @@ def _looks_like_generic_system_context(text: str) -> bool:
     return any(term in text for term in _GENERIC_SYSTEM_CONTEXT_TERMS)
 
 
-def _extract_bound_systems_from_context(character: str, text: str) -> list[str]:
+def _extract_bound_systems_from_context(character: str, text: str,
+                                       known_entities: tuple[str, ...] = ()) -> list[str]:
     if character not in text:
         return []
     if _looks_like_generic_system_context(text):
         return []
     if re.search(rf"(?:收拾|对付|嘲讽|看不起|鄙视|针对).{{0,12}}{re.escape(character)}", text):
         return []
+
+    from services.knowledge_retrieval import _is_entity_attr_bound
 
     found: list[str] = []
     for raw in _KNOWN_SYSTEM_NAMES:
@@ -1341,17 +1369,33 @@ def _extract_bound_systems_from_context(character: str, text: str) -> list[str]:
             rf"{re.escape(character)}的{re.escape(raw)}(?:星尘|星辰|魔法|技能|能力|修为)",
         )
         if any(re.search(pattern, text) for pattern in strong_patterns):
-            if system not in found:
-                found.append(system)
+            if raw not in found:
+                found.append(raw)
+            continue
+
+        # 补充：就近绑定判定（含第三人拦截）。
+        # 覆盖 strong_patterns 漏掉的反问/系动词句式，如"张小侯，你不是风系的吗"，
+        # 同时靠 _is_entity_attr_bound 内部的第三人拦截排除"赵满延的光系保护张小侯"。
+        # 注意：用 raw（原文出现的法系名，如"雷霆系"）做绑定判定，而非 normalize 后的"雷系"。
+        if _is_entity_attr_bound(character, raw, text, known_entities=known_entities):
+            if raw not in found:
+                found.append(raw)
     return found
 
 
-def _extract_character_systems(character: str, evidence_items: list) -> list[str]:
+def _extract_character_systems(character: str, evidence_items: list,
+                              known_entities: tuple[str, ...] = ()) -> list[str]:
     """从证据中抽取某人物明确绑定的法系。
 
     只接受人物附近出现的“觉醒/拥有/主修/星尘”等绑定语境，避免把通用法系表
     或“元素魔法七系”误当成人物个人能力。
+
+    抽取后用就近绑定判定（_is_entity_attr_bound，含第三人拦截）复核：
+    "赵满延的光系魔法保护张小侯"里光系属于赵满延，不会算到张小侯头上。
+    known_entities 传入已知人物实体，用于精确识别第三人。
     """
+    from services.knowledge_retrieval import _is_entity_attr_bound
+
     systems: list[str] = []
     seen: set[str] = set()
 
@@ -1361,6 +1405,10 @@ def _extract_character_systems(character: str, evidence_items: list) -> list[str
             return
         seen.add(system)
         systems.append(system)
+
+    def _bound_in_text(system: str, text: str) -> bool:
+        """就近绑定复核：法系是否真的绑定到目标人物（而非第三人）。"""
+        return _is_entity_attr_bound(character, system, text, known_entities=known_entities)
 
     for item in evidence_items:
         snippet = getattr(item, "snippet", "") or ""
@@ -1376,7 +1424,10 @@ def _extract_character_systems(character: str, evidence_items: list) -> list[str
             window = snippet[start:end]
             if any(term in window for term in _HYPOTHETICAL_SYSTEM_CONTEXT_TERMS):
                 continue
-            for system in _extract_bound_systems_from_context(character, window):
+            for system in _extract_bound_systems_from_context(character, window, known_entities):
+                # 就近绑定复核：防止旁人法系被误归因
+                if not _bound_in_text(system, window):
+                    continue
                 add(system)
 
         # 句子模式：适配“穆宁雪早期明确觉醒冰系，后续掌握风系”这种资料句。
@@ -1386,10 +1437,86 @@ def _extract_character_systems(character: str, evidence_items: list) -> list[str
                 continue
             if any(term in sentence for term in _HYPOTHETICAL_SYSTEM_CONTEXT_TERMS):
                 continue
-            for system in _extract_bound_systems_from_context(character, sentence):
+            for system in _extract_bound_systems_from_context(character, sentence, known_entities):
+                if not _bound_in_text(system, sentence):
+                    continue
                 add(system)
 
     return systems
+
+
+async def _try_answer_from_facts(
+    db: AsyncSession,
+    project_id: str,
+    v2_plan,
+) -> tuple[str, list[dict]] | None:
+    """优先查规则事实索引，命中则返回确定性答案 + 仅含 fact evidence 的 citations。
+
+    处理两种意图：
+    - character_ability（某人是什么系）：按 subject 查该人物法系
+    - character_by_ability（谁是某系）：按 object 查某法系的人物
+    未命中返回 None，由调用方回退到 RAG。
+    """
+    from services.knowledge_fact_index import query_character_system_facts
+
+    intent = getattr(v2_plan, "intent", "general")
+    entities = list(getattr(v2_plan, "entities", []) or [])
+    attributes = list(getattr(v2_plan, "attributes", []) or [])
+    # 干净人物名（剔除"X系"）
+    character_entities = [x for x in entities if isinstance(x, str) and x and not x.endswith("系")]
+    # 法系候选（attributes 或 entities 里以"系"结尾的）
+    system_candidates = [x for x in attributes + entities if isinstance(x, str) and x.endswith("系")]
+
+    # 正向：某人是什么系
+    if intent == "character_ability" and character_entities:
+        character = character_entities[0]
+        facts = await query_character_system_facts(db, project_id, subject=character, limit=50)
+        if not facts:
+            return None
+        systems = list(dict.fromkeys(f.object for f in facts))  # 保序去重
+        lines = "\n".join(f"- {s}" for s in systems[:12])
+        answer = f"根据资料索引，**{character}** 明确绑定的法系有：\n\n{lines}"
+        # citations 只含参与回答的 fact evidence
+        citations = [
+            {
+                "source_kind": "project_knowledge_fact",
+                "source_id": str(f.source_id),
+                "chunk_id": str(f.chunk_id) if f.chunk_id else None,
+                "title": (f.metadata_ or {}).get("source_title", "") or "资料",
+                "snippet": f.evidence_text[:300],
+                "evidence_type": "character_system_fact",
+                "matched_query": f"{f.subject} -> {f.object}",
+                "score": 1.0,
+            }
+            for f in facts
+        ]
+        return answer, citations
+
+    # 反向：谁是某系
+    if intent == "character_by_ability" and system_candidates:
+        system = _normalize_system_name(system_candidates[0])
+        facts = await query_character_system_facts(db, project_id, system=system, limit=50)
+        if not facts:
+            return None
+        names = list(dict.fromkeys(f.subject for f in facts))  # 保序去重
+        lines = "\n".join(f"- {n}" for n in names[:12])
+        answer = f"根据资料索引，明确绑定 **{system}** 的人物有：\n\n{lines}"
+        citations = [
+            {
+                "source_kind": "project_knowledge_fact",
+                "source_id": str(f.source_id),
+                "chunk_id": str(f.chunk_id) if f.chunk_id else None,
+                "title": (f.metadata_ or {}).get("source_title", "") or "资料",
+                "snippet": f.evidence_text[:300],
+                "evidence_type": "character_system_fact",
+                "matched_query": f"{f.subject} -> {f.object}",
+                "score": 1.0,
+            }
+            for f in facts
+        ]
+        return answer, citations
+
+    return None
 
 
 def _try_compile_local_qa_answer(question: str, v2_plan, evidence_grouped) -> str | None:
@@ -1435,7 +1562,8 @@ def _try_compile_local_qa_answer(question: str, v2_plan, evidence_grouped) -> st
 
     if intent == "character_ability" and not system and character_entities:
         character = character_entities[0]
-        systems = _extract_character_systems(character, positive_items)
+        # 传入已知实体（含其它人物），用于就近绑定时的第三人拦截
+        systems = _extract_character_systems(character, positive_items, known_entities=tuple(character_entities))
         if systems:
             lines = "\n".join(f"- {name}" for name in systems[:12])
             return f"根据当前资料，**{character}** 明确绑定的法系有：\n\n{lines}"
@@ -1536,50 +1664,110 @@ async def ask_knowledge_question(
             history_lines.append(f"{role_label}: {msg.content[:500]}")
         conversation_history += "## 最近对话\n" + "\n".join(history_lines)
 
+    # -- 4.5 优先查规则事实索引（人物-法系），命中则短路 RAG/LLM
+    fact_answer: tuple[str, list[dict]] | None = await _try_answer_from_facts(db, pid, v2_plan)
+
     compiled_answer = _try_compile_local_qa_answer(question, v2_plan, evidence_grouped)
 
-    # -- 5. 组装 prompt（证据分组格式）--
-    user_prompt_parts = [evidence_grouped.to_prompt_text()]
+    # -- 5. 组装 prompt（按优先级分配预算，绝不裁剪用户问题）--
+    # 优先级（高→低，低优先级先被裁）：用户问题 + 指代消解 > 证据 > answer_policy > web > history
+    # 这样即便 history/web 极长，被裁的也是它们，用户问题永远完整保留。
+
+    # 5.1 必保留部分（不可裁剪）
+    must_keep_parts: list[str] = [f"## 用户问题\n{question}"]
+    if resolved_question != question:
+        must_keep_parts.append(f"## 指代消解\n原问题: {question}\n检索问题: {resolved_question}")
+    must_keep_text = "\n\n".join(must_keep_parts)
+    # 分隔符开销（每段间 "\n\n"）
+    sep_len = 2
+    must_keep_len = len(must_keep_text)
+
+    # 5.2 可裁剪部分，按优先级从高到低（裁剪时从低优先级开始砍）
+    answer_policy_text = f"answer_policy: {v2_plan.answer_policy}" if v2_plan.answer_policy else ""
+
+    web_text = ""
     if web_results:
         web_lines = ["## 联网查询结果"]
         for item in web_results[:5]:
             url = item.get("url") or item.get("source_id") or ""
             web_lines.append(f"- [{item.get('title', '网页结果')}] {item.get('snippet', '')[:1000]}\n  URL: {url}")
-        user_prompt_parts.append("\n".join(web_lines))
-    if v2_plan.answer_policy:
-        user_prompt_parts.append(f"answer_policy: {v2_plan.answer_policy}")
-    if resolved_question != question:
-        user_prompt_parts.append(f"## 指代消解\n原问题: {question}\n检索问题: {resolved_question}")
-    if conversation_history:
-        user_prompt_parts.append(conversation_history)
-    user_prompt_parts.append(f"## 用户问题\n{question}")
+        web_text = "\n".join(web_lines)
+
+    history_text = conversation_history
+
+    # 5.3 分层分配预算：先扣必保留，剩余按 evidence > policy > web > history 分配
+    remaining = KNOWLEDGE_QA_MAX_CONTEXT_CHARS - must_keep_len
+    # history 优先级最低，先给它最小承诺（总预算的 1/4，但不超过它自身长度）
+    history_budget = min(len(history_text), max(0, remaining // 4)) if history_text else 0
+    remaining_after_history = remaining - history_budget
+    # web 次低
+    web_budget = min(len(web_text), max(0, remaining_after_history // 3)) if web_text else 0
+    remaining_after_web = remaining_after_history - web_budget
+    # policy
+    policy_budget = min(len(answer_policy_text), max(0, remaining_after_web // 4)) if answer_policy_text else 0
+    remaining_after_policy = remaining_after_web - policy_budget
+    # 证据拿剩下的全部
+    evidence_budget = remaining_after_policy
+
+    # 5.4 按预算裁剪各段（history/web 超预算从尾部截，保留开头更早的上下文）
+    evidence_text = evidence_grouped.to_prompt_text(max_chars=evidence_budget)
+    if answer_policy_text and len(answer_policy_text) > policy_budget:
+        answer_policy_text = answer_policy_text[:policy_budget]
+    if web_text and len(web_text) > web_budget:
+        web_text = web_text[:web_budget]
+    if history_text and len(history_text) > history_budget:
+        history_text = history_text[:history_budget]
+
+    # 5.5 按稳定顺序拼接（证据在前，问题在最后，确保问题不会被任何裁剪波及）
+    user_prompt_parts: list[str] = []
+    if evidence_text:
+        user_prompt_parts.append(evidence_text)
+    if web_text:
+        user_prompt_parts.append(web_text)
+    if answer_policy_text:
+        user_prompt_parts.append(answer_policy_text)
+    if history_text:
+        user_prompt_parts.append(history_text)
+    user_prompt_parts.append(must_keep_text)
     user_prompt = "\n\n".join(user_prompt_parts)
 
-    # -- 7. LLM 调用 --
-    provider = None
-    answer = compiled_answer or ""
-    llm_citations: list[dict] = []
-    try:
-        from agents.llm_provider import LLMConfigError, get_llm_provider
-        from api.llm_deps import get_user_llm_config
-        llm_config_dict = await get_user_llm_config(str(user_id), db)
-        provider = get_llm_provider(llm_config_dict)
-        if not compiled_answer:
-            result_text = await provider.generate(QA_SYSTEM_PROMPT, user_prompt, temperature=0.3, max_tokens=2000)
-            parsed = _safe_parse_json(result_text)
-            answer = _polish_qa_answer_format(parsed.get("answer", result_text))
-            llm_citations = parsed.get("citations", [])
-    except LLMConfigError as exc:
-        logger.warning("模型配置不可用: %s", exc)
-        if not answer:
-            answer = f"模型配置不可用: {exc}"
-    except Exception:
-        logger.exception("LLM 调用失败")
-        if not answer:
-            answer = "抱歉，AI 模型暂时无法响应，请稍后重试。"
+    # 硬上限兜底：理论上分层预算已保证不超，此处防御性收尾，且只裁可裁部分（非 must_keep）。
+    if len(user_prompt) > KNOWLEDGE_QA_MAX_CONTEXT_CHARS:
+        overflow = len(user_prompt) - KNOWLEDGE_QA_MAX_CONTEXT_CHARS
+        # 只从 must_keep 之前的内容裁，保证用户问题完整
+        head = "\n\n".join(user_prompt_parts[:-1])
+        head = head[:max(0, len(head) - overflow)]
+        user_prompt = (head + "\n\n" + must_keep_text) if head else must_keep_text
 
-    # -- 8. citations：用分组证据顺序（含 evidence_type），否定证据不返回引用
-    all_citations = evidence_grouped.to_citations() + web_results
+    # -- 7. LLM 调用（facts 命中时短路，不调 LLM）--
+    provider = None
+    if fact_answer is not None:
+        # 规则事实索引命中：直接用确定性答案，citations 只含 fact evidence
+        answer, all_citations = fact_answer
+    else:
+        answer = compiled_answer or ""
+        llm_citations: list[dict] = []
+        try:
+            from agents.llm_provider import LLMConfigError, get_llm_provider
+            from api.llm_deps import get_user_llm_config
+            llm_config_dict = await get_user_llm_config(str(user_id), db)
+            provider = get_llm_provider(llm_config_dict)
+            if not compiled_answer:
+                result_text = await provider.generate(QA_SYSTEM_PROMPT, user_prompt, temperature=0.3, max_tokens=2000)
+                parsed = _safe_parse_json(result_text)
+                answer = _polish_qa_answer_format(parsed.get("answer", result_text))
+                llm_citations = parsed.get("citations", [])
+        except LLMConfigError as exc:
+            logger.warning("模型配置不可用: %s", exc)
+            if not answer:
+                answer = f"模型配置不可用: {exc}"
+        except Exception:
+            logger.exception("LLM 调用失败")
+            if not answer:
+                answer = "抱歉，AI 模型暂时无法响应，请稍后重试。"
+
+        # -- 8. citations：用分组证据顺序（含 evidence_type），否定证据不返回引用
+        all_citations = evidence_grouped.to_citations() + web_results
 
     # -- 9. 保存消息 --
     if session_obj.message_count == 0 and session_obj.title == "资料问答":

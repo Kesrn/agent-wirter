@@ -63,6 +63,122 @@ WORLDBUILDING_TERMS = (
 # 人物名字模式：2-4个中文字符
 CHARACTER_NAME_RE = re.compile(r"[\u4e00-\u9fff]{2,4}")
 
+# 单个 source 最多贡献的 chunk 数，避免一个长资料淹没证据池
+MAX_CHUNKS_PER_SOURCE = 8
+
+
+# ── 就近绑定判定 ────────────────────────────────────────
+# 解决"赵满延的光系魔法保护张小侯"被误归因为张小侯会光系的问题。
+# 只做句法就近判定，不引入具体角色/法系名，避免硬编码偏向某部作品。
+
+# 子句分隔符：比 _split_sentences 更细，含逗号/分号/换行，
+# 能在"赵满延的光系魔法保护了张小侯"这类长句里定位到逗号级边界。
+_CLAUSE_SPLIT_RE = re.compile(r"[。！？!?；;\n\r，,]+")
+
+# 人物—属性绑定连接词（通用动词/系词，不含具体内容）
+BINDING_TERMS = (
+    "是", "为", "属于", "觉醒", "拥有", "修炼", "掌握",
+    "学会", "使用", "释放", "施展", "擅长", "精通", "是个",
+)
+
+
+def _split_clauses(text: str) -> list[str]:
+    """按句末标点 + 逗号/分号/换行切分子句，返回去空后的非空片段列表。"""
+    return [s.strip() for s in _CLAUSE_SPLIT_RE.split(text) if s.strip()]
+
+
+def _find_all(haystack: str, needle: str) -> list[int]:
+    """返回 needle 在 haystack 中所有出现位置（左端点）。"""
+    if not needle:
+        return []
+    starts = []
+    start = 0
+    while True:
+        idx = haystack.find(needle, start)
+        if idx < 0:
+            break
+        starts.append(idx)
+        start = idx + 1
+    return starts
+
+
+def _has_other_name_between(clause: str, entity: str, attr: str,
+                            e_pos: int, a_pos: int,
+                            known_entities: tuple[str, ...] = ()) -> bool:
+    """检查 entity 与 attr 在 clause 中之间是否夹着第三个人名。
+
+    用于拦截"赵满延的光系魔法保护了张小侯"：entity=张小侯、attr=光系，
+    两者之间夹着"赵满延"这个人名，说明光系是赵满延的而非张小侯的。
+
+    只把"已知人物实体列表里出现过、且不是当前 entity"的名字当作第三人，
+    避免把"释放""觉醒"这类 2-4 字的绑定动词误判为人名。
+    """
+    if not known_entities:
+        # 没有已知实体列表时退化为：跳过任何与绑定词重叠的疑似人名
+        lo, hi = sorted((e_pos, a_pos))
+        span = clause[lo + len(entity):hi] if e_pos < a_pos else clause[lo + len(attr):hi]
+        for m in CHARACTER_NAME_RE.finditer(span):
+            name = m.group()
+            if name == entity or name == attr or name in entity or entity in name:
+                continue
+            if any(ch in name for bt in BINDING_TERMS for ch in bt):
+                continue
+            return True
+        return False
+
+    others = [ke for ke in known_entities if ke and ke != entity and ke != attr]
+    if not others:
+        return False
+    lo, hi = sorted((e_pos, a_pos))
+    span = clause[lo + len(entity):hi] if e_pos < a_pos else clause[lo + len(attr):hi]
+    return any(o.lower() in span for o in others)
+
+
+def _is_entity_attr_bound(entity: str, attr: str, clause: str,
+                          known_entities: tuple[str, ...] = ()) -> bool:
+    """判断 entity 与 attr 在单个子句内是否就近绑定。
+
+    绑定成立条件（满足其一）：
+    1. 属格紧邻：clause 含 "entity的attr"（张小侯的风系）
+    2. 绑定词连接：entity 与 attr 之间字符距离 ≤ 阈值，且中间含绑定词
+       （张小侯觉醒风系 / 张小侯释放风系魔法）
+    且不满足"第三人夹击"排除条件。
+    known_entities 传入已知人物实体，用于精确识别第三人（避免把动词误判为人名）。
+    """
+    e = entity.lower()
+    a = attr.lower()
+    c = clause.lower()
+    if e not in c or a not in c:
+        return False
+
+    # 1. 属格紧邻
+    genitive = f"{e}的{a}"
+    gpos = c.find(genitive)
+    if gpos >= 0:
+        if _has_other_name_between(c, e, a, gpos, gpos + len(e) + 1, known_entities):
+            return False
+        return True
+
+    e_positions = _find_all(c, e)
+    a_positions = _find_all(c, a)
+    for ep in e_positions:
+        for ap in a_positions:
+            dist = abs(ap - ep)
+            if dist > max(8, len(e) + len(a) + 4):
+                continue
+            # 取 entity 与 attr 之间的文本（含 attr/entity 邻域以捕捉"是"等连接词）
+            if ep < ap:
+                window = c[ep:ap + len(a)]
+            else:
+                window = c[ap:ep + len(e)]
+            # 2. 绑定词连接
+            if any(bt in window for bt in BINDING_TERMS):
+                # 排除第三人人名夹击
+                if _has_other_name_between(c, e, a, ep, ap, known_entities):
+                    continue
+                return True
+    return False
+
 
 # ── 数据结构 ────────────────────────────────────────────
 
@@ -102,10 +218,12 @@ class GroupedEvidence:
             + self.generic
         )
 
-    def to_prompt_text(self) -> str:
-        """生成分组证据的 prompt 文本。
+    def to_prompt_text(self, *, max_chars: int = 18000, per_section: int = 6) -> str:
+        """生成分组证据的 prompt 文本，按总字符预算截断。
 
-        否定证据只在没有任何正向证据时才包含，避免干扰模型。
+        - 按分组优先级顺序填充，预算耗尽即停止，保证高优先级证据不被低优先级挤掉。
+        - 否定证据只在没有任何正向证据时才包含，避免干扰模型。
+        - max_chars: 证据部分的总字符预算（不含 history/web/policy，那些由 ask 流程另计）。
         """
         positive = self.positive_evidence()
         parts: list[str] = []
@@ -119,20 +237,41 @@ class GroupedEvidence:
             ("普通资料", self.generic),
         ]
 
+        # 预留 section 标题开销（"## xxx\n" 约 8 字符）与分隔符
+        overhead_per_section = 10
+        used = 0
         for label, items in sections:
             if not items:
                 continue
+            if used + overhead_per_section >= max_chars:
+                break
             lines = [f"## {label}"]
-            for item in items[:6]:
-                lines.append(f"- [{item.title}] {item.snippet[:600]}")
-            parts.append("\n".join(lines))
+            added = 0
+            for item in items[:per_section]:
+                snippet = item.snippet[:600]
+                line = f"- [{item.title}] {snippet}"
+                if used + len(line) + 1 > max_chars:
+                    break
+                lines.append(line)
+                used += len(line) + 1
+                added += 1
+            if added:
+                parts.append("\n".join(lines))
+                used += overhead_per_section
 
         # 否定证据仅在无正向证据时才出现
         if not positive and self.negative:
-            lines = ["## 否定或限制性证据"]
-            for item in self.negative[:3]:
-                lines.append(f"- [{item.title}] {item.snippet[:600]}")
-            parts.append("\n".join(lines))
+            if used + overhead_per_section < max_chars:
+                lines = ["## 否定或限制性证据"]
+                for item in self.negative[:3]:
+                    snippet = item.snippet[:600]
+                    line = f"- [{item.title}] {snippet}"
+                    if used + len(line) + 1 > max_chars:
+                        break
+                    lines.append(line)
+                    used += len(line) + 1
+                if len(lines) > 1:
+                    parts.append("\n".join(lines))
 
         return "\n\n".join(parts) if parts else "（未找到相关证据）"
 
@@ -194,21 +333,46 @@ def _classify_evidence(result: dict, intent: str, entities: list[str], attribute
         if rel_hits >= 2:
             return "relationship_evidence"
 
-    # 5. 人物直接证据（人物 + 属性同段）
+    # 5. 人物直接证据（目标人物 + 属性就近绑定）
+    # 不再仅凭"片段同时含人物和属性"判定，必须【目标实体】与属性子句级就近绑定，
+    # 否则"赵满延的光系魔法保护张小侯"会被误归因为张小侯会光系。
+    # 目标实体取 entities[0]（查询主语）；若其它实体与属性绑定，说明属性不属于目标，降级。
     if entities and attributes:
         entity_present = any(e.lower() in content for e in entities)
         attr_present = any(a.lower() in content for a in attributes)
-        if entity_present and attr_present:
-            # 排除纯技能表
-            if table_hits < 2:
+        if entity_present and attr_present and table_hits < 2:
+            known = tuple(entities)
+            snippet_raw = result.get("snippet", "") or ""
+            clauses = _split_clauses(snippet_raw)
+            target = entities[0]
+            others = [e for e in entities[1:] if e]
+
+            # 目标实体是否与任一属性就近绑定
+            target_bound = any(
+                _is_entity_attr_bound(target, a, cl, known_entities=known)
+                for a in attributes for cl in clauses
+            )
+            if target_bound:
                 return "direct_character_evidence"
 
-    # 6. 人物直接证据（人物资料类）
+            # 目标未绑定：若其它实体与属性绑定了，说明属性属于旁人 → 旁人相关
+            other_bound = any(
+                _is_entity_attr_bound(o, a, cl, known_entities=known)
+                for o in others for a in attributes for cl in clauses
+            )
+            if other_bound:
+                return "relationship_evidence"
+            # 同段出现但无任何就近绑定 → 普通正文，避免误归因
+            return "generic_context"
+
+    # 6. 人物直接证据（人物资料类，无明确属性绑定时降级）
+    # 原：character_ability 意图 + 含人物名 → direct。
+    # 问题：无属性时把所有含人物名的片段都当直接证据，易引入与该人物无关的法系片段。
+    # 改：仅当确实无法解析出属性时保留为 generic（人物资料相关但不构成能力绑定）。
     if intent in ("character_profile", "character_ability") and entities:
         if any(e.lower() in content for e in entities):
-            # 有人物相关内容但不是技能表
             if table_hits < 2:
-                return "direct_character_evidence"
+                return "generic_context"
 
     # 7. 时间线 / 事件
     if intent in ("timeline", "plot_event"):
@@ -307,6 +471,11 @@ async def retrieve_and_classify(
 
     entities = entities or plan.entities
     attributes = attributes or []
+    # 清洗：规则路径下 v2_plan.entities 可能混入"X系"法系词，剔除后才是干净人名，
+    # 避免把法系词当作"第三人人名"参与就近绑定判定。
+    clean_entities = [e for e in entities if e and not e.endswith("系")]
+    if clean_entities:
+        entities = clean_entities
 
     # 1. 复用现有检索
     if include_structured:
@@ -356,6 +525,19 @@ async def retrieve_and_classify(
     all_classified.sort(
         key=lambda e: (_rerank_priority(e.evidence_type, intent), -e.score),
     )
+
+    # 3.5 每 source 最多保留 MAX_CHUNKS_PER_SOURCE 条，避免单个长资料淹没证据池。
+    #     结构化条目（character/outline/world_entry 等 chunk_id 为空）不受此限。
+    source_chunk_counts: dict[str, int] = {}
+    capped: list[ClassifiedEvidence] = []
+    for item in all_classified:
+        if item.chunk_id:
+            key = item.source_id
+            if source_chunk_counts.get(key, 0) >= MAX_CHUNKS_PER_SOURCE:
+                continue
+            source_chunk_counts[key] = source_chunk_counts.get(key, 0) + 1
+        capped.append(item)
+    all_classified = capped
 
     # 4. 分组
     grouped = GroupedEvidence()
