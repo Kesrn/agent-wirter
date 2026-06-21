@@ -65,6 +65,7 @@ class ExpertCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=500)
     role_type: str = Field(pattern=r"^(writer|critic|editor|researcher|custom)$")
+    skill_dir: str | None = Field(default=None, max_length=100)
     system_prompt: str = Field(default="", max_length=2000)
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     max_tokens: int = Field(default=4096, ge=100, le=8192)
@@ -100,6 +101,7 @@ class ExpertCreate(BaseModel):
 class ExpertUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=500)
+    skill_dir: str | None = Field(default=None, max_length=100)
     system_prompt: str | None = Field(default=None, max_length=2000)
     temperature: float | None = Field(default=None, ge=0.0, le=1.0)
     max_tokens: int | None = Field(default=None, ge=100, le=8192)
@@ -135,6 +137,7 @@ class ExpertResponse(BaseModel):
     name: str
     description: str
     role_type: str
+    skill_dir: str | None
     system_prompt: str
     temperature: float
     max_tokens: int

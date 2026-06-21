@@ -1,6 +1,7 @@
 """最小冒烟测试 — 使用 SQLite 内存数据库，无需 PostgreSQL"""
 
 import asyncio
+import json
 import os
 import re
 
@@ -30,7 +31,7 @@ from db.session import get_db, set_engine
 from main import app
 from services.diff_service import compute_diff
 from services.version_service import create_version
-from skills.runner import build_expert_system_prompt
+from skills.runner import build_expert_skill_pack, build_expert_system_prompt
 from api.routes import _article_system_prompt, _article_brief
 from config.settings import settings
 
@@ -206,6 +207,11 @@ def test_create_project():
     experts = resp3.json()
     assert len(experts) == 6
     assert experts[0]["name"] == "创意大师"
+    builtin_skills = {e["name"]: e["skill_dir"] for e in experts}
+    assert builtin_skills["创意大师"] == "creative-master"
+    assert builtin_skills["情节转折大师"] == "plot-twister"
+    assert builtin_skills["渲染大师"] == "sensory-renderer"
+    assert builtin_skills["概括者"] == "summarizer"
 
 
 def test_project_mode_default_novel():
@@ -900,6 +906,36 @@ def test_skill_prompt_strips_output_templates():
     assert "【听觉】" not in renderer_prompt
 
 
+def test_expert_skill_pack_summary_is_traceable():
+    pack = build_expert_skill_pack(
+        "writer",
+        project_id="project-1",
+        chapter_id="chapter-1",
+        context="上下文",
+        draft="草稿",
+        mode="full_pipeline",
+    )
+    summary = pack.to_summary()
+
+    assert summary["expert"] == "writer"
+    assert summary["skill_dir"] == "creative-master"
+    assert summary["has_content"] is True
+    assert summary["token_estimate"] > 0
+    assert {"type": "project", "id": "project-1"} in summary["sources"]
+    assert {"type": "chapter", "id": "chapter-1"} in summary["sources"]
+    assert {"type": "mode", "value": "full_pipeline"} in summary["sources"]
+
+
+def test_expert_skill_pack_explicit_skill_dir_overrides_role_mapping():
+    pack = build_expert_skill_pack("writer", skill_dir="sensory-renderer")
+    summary = pack.to_summary()
+
+    assert summary["expert"] == "writer"
+    assert summary["skill_dir"] == "sensory-renderer"
+    assert summary["skill"] == "sensory_renderer"
+    assert pack.has_content is True
+
+
 def test_chapter_patch_empty_title_rejected():
     headers = _auth_headers()
     resp = client.post("/api/projects", json={"title": "空标题测试"}, headers=headers)
@@ -1098,6 +1134,7 @@ def test_create_custom_expert():
         "name": "悬疑大师",
         "description": "擅长悬疑推理",
         "role_type": "writer",
+        "skill_dir": "plot-twister",
         "system_prompt": "你是一位悬疑推理大师。",
         "temperature": 0.7,
         "max_tokens": 4096,
@@ -1109,6 +1146,7 @@ def test_create_custom_expert():
     assert resp2.status_code == 200
     assert resp2.json()["name"] == "悬疑大师"
     assert resp2.json()["is_builtin"] is False
+    assert resp2.json()["skill_dir"] == "plot-twister"
 
 
 def test_safety_validation():
@@ -1153,6 +1191,8 @@ def test_generate_chapter_sse():
     assert resp3.status_code == 200
     text = resp3.text
     assert "event: progress" in text
+    assert "event: skill_pack" in text
+    assert '"skill_dir": "plot-twister"' in text
     assert "event: done" in text
 
 
@@ -1202,6 +1242,38 @@ def test_full_pipeline_approve_persists_after_human_review():
     assert versions[0]["source"] == "ai_approve"
 
 
+def test_full_pipeline_records_skill_pack_metadata():
+    headers = _auth_headers("pipeline_skill_pack", "pipeline_skill_pack")
+    resp = client.post("/api/projects", json={"title": "Skill Pack 元信息测试"}, headers=headers)
+    project_id = resp.json()["id"]
+
+    client.post(f"/api/projects/{project_id}/chapters", json={
+        "title": "第一章", "sequence_number": 1,
+    }, headers=headers)
+
+    resp_generate = client.post(f"/api/projects/{project_id}/chapters/generate", json={
+        "chapter_num": 1,
+        "mode": "full_pipeline",
+    }, headers=headers)
+    assert resp_generate.status_code == 200
+    text = resp_generate.text
+    assert "event: skill_pack" in text
+    assert '"skill_dir": "creative-master"' in text
+    assert "event: generation_record" in text
+
+    record_match = re.search(r'event: generation_record\s+data: (\{[^\n]+\})', text)
+    assert record_match, text
+    record_id = json.loads(record_match.group(1))["id"]
+
+    resp_detail = client.get(f"/api/projects/{project_id}/generations/{record_id}", headers=headers)
+    assert resp_detail.status_code == 200
+    detail = resp_detail.json()
+    packs = detail["request_params"]["skill_packs"]
+    assert any(pack["skill_dir"] == "creative-master" for pack in packs)
+    assert any(pack["skill_dir"] == "sensory-renderer" for pack in packs)
+    assert all("token_estimate" in pack for pack in packs)
+
+
 def test_full_pipeline_review_and_revise_cycle():
     """修改后采纳 should first return directions, then revise without losing workflow state."""
     headers = _auth_headers("pipeline_revise", "pipeline_revise")
@@ -1248,6 +1320,7 @@ def test_revision_writer_rewrites_candidate_instead_of_continuing():
         result = await writer_node({
             "project_id": "00000000-0000-0000-0000-000000000000",
             "chapter_id": "00000000-0000-0000-0000-000000000001",
+            "chapter_num": 1,
             "mode": "full_pipeline",
             "context": "无",
             "draft": "已有候选稿到此结束。",
@@ -1266,6 +1339,9 @@ def test_revision_writer_rewrites_candidate_instead_of_continuing():
             "selected_world_entry_ids": [],
             "selected_hidden_thread_ids": [],
             "target_words": 0,
+            "selected_direction": "",
+            "user_note": "",
+            "skill_packs": [],
         })
         return result["draft"]
 
@@ -1273,6 +1349,44 @@ def test_revision_writer_rewrites_candidate_instead_of_continuing():
     assert "已有候选稿" in text
     assert "（生成内容）" not in text
     assert "你来了" not in text
+
+
+def test_writer_node_returns_skill_pack_summary():
+    import asyncio
+    from agents.workflow import writer_node
+
+    async def _run():
+        return await writer_node({
+            "project_id": "00000000-0000-0000-0000-000000000000",
+            "chapter_id": "00000000-0000-0000-0000-000000000001",
+            "chapter_num": 1,
+            "mode": "full_pipeline",
+            "context": "## 角色资料\n- 莫凡(protagonist): 测试角色",
+            "draft": "",
+            "original_text": "",
+            "critiques": [],
+            "consistency_report": "",
+            "edited_draft": "",
+            "revision_count": 0,
+            "writer_prompt": "",
+            "critic_prompt": "",
+            "editor_prompt": "",
+            "consistency_prompt": "",
+            "llm_config": None,
+            "selected_outline_ids": [],
+            "selected_character_ids": [],
+            "selected_world_entry_ids": [],
+            "selected_hidden_thread_ids": [],
+            "target_words": 0,
+            "selected_direction": "",
+            "user_note": "",
+            "skill_packs": [],
+        })
+
+    result = asyncio.new_event_loop().run_until_complete(_run())
+    assert result["draft"]
+    assert result["skill_packs"][0]["skill_dir"] == "creative-master"
+    assert result["skill_packs"][0]["token_estimate"] > 0
 
 
 def test_expert_test_sse():
@@ -1346,6 +1460,8 @@ def test_generate_does_not_persist_content():
     }, headers=headers)
     assert resp4.status_code == 200
     assert "event: done" in resp4.text
+    assert "event: skill_pack" in resp4.text
+    assert '"skill_dir": "creative-master"' in resp4.text
 
     # Content must remain the original, not the generated candidate
     resp5 = client.get(f"/api/projects/{project_id}/chapters", headers=headers)
@@ -1409,6 +1525,8 @@ def test_enhance_does_not_persist():
     assert resp4.status_code == 200
     assert "event: done" in resp4.text
     assert "待润色" in resp4.text
+    assert "event: skill_pack" in resp4.text
+    assert '"skill_dir": "professional-editor"' in resp4.text
     assert "命运的齿轮" not in resp4.text
 
     # Content must stay original
@@ -1420,6 +1538,28 @@ def test_enhance_does_not_persist():
     versions = resp_v.json()
     assert len(versions) == 1
     assert versions[0]["source"] == "manual"
+
+
+def test_novel_summarize_emits_summarizer_skill_pack():
+    headers = _auth_headers("novel_summarize_skill", "novel_summarize_skill")
+    resp = client.post("/api/projects", json={"title": "小说总结Skill测试"}, headers=headers)
+    project_id = resp.json()["id"]
+
+    client.post(f"/api/projects/{project_id}/chapters", json={
+        "title": "第一章", "sequence_number": 1,
+    }, headers=headers)
+    client.patch(f"/api/projects/{project_id}/chapters/1", json={
+        "content": "主角在雨夜发现了新的线索。",
+    }, headers=headers)
+
+    resp2 = client.post(f"/api/projects/{project_id}/chapters/generate", json={
+        "chapter_num": 1,
+        "mode": "summarize",
+    }, headers=headers)
+    assert resp2.status_code == 200
+    assert "event: skill_pack" in resp2.text
+    assert '"skill_dir": "summarizer"' in resp2.text
+    assert "event: done" in resp2.text
 
 
 def test_enhance_rejects_oversized_target_words():
@@ -1465,6 +1605,8 @@ def test_continue_does_not_persist():
     }, headers=headers)
     assert resp4.status_code == 200
     assert "event: done" in resp4.text
+    assert "event: skill_pack" in resp4.text
+    assert '"skill_dir": "creative-master"' in resp4.text
 
     # Content must stay original (no append)
     resp5 = client.get(f"/api/projects/{project_id}/chapters/1", headers=headers)
@@ -1497,6 +1639,7 @@ def test_generation_history_created_without_content_persist():
     }, headers=headers)
     assert resp_generate.status_code == 200
     assert "event: generation_record" in resp_generate.text
+    assert '"skill_dir": "creative-master"' in resp_generate.text
 
     resp_chapter = client.get(f"/api/projects/{project_id}/chapters/1", headers=headers)
     assert resp_chapter.json()["content"] == "当前章节原文。"
@@ -1521,6 +1664,8 @@ def test_generation_history_created_without_content_persist():
     detail = resp_detail.json()
     assert detail["content"]
     assert detail["word_count"] > 0
+    packs = detail["request_params"]["skill_packs"]
+    assert any(pack["skill_dir"] == "creative-master" for pack in packs)
 
     resp_update = client.patch(f"/api/projects/{project_id}/generations/{record_id}", json={
         "status": "applied",

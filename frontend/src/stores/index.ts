@@ -87,6 +87,7 @@ function apiExpertToExpert(ae: ApiExpert): Expert {
     role: ae.role_type,
     name: ae.name,
     role_type: ae.role_type,
+    skill_dir: ae.skill_dir,
     description: ae.description,
     system_prompt: ae.system_prompt,
     temperature: ae.temperature,

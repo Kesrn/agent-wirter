@@ -75,6 +75,7 @@ export interface Expert {
   role: string
   name: string
   role_type: RoleType
+  skill_dir?: string | null
   description: string
   system_prompt: string
   temperature: number
@@ -317,6 +318,7 @@ export interface ApiExpert {
   name: string
   description: string
   role_type: RoleType
+  skill_dir?: string | null
   system_prompt: string
   temperature: number
   max_tokens: number
@@ -505,6 +507,7 @@ export interface ExpertCreatePayload {
   name: string
   description: string
   role_type: RoleType
+  skill_dir?: string | null
   system_prompt: string
   temperature: number
   max_tokens: number
@@ -807,6 +810,11 @@ export interface SkillPackPayload {
   expert: string
   skill: string
   skill_dir: string
+  sources?: Array<Record<string, unknown>>
+  warnings?: string[]
+  token_estimate?: number
+  truncated?: boolean
+  has_content?: boolean
 }
 
 /** Payload for generation_record SSE event */

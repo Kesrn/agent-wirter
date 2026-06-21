@@ -16,6 +16,7 @@ class Expert(UUIDMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     role_type: Mapped[str] = mapped_column(String(20), nullable=False)  # writer | critic | editor | researcher | custom
+    skill_dir: Mapped[str | None] = mapped_column(String(100), nullable=True)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     temperature: Mapped[float] = mapped_column(Float, default=0.7)
     max_tokens: Mapped[int] = mapped_column(Integer, default=4096)

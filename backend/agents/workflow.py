@@ -18,7 +18,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from agents.llm_provider import get_llm_provider, LLMProvider
 from rag.context_loader import ContextLoader
-from skills.runner import build_expert_system_prompt
+from skills.runner import build_expert_skill_pack, build_expert_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,7 @@ class CreativeState(TypedDict):
     target_words: int  # 目标字数
     selected_direction: str  # 用户选择的剧情走向（从 DirectionPicker 传入）
     user_note: str  # 用户补充要求
+    skill_packs: Annotated[list[dict], lambda a, b: a + b]  # 已注入的专家 skill pack 摘要
 
 
 # --- 默认 system_prompt（硬编码 fallback） ---
@@ -120,31 +121,49 @@ def _build_writer_user_prompt(state: CreativeState) -> str:
 
 
 # --- 通用专家节点工厂 ---
-def _make_expert_node(expert_id: str, role_type: str, system_prompt: str, temperature: float, max_tokens: int):
+def _make_expert_node(
+    expert_id: str,
+    role_type: str,
+    system_prompt: str,
+    temperature: float,
+    max_tokens: int,
+    skill_dir: str | None = None,
+):
     """为动态专家创建节点函数"""
     async def expert_node(state: CreativeState) -> dict:
         llm = get_llm_provider(state.get("llm_config"))
-        prompt = build_expert_system_prompt(role_type, system_prompt or state.get("writer_prompt", DEFAULT_WRITER_PROMPT))
+        pack = build_expert_skill_pack(
+            role_type,
+            skill_dir=skill_dir,
+            project_id=state.get("project_id", ""),
+            chapter_id=state.get("chapter_id", ""),
+            draft=state.get("draft", ""),
+            context=state.get("context", ""),
+            mode=state.get("mode", ""),
+        )
+        base_prompt = system_prompt or state.get("writer_prompt", DEFAULT_WRITER_PROMPT)
+        prompt = build_expert_system_prompt(role_type, base_prompt, pack)
+        skill_update = {"skill_packs": [pack.to_summary()]} if pack.has_content or pack.warnings else {}
 
         if role_type == "writer":
             user_prompt = _build_writer_user_prompt(state)
             result = await llm.generate(prompt, user_prompt, temperature=temperature, max_tokens=max_tokens)
-            return {"draft": result}
+            return {"draft": result, **skill_update}
 
         elif role_type == "critic":
             user_prompt = f"## 待审校文本\n{state.get('draft', '')}\n\n请审校："
             result = await llm.generate(prompt, user_prompt, temperature=temperature, max_tokens=max_tokens)
-            return {"critiques": [result]}
+            return {"critiques": [result], **skill_update}
 
         elif role_type == "editor":
             user_prompt = f"## 待编辑文本\n{state.get('draft', '')}\n\n请编辑润色："
             result = await llm.generate(prompt, user_prompt, temperature=temperature, max_tokens=max_tokens)
-            return {"edited_draft": result}
+            return {"edited_draft": result, **skill_update}
 
         else:  # researcher / custom
             user_prompt = f"## 上下文\n{state.get('context', '')}\n\n## 当前草稿\n{state.get('draft', '')}\n\n请分析："
             result = await llm.generate(prompt, user_prompt, temperature=temperature, max_tokens=max_tokens)
-            return {"critiques": [result]}
+            return {"critiques": [result], **skill_update}
 
     expert_node.__name__ = f"expert_{expert_id[:8]}"
     return expert_node
@@ -313,28 +332,61 @@ async def context_loader_node(state: CreativeState) -> dict:
 async def writer_node(state: CreativeState) -> dict:
     """创意大师：初次生成章节；修订时改写当前候选稿而不是续写。"""
     llm = get_llm_provider(state.get("llm_config"))
-    system_prompt = build_expert_system_prompt("writer", state.get("writer_prompt") or DEFAULT_WRITER_PROMPT)
+    pack = build_expert_skill_pack(
+        "writer",
+        project_id=state.get("project_id", ""),
+        chapter_id=state.get("chapter_id", ""),
+        draft=state.get("draft", ""),
+        context=state.get("context", ""),
+        mode=state.get("mode", ""),
+    )
+    system_prompt = build_expert_system_prompt("writer", state.get("writer_prompt") or DEFAULT_WRITER_PROMPT, pack)
     user_prompt = _build_writer_user_prompt(state)
     result = await llm.generate(system_prompt, user_prompt, temperature=0.8)
-    return {"draft": result}
+    update = {"draft": result}
+    if pack.has_content or pack.warnings:
+        update["skill_packs"] = [pack.to_summary()]
+    return update
 
 
 async def critic_node(state: CreativeState) -> dict:
     """残酷大师：结构化审校"""
     llm = get_llm_provider(state.get("llm_config"))
-    system_prompt = build_expert_system_prompt("critic", state.get("critic_prompt") or DEFAULT_CRITIC_PROMPT)
+    pack = build_expert_skill_pack(
+        "critic",
+        project_id=state.get("project_id", ""),
+        chapter_id=state.get("chapter_id", ""),
+        draft=state.get("draft", ""),
+        context=state.get("context", ""),
+        mode=state.get("mode", ""),
+    )
+    system_prompt = build_expert_system_prompt("critic", state.get("critic_prompt") or DEFAULT_CRITIC_PROMPT, pack)
     user_prompt = f"## 待审校文本\n{state.get('draft', '')}\n\n请审校："
     result = await llm.generate(system_prompt, user_prompt, temperature=0.3, max_tokens=2048)
-    return {"critiques": [result]}
+    update = {"critiques": [result]}
+    if pack.has_content or pack.warnings:
+        update["skill_packs"] = [pack.to_summary()]
+    return update
 
 
 async def consistency_checker_node(state: CreativeState) -> dict:
     """一致性检查：与世界观/角色/前文对照"""
     llm = get_llm_provider(state.get("llm_config"))
-    system_prompt = build_expert_system_prompt("consistency_checker", state.get("consistency_prompt") or DEFAULT_CONSISTENCY_PROMPT)
+    pack = build_expert_skill_pack(
+        "consistency_checker",
+        project_id=state.get("project_id", ""),
+        chapter_id=state.get("chapter_id", ""),
+        draft=state.get("draft", ""),
+        context=state.get("context", ""),
+        mode=state.get("mode", ""),
+    )
+    system_prompt = build_expert_system_prompt("consistency_checker", state.get("consistency_prompt") or DEFAULT_CONSISTENCY_PROMPT, pack)
     user_prompt = f"## 上下文/设定\n{state.get('context', '')}\n\n## 待检查文本\n{state.get('draft', '')}\n\n请检查一致性："
     result = await llm.generate(system_prompt, user_prompt, temperature=0.2, max_tokens=2048)
-    return {"consistency_report": result}
+    update = {"consistency_report": result}
+    if pack.has_content or pack.warnings:
+        update["skill_packs"] = [pack.to_summary()]
+    return update
 
 
 async def human_review_node(state: CreativeState) -> dict:
@@ -412,12 +464,12 @@ def build_creative_graph(enabled_experts: list | None = None) -> StateGraph:
     # pre_writer experts
     for i, exp in enumerate(pre_writer):
         name = f"pre_writer_{i}"
-        fn = _make_expert_node(str(exp.id), exp.role_type, exp.system_prompt, exp.temperature, exp.max_tokens)
+        fn = _make_expert_node(str(exp.id), exp.role_type, exp.system_prompt, exp.temperature, exp.max_tokens, getattr(exp, "skill_dir", None))
         node_chain.append((name, fn))
 
     # writer: replace_writer 或默认
     if replace_writer:
-        fn = _make_expert_node(str(replace_writer.id), replace_writer.role_type, replace_writer.system_prompt, replace_writer.temperature, replace_writer.max_tokens)
+        fn = _make_expert_node(str(replace_writer.id), replace_writer.role_type, replace_writer.system_prompt, replace_writer.temperature, replace_writer.max_tokens, getattr(replace_writer, "skill_dir", None))
         node_chain.append(("writer", fn))
     else:
         node_chain.append(("writer", writer_node))
@@ -425,18 +477,18 @@ def build_creative_graph(enabled_experts: list | None = None) -> StateGraph:
     # post_writer experts
     for i, exp in enumerate(post_writer):
         name = f"post_writer_{i}"
-        fn = _make_expert_node(str(exp.id), exp.role_type, exp.system_prompt, exp.temperature, exp.max_tokens)
+        fn = _make_expert_node(str(exp.id), exp.role_type, exp.system_prompt, exp.temperature, exp.max_tokens, getattr(exp, "skill_dir", None))
         node_chain.append((name, fn))
 
     # pre_critic experts
     for i, exp in enumerate(pre_critic):
         name = f"pre_critic_{i}"
-        fn = _make_expert_node(str(exp.id), exp.role_type, exp.system_prompt, exp.temperature, exp.max_tokens)
+        fn = _make_expert_node(str(exp.id), exp.role_type, exp.system_prompt, exp.temperature, exp.max_tokens, getattr(exp, "skill_dir", None))
         node_chain.append((name, fn))
 
     # critic: replace_critic 或默认
     if replace_critic:
-        fn = _make_expert_node(str(replace_critic.id), replace_critic.role_type, replace_critic.system_prompt, replace_critic.temperature, replace_critic.max_tokens)
+        fn = _make_expert_node(str(replace_critic.id), replace_critic.role_type, replace_critic.system_prompt, replace_critic.temperature, replace_critic.max_tokens, getattr(replace_critic, "skill_dir", None))
         node_chain.append(("critic", fn))
     else:
         node_chain.append(("critic", critic_node))
@@ -444,7 +496,7 @@ def build_creative_graph(enabled_experts: list | None = None) -> StateGraph:
     # post_critic experts
     for i, exp in enumerate(post_critic):
         name = f"post_critic_{i}"
-        fn = _make_expert_node(str(exp.id), exp.role_type, exp.system_prompt, exp.temperature, exp.max_tokens)
+        fn = _make_expert_node(str(exp.id), exp.role_type, exp.system_prompt, exp.temperature, exp.max_tokens, getattr(exp, "skill_dir", None))
         node_chain.append((name, fn))
 
     # consistency_checker 始终使用默认

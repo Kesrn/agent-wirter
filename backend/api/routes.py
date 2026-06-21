@@ -71,7 +71,7 @@ from agents.safety import validate_expert_safety
 from agents.expert_templates import BUILTIN_EXPERTS
 from agents.llm_provider import LLMConfigError, get_llm_provider
 from agents.workflow import get_creative_app, CreativeState
-from skills.registry import get_skill_for_node
+from skills.runner import ExpertSkillResult, build_expert_skill_pack, build_expert_system_prompt
 from api.auth import get_current_user
 from api.llm_deps import get_user_llm_config
 from api.rate_limiter import agent_limiter
@@ -137,6 +137,64 @@ def _parse_directions(text: str) -> list[str]:
     # 按换行分割
     lines = [l.strip().lstrip('0123456789.、)）') for l in text.split('\n') if l.strip()]
     return lines if lines else ["方向1", "方向2", "方向3"]
+
+
+def _skill_pack_sse_event(pack: dict | None, fallback_expert: str = "") -> str:
+    """Serialize a workflow skill pack summary without breaking old clients."""
+    if not pack:
+        return ""
+    payload = {
+        "expert": pack.get("expert") or fallback_expert,
+        "skill": pack.get("skill", ""),
+        "skill_dir": pack.get("skill_dir", ""),
+        "sources": pack.get("sources", []),
+        "warnings": pack.get("warnings", []),
+        "token_estimate": pack.get("token_estimate", 0),
+        "truncated": pack.get("truncated", False),
+        "has_content": pack.get("has_content", False),
+    }
+    return f"event: skill_pack\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _new_skill_packs(output: dict, seen_keys: set[tuple[str, str]]) -> list[dict]:
+    """Return only newly emitted skill packs from a LangGraph node output."""
+    packs = output.get("skill_packs", []) if isinstance(output, dict) else []
+    result = []
+    for pack in packs:
+        if not isinstance(pack, dict):
+            continue
+        key = (str(pack.get("expert", "")), str(pack.get("skill_dir", "")))
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        result.append(pack)
+    return result
+
+
+def _direct_skill_pack(
+    role_type: str,
+    *,
+    event_expert: str,
+    project_id: str,
+    skill_dir: str | None = None,
+    chapter_id: str = "",
+    draft: str = "",
+    context: str = "",
+    mode: str = "",
+) -> tuple[ExpertSkillResult, dict]:
+    """Build a direct-route skill pack and align its SSE key with UI steps."""
+    pack = build_expert_skill_pack(
+        role_type,
+        skill_dir=skill_dir,
+        project_id=project_id,
+        chapter_id=chapter_id,
+        draft=draft,
+        context=context,
+        mode=mode,
+    )
+    summary = pack.to_summary()
+    summary["expert"] = event_expert
+    return pack, summary
 
 
 def _count_non_space_chars(text: str) -> int:
@@ -2245,6 +2303,7 @@ async def create_expert(
         name=req.name,
         description=req.description,
         role_type=req.role_type,
+        skill_dir=req.skill_dir,
         system_prompt=req.system_prompt,
         temperature=req.temperature,
         max_tokens=req.max_tokens,
@@ -2397,6 +2456,7 @@ async def generate_chapter(
                 *,
                 expert_id: str | uuid.UUID | None = None,
                 review_results: dict | None = None,
+                skill_packs: list[dict] | None = None,
             ) -> str | None:
                 nonlocal generation_record_saved
                 if generation_record_saved:
@@ -2412,6 +2472,7 @@ async def generate_chapter(
                         content=content,
                         req=req,
                         review_results=review_results,
+                        skill_packs=skill_packs,
                         langfuse_trace_id=current_langfuse_trace_id(),
                     )
                     if not record:
@@ -2497,6 +2558,7 @@ async def generate_chapter(
                 target_words=req.target_words or 0,
                 selected_direction=req.selected_direction or "",
                 user_note=req.user_note or "",
+                skill_packs=[],
             )
             try:
                 ctx_result = await context_loader_node(ctx_state)
@@ -2525,13 +2587,24 @@ async def generate_chapter(
                             f"## 内容 brief\n{_article_brief(req)}\n\n## 当前稿件\n{chapter_content or '(空稿件)'}",
                         )
                     else:
+                        base_system_prompt = (
+                            "你是一位专业文学编辑。请分析用户提供的当前章节，给出3个“润色/改写”方向。"
+                            "方向必须聚焦文风、语气、节奏、氛围、描写密度、人物心理、对话质感等编辑维度；"
+                            "禁止给出续写、转折、新剧情、新角色登场、后续事件安排。"
+                            "每个方向用一句话概括，只输出JSON字符串数组。"
+                        )
+                        pack, summary = _direct_skill_pack(
+                            "editor",
+                            event_expert="editor",
+                            project_id=str(uid),
+                            chapter_id=str(target_chapter_id or ""),
+                            draft=chapter_content,
+                            context=creative_context,
+                            mode=req.mode,
+                        )
+                        yield _skill_pack_sse_event(summary)
                         result = await provider.generate(
-                            (
-                                "你是一位专业文学编辑。请分析用户提供的当前章节，给出3个“润色/改写”方向。"
-                                "方向必须聚焦文风、语气、节奏、氛围、描写密度、人物心理、对话质感等编辑维度；"
-                                "禁止给出续写、转折、新剧情、新角色登场、后续事件安排。"
-                                "每个方向用一句话概括，只输出JSON字符串数组。"
-                            ),
+                            build_expert_system_prompt("editor", base_system_prompt, pack),
                             f"## 当前章节\n{chapter_content or '(空章节)'}",
                         )
                     directions = _parse_directions(result)[:3]
@@ -2539,75 +2612,88 @@ async def generate_chapter(
                     yield f"event: enhance_directions\ndata: {json.dumps({'directions': directions}, ensure_ascii=False)}\n\n"
                     yield f"event: done\ndata: {json.dumps({'message': '请选择润色方向'}, ensure_ascii=False)}\n\n"
                     return
-                else:
-                    # 第二步：按选定方向润色
-                    yield f"event: agent_start\ndata: {json.dumps({'agent': 'editor', 'step': 'running'}, ensure_ascii=False)}\n\n"
-                    try:
-                        source_words, target_words, min_words, max_words, enhance_max_tokens = _enhance_word_budget(
-                            chapter_content,
-                            req.target_words,
-                        )
-                    except ValueError as exc:
-                        yield f"event: error\ndata: {json.dumps({'message': str(exc)}, ensure_ascii=False)}\n\n"
-                        return
 
-                    if is_article_project:
-                        user_prompt = (
-                            f"## 内容 brief\n{_article_brief(req)}\n\n"
-                            f"## 可用上下文\n{creative_context or '无'}\n\n"
-                            f"## 改写优化方向\n{req.enhance_direction}\n\n"
-                            f"## 用户补充\n{req.user_note or '无'}\n\n"
-                            f"## 字数控制\n原稿约{source_words}字；本次目标约{target_words}字，输出必须控制在{min_words}-{max_words}字之间。\n\n"
-                            f"## 原文案/文章（只能改写这一份稿件）\n{chapter_content}\n\n"
-                            "请输出“完整改写优化后的文章/文案正文”。\n"
-                            "硬性要求：\n"
-                            "1. 只改写当前稿件，不要在原文末尾之后继续扩写新主题。\n"
-                            "2. 不使用小说章节、剧情、角色、世界观、伏笔等表达。\n"
-                            "3. 可以重组结构、压缩冗余、增强说服力、优化标题感和行动引导。\n"
-                            "4. 严格遵守字数控制；如果接近上限，主动压缩句子并自然收束。\n"
-                            "5. 最后一句必须完整，不能半截截断。\n"
-                            "6. 不要输出解释、修改说明或“改写后文本”等前缀，只输出正文。"
-                        )
-                        system_prompt = _article_system_prompt("改写优化当前文章/文案")
-                    else:
-                        user_prompt = (
-                            f"## 上下文\n{creative_context}\n\n"
-                            f"## 润色方向\n{req.enhance_direction}\n\n"
-                            f"## 用户补充\n{req.user_note or '无'}\n\n"
-                            f"## 字数控制\n原文章节约{source_words}字；本次润色目标约{target_words}字，输出必须控制在{min_words}-{max_words}字之间。\n\n"
-                            f"## 原文章节（只能改写这一段文本）\n{chapter_content}\n\n"
-                            "请输出“完整润色后的章节正文”。\n"
-                            "硬性要求：\n"
-                            "1. 只改写原文章节已有内容，不能在原文结尾之后继续写。\n"
-                            "2. 不新增剧情事件、不新增场景、不新增人物出场、不改变事实因果和章节结尾。\n"
-                            "3. 允许调整句式、节奏、文风、氛围、描写密度、心理刻画和对话质感。\n"
-                            "4. 严格遵守字数控制；如果接近上限，主动压缩句子并自然收束，不要输出半句话或未完成段落。\n"
-                            "5. 最后一句必须是完整句子，必须以自然标点结束。\n"
-                            "6. 不要输出解释、标题、修改说明、项目符号或“润色后文本”等前缀，只输出正文。"
-                        )
-                        system_prompt = (
-                            "你是一位专业文学编辑，不是续写作者。你的任务是重写并润色用户提供的当前章节，"
-                            "保持原剧情、原事实、原场景边界和原结尾，不得续写后续内容。"
-                            "输出必须控制字数，并以完整自然的句子结束。"
-                        )
-                    writer_content = ""
-                    async for chunk in provider.generate_stream(
-                        system_prompt,
-                        user_prompt,
-                        temperature=0.35,
-                        max_tokens=enhance_max_tokens,
-                    ):
-                        if await _check_cancelled():
-                            return
-                        writer_content += chunk
-                        output_event = "content_output" if is_article_project else "writer_output"
-                        yield f"event: {output_event}\ndata: {json.dumps({'token': chunk}, ensure_ascii=False)}\n\n"
-                    yield f"event: agent_done\ndata: {json.dumps({'agent': 'editor', 'step': 'success'}, ensure_ascii=False)}\n\n"
-
-                    record_id = await _save_generation_history(writer_content)
-                    yield _generation_record_event(record_id)
-                    yield f"event: done\ndata: {json.dumps({'message': '润色完成'}, ensure_ascii=False)}\n\n"
+                # 第二步：按选定方向润色
+                yield f"event: agent_start\ndata: {json.dumps({'agent': 'editor', 'step': 'running'}, ensure_ascii=False)}\n\n"
+                try:
+                    source_words, target_words, min_words, max_words, enhance_max_tokens = _enhance_word_budget(
+                        chapter_content,
+                        req.target_words,
+                    )
+                except ValueError as exc:
+                    yield f"event: error\ndata: {json.dumps({'message': str(exc)}, ensure_ascii=False)}\n\n"
                     return
+
+                direct_skill_packs = []
+                if is_article_project:
+                    user_prompt = (
+                        f"## 内容 brief\n{_article_brief(req)}\n\n"
+                        f"## 可用上下文\n{creative_context or '无'}\n\n"
+                        f"## 改写优化方向\n{req.enhance_direction}\n\n"
+                        f"## 用户补充\n{req.user_note or '无'}\n\n"
+                        f"## 字数控制\n原稿约{source_words}字；本次目标约{target_words}字，输出必须控制在{min_words}-{max_words}字之间。\n\n"
+                        f"## 原文案/文章（只能改写这一份稿件）\n{chapter_content}\n\n"
+                        "请输出“完整改写优化后的文章/文案正文”。\n"
+                        "硬性要求：\n"
+                        "1. 只改写当前稿件，不要在原文末尾之后继续扩写新主题。\n"
+                        "2. 不使用小说章节、剧情、角色、世界观、伏笔等表达。\n"
+                        "3. 可以重组结构、压缩冗余、增强说服力、优化标题感和行动引导。\n"
+                        "4. 严格遵守字数控制；如果接近上限，主动压缩句子并自然收束。\n"
+                        "5. 最后一句必须完整，不能半截截断。\n"
+                        "6. 不要输出解释、修改说明或“改写后文本”等前缀，只输出正文。"
+                    )
+                    system_prompt = _article_system_prompt("改写优化当前文章/文案")
+                else:
+                    user_prompt = (
+                        f"## 上下文\n{creative_context}\n\n"
+                        f"## 润色方向\n{req.enhance_direction}\n\n"
+                        f"## 用户补充\n{req.user_note or '无'}\n\n"
+                        f"## 字数控制\n原文章节约{source_words}字；本次润色目标约{target_words}字，输出必须控制在{min_words}-{max_words}字之间。\n\n"
+                        f"## 原文章节（只能改写这一段文本）\n{chapter_content}\n\n"
+                        "请输出“完整润色后的章节正文”。\n"
+                        "硬性要求：\n"
+                        "1. 只改写原文章节已有内容，不能在原文结尾之后继续写。\n"
+                        "2. 不新增剧情事件、不新增场景、不新增人物出场、不改变事实因果和章节结尾。\n"
+                        "3. 允许调整句式、节奏、文风、氛围、描写密度、心理刻画和对话质感。\n"
+                        "4. 严格遵守字数控制；如果接近上限，主动压缩句子并自然收束，不要输出半句话或未完成段落。\n"
+                        "5. 最后一句必须是完整句子，必须以自然标点结束。\n"
+                        "6. 不要输出解释、标题、修改说明、项目符号或“润色后文本”等前缀，只输出正文。"
+                    )
+                    system_prompt = (
+                        "你是一位专业文学编辑，不是续写作者。你的任务是重写并润色用户提供的当前章节，"
+                        "保持原剧情、原事实、原场景边界和原结尾，不得续写后续内容。"
+                        "输出必须控制字数，并以完整自然的句子结束。"
+                    )
+                    pack, summary = _direct_skill_pack(
+                        "editor",
+                        event_expert="editor",
+                        project_id=str(uid),
+                        chapter_id=str(target_chapter_id or ""),
+                        draft=chapter_content,
+                        context=creative_context,
+                        mode=req.mode,
+                    )
+                    yield _skill_pack_sse_event(summary)
+                    system_prompt = build_expert_system_prompt("editor", system_prompt, pack)
+                    direct_skill_packs = [summary]
+                writer_content = ""
+                async for chunk in provider.generate_stream(
+                    system_prompt,
+                    user_prompt,
+                    temperature=0.35,
+                    max_tokens=enhance_max_tokens,
+                ):
+                    if await _check_cancelled():
+                        return
+                    writer_content += chunk
+                    output_event = "content_output" if is_article_project else "writer_output"
+                    yield f"event: {output_event}\ndata: {json.dumps({'token': chunk}, ensure_ascii=False)}\n\n"
+                yield f"event: agent_done\ndata: {json.dumps({'agent': 'editor', 'step': 'success'}, ensure_ascii=False)}\n\n"
+
+                record_id = await _save_generation_history(writer_content, skill_packs=direct_skill_packs)
+                yield _generation_record_event(record_id)
+                yield f"event: done\ndata: {json.dumps({'message': '润色完成'}, ensure_ascii=False)}\n\n"
+                return
 
             # ==================== continue 模式（无 expert_id） ====================
             elif req.mode == "continue" and not req.expert_id:
@@ -2624,8 +2710,19 @@ async def generate_chapter(
                             f"## 内容 brief\n{_article_brief(req)}\n\n## 当前稿件\n{chapter_content or '(空稿件)'}",
                         )
                     else:
+                        base_system_prompt = "你是一位创意写作顾问。分析当前章节的写作进展，给出5个下一步情节发展方向的建议。每个建议用一句话概括，用JSON数组格式输出。"
+                        pack, summary = _direct_skill_pack(
+                            "twister",
+                            event_expert="writer",
+                            project_id=str(uid),
+                            chapter_id=str(target_chapter_id or ""),
+                            draft=chapter_content,
+                            context=creative_context,
+                            mode=req.mode,
+                        )
+                        yield _skill_pack_sse_event(summary)
                         result = await provider.generate(
-                            "你是一位创意写作顾问。分析当前章节的写作进展，给出5个下一步情节发展方向的建议。每个建议用一句话概括，用JSON数组格式输出。",
+                            build_expert_system_prompt("twister", base_system_prompt, pack),
                             chapter_content or "(空章节)",
                         )
                     suggestions = _parse_directions(result)[:5]
@@ -2635,40 +2732,50 @@ async def generate_chapter(
                     done_message = "请选择内容方向" if is_article_project else "请选择转折方向"
                     yield f"event: done\ndata: {json.dumps({'message': done_message}, ensure_ascii=False)}\n\n"
                     return
-                else:
-                    # 第二步：按选定方向生成/续写
-                    yield f"event: agent_start\ndata: {json.dumps({'agent': 'writer', 'step': 'running'}, ensure_ascii=False)}\n\n"
-                    if is_article_project:
-                        user_prompt = (
-                            f"## 内容 brief\n{_article_brief(req)}\n\n"
-                            f"## 可用上下文\n{creative_context or '无'}\n\n"
-                            f"## 选定内容方向\n{req.turn_direction}\n\n"
-                            f"## 用户补充\n{req.user_note or '无'}\n\n"
-                            f"## 当前稿件\n{chapter_content or '(空稿件)'}\n\n"
-                            "请根据以上信息生成完整文章/文案正文。不要把内容简单接在当前稿件后面，而是围绕方向输出一版完整可用稿。"
-                        )
-                        system_prompt = _article_system_prompt("生成文章/文案内容")
-                        done_message = "内容生成完成"
-                    else:
-                        user_prompt = f"## 上下文\n{creative_context}\n\n## 续写方向\n{req.turn_direction}\n\n## 用户补充\n{req.user_note or '无'}\n\n## 当前章节（续写接在后面）\n{chapter_content}\n\n请严格按照上下文中的设定续写："
-                        system_prompt = "你是一位才华横溢的创意写作大师。根据指定方向续写章节，注意与原文的标点衔接。"
-                        done_message = "续写完成"
-                    writer_content = ""
-                    async for chunk in provider.generate_stream(
-                        system_prompt,
-                        user_prompt,
-                    ):
-                        if await _check_cancelled():
-                            return
-                        writer_content += chunk
-                        output_event = "content_output" if is_article_project else "writer_output"
-                        yield f"event: {output_event}\ndata: {json.dumps({'token': chunk}, ensure_ascii=False)}\n\n"
-                    yield f"event: agent_done\ndata: {json.dumps({'agent': 'writer', 'step': 'success'}, ensure_ascii=False)}\n\n"
 
-                    record_id = await _save_generation_history(writer_content)
-                    yield _generation_record_event(record_id)
-                    yield f"event: done\ndata: {json.dumps({'message': done_message}, ensure_ascii=False)}\n\n"
-                    return
+                # 第二步：按选定方向生成/续写
+                yield f"event: agent_start\ndata: {json.dumps({'agent': 'writer', 'step': 'running'}, ensure_ascii=False)}\n\n"
+                direct_skill_packs = []
+                if is_article_project:
+                    user_prompt = (
+                        f"## 内容 brief\n{_article_brief(req)}\n\n"
+                        f"## 可用上下文\n{creative_context or '无'}\n\n"
+                        f"## 选定内容方向\n{req.turn_direction}\n\n"
+                        f"## 用户补充\n{req.user_note or '无'}\n\n"
+                        f"## 当前稿件\n{chapter_content or '(空稿件)'}\n\n"
+                        "请根据以上信息生成完整文章/文案正文。不要把内容简单接在当前稿件后面，而是围绕方向输出一版完整可用稿。"
+                    )
+                    system_prompt = _article_system_prompt("生成文章/文案内容")
+                    done_message = "内容生成完成"
+                else:
+                    user_prompt = f"## 上下文\n{creative_context}\n\n## 续写方向\n{req.turn_direction}\n\n## 用户补充\n{req.user_note or '无'}\n\n## 当前章节（续写接在后面）\n{chapter_content}\n\n请严格按照上下文中的设定续写："
+                    system_prompt = "你是一位才华横溢的创意写作大师。根据指定方向续写章节，注意与原文的标点衔接。"
+                    pack, summary = _direct_skill_pack(
+                        "writer",
+                        event_expert="writer",
+                        project_id=str(uid),
+                        chapter_id=str(target_chapter_id or ""),
+                        draft=chapter_content,
+                        context=creative_context,
+                        mode=req.mode,
+                    )
+                    yield _skill_pack_sse_event(summary)
+                    system_prompt = build_expert_system_prompt("writer", system_prompt, pack)
+                    direct_skill_packs = [summary]
+                    done_message = "续写完成"
+                writer_content = ""
+                async for chunk in provider.generate_stream(system_prompt, user_prompt):
+                    if await _check_cancelled():
+                        return
+                    writer_content += chunk
+                    output_event = "content_output" if is_article_project else "writer_output"
+                    yield f"event: {output_event}\ndata: {json.dumps({'token': chunk}, ensure_ascii=False)}\n\n"
+                yield f"event: agent_done\ndata: {json.dumps({'agent': 'writer', 'step': 'success'}, ensure_ascii=False)}\n\n"
+
+                record_id = await _save_generation_history(writer_content, skill_packs=direct_skill_packs)
+                yield _generation_record_event(record_id)
+                yield f"event: done\ndata: {json.dumps({'message': done_message}, ensure_ascii=False)}\n\n"
+                return
 
             # ==================== continue + expert_id 模式 ====================
             elif req.mode == "continue" and req.expert_id:
@@ -2688,12 +2795,33 @@ async def generate_chapter(
                 is_writer = expert.role_type in WRITER_ROLES
                 yield f"event: agent_start\ndata: {json.dumps({'agent': expert.name, 'step': 'running'}, ensure_ascii=False)}\n\n"
                 yield f"event: progress\ndata: {json.dumps({'message': f'专家 {expert.name} 生成中'}, ensure_ascii=False)}\n\n"
+                expert_system_prompt = expert.system_prompt
+                direct_skill_packs = []
+                if not is_article_project:
+                    pack, summary = _direct_skill_pack(
+                        expert.role_type,
+                        skill_dir=expert.skill_dir,
+                        event_expert=expert.name,
+                        project_id=str(uid),
+                        chapter_id=str(target_chapter_id or ""),
+                        draft=chapter_content,
+                        context=creative_context,
+                        mode=req.mode,
+                    )
+                    yield _skill_pack_sse_event(summary)
+                    expert_system_prompt = build_expert_system_prompt(
+                        expert.role_type,
+                        expert.system_prompt,
+                        pack,
+                        skill_dir=expert.skill_dir,
+                    )
+                    direct_skill_packs = [summary]
                 expert_user_prompt = (
                     _article_generate_prompt(req, creative_context, chapter_content)
                     if is_article_project
                     else "继续创作"
                 )
-                async for chunk in provider.generate_stream(expert.system_prompt, expert_user_prompt):
+                async for chunk in provider.generate_stream(expert_system_prompt, expert_user_prompt):
                     if await _check_cancelled():
                         return
                     if is_writer:
@@ -2702,7 +2830,11 @@ async def generate_chapter(
                     yield f"event: {output_event}\ndata: {json.dumps({'token': chunk}, ensure_ascii=False)}\n\n"
                 yield f"event: agent_done\ndata: {json.dumps({'agent': expert.name, 'step': 'success'}, ensure_ascii=False)}\n\n"
 
-                record_id = await _save_generation_history(writer_content, expert_id=eid if is_writer else None)
+                record_id = await _save_generation_history(
+                    writer_content,
+                    expert_id=eid if is_writer else None,
+                    skill_packs=direct_skill_packs,
+                )
                 yield _generation_record_event(record_id)
                 yield f"event: done\ndata: {json.dumps({'message': '生成完成'}, ensure_ascii=False)}\n\n"
                 return
@@ -2725,6 +2857,17 @@ async def generate_chapter(
                 else:
                     summarize_system_prompt = "你是一位普通读者。从阅读体验角度评价以下章节，给出真实感受：哪些段落吸引人、哪里节奏拖沓、角色是否立体、情节是否合理，以及是否与已知设定一致。用中文输出。"
                     summarize_prompt = f"## 上下文\n{creative_context}\n\n## 当前章节内容\n{chapter_content or '(空章节)'}\n\n请从读者视角分析这段内容，严格按照上下文中的设定进行评价："
+                    pack, summary = _direct_skill_pack(
+                        "summarizer",
+                        event_expert="reader",
+                        project_id=str(uid),
+                        chapter_id=str(target_chapter_id or ""),
+                        draft=chapter_content,
+                        context=creative_context,
+                        mode=req.mode,
+                    )
+                    yield _skill_pack_sse_event(summary)
+                    summarize_system_prompt = build_expert_system_prompt("summarizer", summarize_system_prompt, pack)
                     done_message = "读者反馈完成"
                 async for chunk in provider.generate_stream(
                     summarize_system_prompt,
@@ -2845,6 +2988,7 @@ async def generate_chapter(
                 "target_words": req.target_words or 0,
                 "selected_direction": req.selected_direction or "",
                 "user_note": req.user_note or "",
+                "skill_packs": [],
             }
 
             config = {"configurable": {"thread_id": thread_id}}
@@ -2860,7 +3004,8 @@ async def generate_chapter(
             STREAM_NODES = {"writer"}
 
             writer_content = ""
-            success = False
+            workflow_skill_packs: list[dict] = []
+            seen_skill_pack_keys: set[tuple[str, str]] = set()
             current_stream_node = None  # 追踪当前正在流式输出的节点
 
             # 逐节点流式执行
@@ -2876,10 +3021,6 @@ async def generate_chapter(
                         yield f"event: progress\ndata: {json.dumps({'message': f'{node_name} 节点执行中'}, ensure_ascii=False)}\n\n"
                     if node_name:
                         yield f"event: agent_start\ndata: {json.dumps({'agent': node_name, 'step': 'running'}, ensure_ascii=False)}\n\n"
-                        # 发送 skill_pack 事件：告知前端当前专家使用了哪个 skill
-                        skill_info = get_skill_for_node(node_name)
-                        if skill_info:
-                            yield f"event: skill_pack\ndata: {json.dumps({'expert': node_name, 'skill': skill_info.name, 'skill_dir': skill_info.dir_name}, ensure_ascii=False)}\n\n"
                         if node_name in STREAM_NODES:
                             current_stream_node = node_name
 
@@ -2890,6 +3031,10 @@ async def generate_chapter(
                         yield f"event: agent_done\ndata: {json.dumps({'agent': node_name, 'step': 'success'}, ensure_ascii=False)}\n\n"
                         if node_name in STREAM_NODES:
                             current_stream_node = None
+
+                    for pack in _new_skill_packs(output, seen_skill_pack_keys):
+                        workflow_skill_packs.append(pack)
+                        yield _skill_pack_sse_event(pack, fallback_expert=node_name)
 
                     if node_name == "context_loader":
                         yield f"event: progress\ndata: {json.dumps({'message': '上下文加载完成'}, ensure_ascii=False)}\n\n"
@@ -2910,7 +3055,7 @@ async def generate_chapter(
                         yield f"event: consistency_check\ndata: {json.dumps({'report': report}, ensure_ascii=False)}\n\n"
 
                     elif node_name == "human_review":
-                        record_id = await _save_generation_history(writer_content)
+                        record_id = await _save_generation_history(writer_content, skill_packs=workflow_skill_packs)
                         yield _generation_record_event(record_id)
                         yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
                         return
@@ -2939,12 +3084,12 @@ async def generate_chapter(
             workflow_state = await app.aget_state(config)
             next_nodes = workflow_state.next if workflow_state else []
             if "human_review" in next_nodes:
-                record_id = await _save_generation_history(writer_content)
+                record_id = await _save_generation_history(writer_content, skill_packs=workflow_skill_packs)
                 yield _generation_record_event(record_id)
                 yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
                 return
 
-            record_id = await _save_generation_history(writer_content)
+            record_id = await _save_generation_history(writer_content, skill_packs=workflow_skill_packs)
             yield _generation_record_event(record_id)
             yield f"event: done\ndata: {json.dumps({'message': '生成完成'}, ensure_ascii=False)}\n\n"
 
@@ -3029,6 +3174,7 @@ async def resume_chapter_generation(
                         document_id=content_id if project.mode == "article" else None,
                         mode=values.get("mode", "full_pipeline"),
                         content=content,
+                        skill_packs=values.get("skill_packs") or None,
                         langfuse_trace_id=current_langfuse_trace_id(),
                     )
                     if not record:
@@ -3105,6 +3251,12 @@ async def resume_chapter_generation(
                 await app.aupdate_state(config, update_state, as_node="human_review")
 
                 revised_content = ""
+                resume_skill_packs = list(current_values.get("skill_packs") or [])
+                seen_skill_pack_keys = {
+                    (str(pack.get("expert", "")), str(pack.get("skill_dir", "")))
+                    for pack in resume_skill_packs
+                    if isinstance(pack, dict)
+                }
 
                 # 继续流式执行
                 async for event in app.astream_events(None, config=config, version="v2"):
@@ -3116,14 +3268,15 @@ async def resume_chapter_generation(
                         node_name = event.get("name", "")
                         if node_name:
                             yield f"event: agent_start\ndata: {json.dumps({'agent': node_name, 'step': 'running'}, ensure_ascii=False)}\n\n"
-                            skill_info = get_skill_for_node(node_name)
-                            if skill_info:
-                                yield f"event: skill_pack\ndata: {json.dumps({'expert': node_name, 'skill': skill_info.name, 'skill_dir': skill_info.dir_name}, ensure_ascii=False)}\n\n"
                     elif kind == "on_chain_end":
                         node_name = event.get("name", "")
                         output = event.get("data", {}).get("output", {})
                         if node_name:
                             yield f"event: agent_done\ndata: {json.dumps({'agent': node_name, 'step': 'success'}, ensure_ascii=False)}\n\n"
+
+                        for pack in _new_skill_packs(output, seen_skill_pack_keys):
+                            resume_skill_packs.append(pack)
+                            yield _skill_pack_sse_event(pack, fallback_expert=node_name)
 
                         if node_name == "writer":
                             draft = output.get("draft", "") if isinstance(output, dict) else ""
@@ -3141,7 +3294,10 @@ async def resume_chapter_generation(
                                 revised_content = edited
                             yield f"event: editor_output\ndata: {json.dumps({'content': edited}, ensure_ascii=False)}\n\n"
                         elif node_name == "human_review":
-                            record_id = await _save_resume_generation_history(revised_content, {**current_values, **update_state})
+                            record_id = await _save_resume_generation_history(
+                                revised_content,
+                                {**current_values, **update_state, "skill_packs": resume_skill_packs},
+                            )
                             yield _generation_record_event(record_id)
                             yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
                             return
@@ -3149,12 +3305,18 @@ async def resume_chapter_generation(
                 workflow_state = await app.aget_state(config)
                 next_nodes = workflow_state.next if workflow_state else []
                 if "human_review" in next_nodes:
-                    record_id = await _save_resume_generation_history(revised_content, {**current_values, **update_state})
+                    record_id = await _save_resume_generation_history(
+                        revised_content,
+                        {**current_values, **update_state, "skill_packs": resume_skill_packs},
+                    )
                     yield _generation_record_event(record_id)
                     yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
                     return
 
-                record_id = await _save_resume_generation_history(revised_content, {**current_values, **update_state})
+                record_id = await _save_resume_generation_history(
+                    revised_content,
+                    {**current_values, **update_state, "skill_packs": resume_skill_packs},
+                )
                 yield _generation_record_event(record_id)
                 yield f"event: done\ndata: {json.dumps({'message': '修订完成'}, ensure_ascii=False)}\n\n"
                 return

@@ -18,8 +18,8 @@ def _count_non_space_chars(text: str) -> int:
     return len(re.sub(r"\s+", "", text or ""))
 
 
-def _request_snapshot(req: GenerateRequest) -> dict[str, Any]:
-    return req.model_dump(
+def _request_snapshot(req: GenerateRequest, *, skill_packs: list[dict] | None = None) -> dict[str, Any]:
+    snapshot = req.model_dump(
         exclude={
             "chapter_id",
             "document_id",
@@ -31,6 +31,9 @@ def _request_snapshot(req: GenerateRequest) -> dict[str, Any]:
         },
         exclude_none=True,
     )
+    if skill_packs:
+        snapshot["skill_packs"] = skill_packs
+    return snapshot
 
 
 def _record_direction(req: GenerateRequest) -> str | None:
@@ -48,6 +51,7 @@ async def create_generation_record(
     document_id: str | uuid.UUID | None = None,
     expert_id: str | uuid.UUID | None = None,
     review_results: dict | None = None,
+    skill_packs: list[dict] | None = None,
     langfuse_trace_id: str | None = None,
     status: str = "candidate",
 ) -> GenerationRecord | None:
@@ -70,7 +74,7 @@ async def create_generation_record(
         word_count=_count_non_space_chars(clean_content),
         status=status,
         review_results=review_results,
-        request_params=_request_snapshot(req) if req else None,
+        request_params=_request_snapshot(req, skill_packs=skill_packs) if req else ({"skill_packs": skill_packs} if skill_packs else None),
         langfuse_trace_id=langfuse_trace_id,
     )
     db.add(record)
