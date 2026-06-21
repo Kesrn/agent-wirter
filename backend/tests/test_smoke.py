@@ -31,7 +31,7 @@ from db.session import get_db, set_engine
 from main import app
 from services.diff_service import compute_diff
 from services.version_service import create_version
-from services.skill_pack_planner import plan_direct_skill_pack
+from services.skill_pack_planner import plan_direct_skill_pack, plan_workflow_skill_pack
 from skills.runner import build_expert_skill_pack, build_expert_system_prompt
 from api.routes import _article_system_prompt, _article_brief
 from config.settings import settings
@@ -969,6 +969,25 @@ def test_rule_based_skill_pack_planner_skips_article_projects():
     assert plan is None
 
 
+def test_rule_based_skill_pack_planner_maps_workflow_nodes():
+    plan = plan_workflow_skill_pack(node_name="writer", role_type="writer")
+    custom_plan = plan_workflow_skill_pack(
+        node_name="post_writer_0",
+        role_type="renderer",
+        skill_dir="sensory-renderer",
+        expert_name="渲染大师",
+    )
+
+    assert plan.role_type == "writer"
+    assert plan.event_expert == "writer"
+    assert plan.reason == "workflow:writer"
+
+    assert custom_plan.role_type == "renderer"
+    assert custom_plan.skill_dir == "sensory-renderer"
+    assert custom_plan.event_expert == "渲染大师"
+    assert custom_plan.reason == "workflow:post_writer_0"
+
+
 def test_chapter_patch_empty_title_rejected():
     headers = _auth_headers()
     resp = client.post("/api/projects", json={"title": "空标题测试"}, headers=headers)
@@ -1419,6 +1438,8 @@ def test_writer_node_returns_skill_pack_summary():
     result = asyncio.new_event_loop().run_until_complete(_run())
     assert result["draft"]
     assert result["skill_packs"][0]["skill_dir"] == "creative-master"
+    assert result["skill_packs"][0]["planner"] == "rule"
+    assert result["skill_packs"][0]["planner_reason"] == "workflow:writer"
     assert result["skill_packs"][0]["token_estimate"] > 0
 
 

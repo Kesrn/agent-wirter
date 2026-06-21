@@ -19,6 +19,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from agents.llm_provider import get_llm_provider, LLMProvider
 from rag.context_loader import ContextLoader
 from skills.runner import build_expert_skill_pack, build_expert_system_prompt
+from services.skill_pack_planner import SkillPackPlan, plan_workflow_skill_pack
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,41 @@ def _build_writer_user_prompt(state: CreativeState) -> str:
     return user_prompt
 
 
+def _build_workflow_skill_pack(
+    state: CreativeState,
+    *,
+    node_name: str,
+    role_type: str,
+    skill_dir: str | None = None,
+    expert_name: str | None = None,
+):
+    plan = plan_workflow_skill_pack(
+        node_name=node_name,
+        role_type=role_type,
+        skill_dir=skill_dir,
+        expert_name=expert_name,
+    )
+    pack = build_expert_skill_pack(
+        plan.role_type,
+        skill_dir=plan.skill_dir,
+        project_id=state.get("project_id", ""),
+        chapter_id=state.get("chapter_id", ""),
+        draft=state.get("draft", ""),
+        context=state.get("context", ""),
+        mode=state.get("mode", ""),
+    )
+    summary = _skill_pack_summary(pack, plan)
+    return pack, summary
+
+
+def _skill_pack_summary(pack, plan: SkillPackPlan) -> dict:
+    summary = pack.to_summary()
+    summary["expert"] = plan.event_expert
+    summary["planner"] = plan.planner
+    summary["planner_reason"] = plan.reason
+    return summary
+
+
 # --- 通用专家节点工厂 ---
 def _make_expert_node(
     expert_id: str,
@@ -132,18 +168,15 @@ def _make_expert_node(
     """为动态专家创建节点函数"""
     async def expert_node(state: CreativeState) -> dict:
         llm = get_llm_provider(state.get("llm_config"))
-        pack = build_expert_skill_pack(
-            role_type,
+        pack, pack_summary = _build_workflow_skill_pack(
+            state,
+            node_name=expert_id,
+            role_type=role_type,
             skill_dir=skill_dir,
-            project_id=state.get("project_id", ""),
-            chapter_id=state.get("chapter_id", ""),
-            draft=state.get("draft", ""),
-            context=state.get("context", ""),
-            mode=state.get("mode", ""),
         )
         base_prompt = system_prompt or state.get("writer_prompt", DEFAULT_WRITER_PROMPT)
         prompt = build_expert_system_prompt(role_type, base_prompt, pack)
-        skill_update = {"skill_packs": [pack.to_summary()]} if pack.has_content or pack.warnings else {}
+        skill_update = {"skill_packs": [pack_summary]} if pack.has_content or pack.warnings else {}
 
         if role_type == "writer":
             user_prompt = _build_writer_user_prompt(state)
@@ -332,60 +365,43 @@ async def context_loader_node(state: CreativeState) -> dict:
 async def writer_node(state: CreativeState) -> dict:
     """创意大师：初次生成章节；修订时改写当前候选稿而不是续写。"""
     llm = get_llm_provider(state.get("llm_config"))
-    pack = build_expert_skill_pack(
-        "writer",
-        project_id=state.get("project_id", ""),
-        chapter_id=state.get("chapter_id", ""),
-        draft=state.get("draft", ""),
-        context=state.get("context", ""),
-        mode=state.get("mode", ""),
-    )
+    pack, pack_summary = _build_workflow_skill_pack(state, node_name="writer", role_type="writer")
     system_prompt = build_expert_system_prompt("writer", state.get("writer_prompt") or DEFAULT_WRITER_PROMPT, pack)
     user_prompt = _build_writer_user_prompt(state)
     result = await llm.generate(system_prompt, user_prompt, temperature=0.8)
     update = {"draft": result}
     if pack.has_content or pack.warnings:
-        update["skill_packs"] = [pack.to_summary()]
+        update["skill_packs"] = [pack_summary]
     return update
 
 
 async def critic_node(state: CreativeState) -> dict:
     """残酷大师：结构化审校"""
     llm = get_llm_provider(state.get("llm_config"))
-    pack = build_expert_skill_pack(
-        "critic",
-        project_id=state.get("project_id", ""),
-        chapter_id=state.get("chapter_id", ""),
-        draft=state.get("draft", ""),
-        context=state.get("context", ""),
-        mode=state.get("mode", ""),
-    )
+    pack, pack_summary = _build_workflow_skill_pack(state, node_name="critic", role_type="critic")
     system_prompt = build_expert_system_prompt("critic", state.get("critic_prompt") or DEFAULT_CRITIC_PROMPT, pack)
     user_prompt = f"## 待审校文本\n{state.get('draft', '')}\n\n请审校："
     result = await llm.generate(system_prompt, user_prompt, temperature=0.3, max_tokens=2048)
     update = {"critiques": [result]}
     if pack.has_content or pack.warnings:
-        update["skill_packs"] = [pack.to_summary()]
+        update["skill_packs"] = [pack_summary]
     return update
 
 
 async def consistency_checker_node(state: CreativeState) -> dict:
     """一致性检查：与世界观/角色/前文对照"""
     llm = get_llm_provider(state.get("llm_config"))
-    pack = build_expert_skill_pack(
-        "consistency_checker",
-        project_id=state.get("project_id", ""),
-        chapter_id=state.get("chapter_id", ""),
-        draft=state.get("draft", ""),
-        context=state.get("context", ""),
-        mode=state.get("mode", ""),
+    pack, pack_summary = _build_workflow_skill_pack(
+        state,
+        node_name="consistency_checker",
+        role_type="consistency_checker",
     )
     system_prompt = build_expert_system_prompt("consistency_checker", state.get("consistency_prompt") or DEFAULT_CONSISTENCY_PROMPT, pack)
     user_prompt = f"## 上下文/设定\n{state.get('context', '')}\n\n## 待检查文本\n{state.get('draft', '')}\n\n请检查一致性："
     result = await llm.generate(system_prompt, user_prompt, temperature=0.2, max_tokens=2048)
     update = {"consistency_report": result}
     if pack.has_content or pack.warnings:
-        update["skill_packs"] = [pack.to_summary()]
+        update["skill_packs"] = [pack_summary]
     return update
 
 
