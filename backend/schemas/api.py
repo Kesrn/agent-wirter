@@ -177,6 +177,38 @@ class ChapterResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ChapterReviewNoteCreate(BaseModel):
+    source_type: str = Field(default="manual", pattern=r"^[a-z][a-z0-9_]{0,29}$")
+    severity: str = Field(default="info", pattern=r"^(info|warning|critical)$")
+    content: str = Field(min_length=1, max_length=20000)
+    resolved: bool = False
+    metadata_: dict | None = Field(default=None, alias="metadata")
+
+
+class ChapterReviewNoteUpdate(BaseModel):
+    source_type: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,29}$")
+    severity: str | None = Field(default=None, pattern=r"^(info|warning|critical)$")
+    content: str | None = Field(default=None, min_length=1, max_length=20000)
+    resolved: bool | None = None
+    metadata_: dict | None = Field(default=None, alias="metadata")
+
+
+class ChapterReviewNoteResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    chapter_id: uuid.UUID
+    chapter_sequence_number: int
+    source_type: str
+    severity: str
+    content: str
+    resolved: bool
+    metadata_: dict | None = Field(None, serialization_alias="metadata")
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
 class TxtImportResponse(BaseModel):
     project: ProjectResponse
     chapters: list[TxtImportChapterPreview]

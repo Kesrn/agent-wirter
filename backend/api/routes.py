@@ -20,6 +20,7 @@ from models.project import Project
 from models.expert import Expert
 from models.chapter import Chapter
 from models.chapter_version import ChapterVersion
+from models.chapter_review_note import ChapterReviewNote
 from models.document import Document
 from models.document_version import DocumentVersion
 from models.generation_record import GenerationRecord
@@ -42,6 +43,7 @@ from schemas.api import (
     TxtImportResponse,
     ExpertCreate, ExpertUpdate, ExpertResponse,
     ChapterCreate, ChapterResponse, ChapterUpdate,
+    ChapterReviewNoteCreate, ChapterReviewNoteUpdate, ChapterReviewNoteResponse,
     ChapterStructureExtractRequest, ChapterStructureExtractResponse,
     ChapterVersionResponse, ChapterVersionListItemResponse, ChapterVersionDiffRequest, ChapterVersionDiffResponse,
     WorldEntryCreate, WorldEntryUpdate, WorldEntryResponse,
@@ -286,6 +288,7 @@ async def _delete_project_tree(project_id: uuid.UUID, db: AsyncSession) -> None:
     await db.execute(delete(ProjectSourceChunk).where(ProjectSourceChunk.project_id == project_id))
     await db.execute(delete(KnowledgeQaSession).where(KnowledgeQaSession.project_id == project_id))
     await db.execute(delete(ProjectSource).where(ProjectSource.project_id == project_id))
+    await db.execute(delete(ChapterReviewNote).where(ChapterReviewNote.project_id == project_id))
     await db.execute(delete(ChapterVersion).where(ChapterVersion.chapter_id.in_(chapter_ids)))
     await db.execute(delete(DocumentVersion).where(DocumentVersion.document_id.in_(document_ids)))
     await db.execute(delete(CharacterEvent).where(CharacterEvent.project_id == project_id))
@@ -327,6 +330,35 @@ async def _build_structure_context(project_id: uuid.UUID, db: AsyncSession) -> s
         ("已有暗线", hidden_threads),
     ]
     return "\n".join(f"{label}: {', '.join(values) if values else '无'}" for label, values in sections)
+
+
+async def _get_project_chapter(db: AsyncSession, project_id: uuid.UUID, sequence_number: int) -> Chapter:
+    result = await db.execute(
+        select(Chapter).where(Chapter.project_id == project_id, Chapter.sequence_number == sequence_number)
+    )
+    chapter = result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    return chapter
+
+
+async def _get_chapter_review_note(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    chapter_id: uuid.UUID,
+    note_id: uuid.UUID,
+) -> ChapterReviewNote:
+    result = await db.execute(
+        select(ChapterReviewNote).where(
+            ChapterReviewNote.id == note_id,
+            ChapterReviewNote.project_id == project_id,
+            ChapterReviewNote.chapter_id == chapter_id,
+        )
+    )
+    note = result.scalar_one_or_none()
+    if not note:
+        raise HTTPException(status_code=404, detail="审阅备注不存在")
+    return note
 
 
 def _image_extension_from_bytes(content_type: str, data: bytes) -> str | None:
@@ -1067,6 +1099,99 @@ async def update_chapter(
     return chapter
 
 
+@router.get("/projects/{project_id}/chapters/{sequence_number}/review-notes", response_model=list[ChapterReviewNoteResponse])
+async def list_chapter_review_notes(
+    project_id: str,
+    sequence_number: int,
+    resolved: bool | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    chapter = await _get_project_chapter(db, uid, sequence_number)
+
+    stmt = select(ChapterReviewNote).where(
+        ChapterReviewNote.project_id == uid,
+        ChapterReviewNote.chapter_id == chapter.id,
+    )
+    if resolved is not None:
+        stmt = stmt.where(ChapterReviewNote.resolved == resolved)
+    result = await db.execute(
+        stmt.order_by(ChapterReviewNote.resolved.asc(), ChapterReviewNote.created_at.desc())
+    )
+    return result.scalars().all()
+
+
+@router.post("/projects/{project_id}/chapters/{sequence_number}/review-notes", response_model=ChapterReviewNoteResponse)
+async def create_chapter_review_note(
+    project_id: str,
+    sequence_number: int,
+    req: ChapterReviewNoteCreate,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    chapter = await _get_project_chapter(db, uid, sequence_number)
+
+    note = ChapterReviewNote(
+        project_id=uid,
+        chapter_id=chapter.id,
+        chapter_sequence_number=chapter.sequence_number,
+        source_type=req.source_type,
+        severity=req.severity,
+        content=req.content,
+        resolved=req.resolved,
+        metadata_=req.metadata_,
+    )
+    db.add(note)
+    await db.commit()
+    await db.refresh(note)
+    return note
+
+
+@router.patch("/projects/{project_id}/chapters/{sequence_number}/review-notes/{note_id}", response_model=ChapterReviewNoteResponse)
+async def update_chapter_review_note(
+    project_id: str,
+    sequence_number: int,
+    note_id: str,
+    req: ChapterReviewNoteUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    nid = _to_uuid(note_id)
+    await _verify_project_owner(uid, user.id, db)
+    chapter = await _get_project_chapter(db, uid, sequence_number)
+    note = await _get_chapter_review_note(db, uid, chapter.id, nid)
+
+    update_data = req.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(note, field, value)
+    await db.commit()
+    await db.refresh(note)
+    return note
+
+
+@router.delete("/projects/{project_id}/chapters/{sequence_number}/review-notes/{note_id}", status_code=204)
+async def delete_chapter_review_note(
+    project_id: str,
+    sequence_number: int,
+    note_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    nid = _to_uuid(note_id)
+    await _verify_project_owner(uid, user.id, db)
+    chapter = await _get_project_chapter(db, uid, sequence_number)
+    note = await _get_chapter_review_note(db, uid, chapter.id, nid)
+    await db.delete(note)
+    await db.commit()
+    return None
+
+
 @router.get("/projects/{project_id}/chapters/{sequence_number}/context")
 async def get_chapter_context(
     project_id: str,
@@ -1300,6 +1425,7 @@ async def delete_chapter(
     chapter = result.scalar_one_or_none()
     if not chapter:
         raise HTTPException(status_code=404, detail="章节不存在")
+    await db.execute(delete(ChapterReviewNote).where(ChapterReviewNote.chapter_id == chapter.id))
     await db.delete(chapter)
     await db.commit()
     return {"ok": True}

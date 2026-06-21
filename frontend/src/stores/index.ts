@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Project, Chapter, DocumentUnit, Expert, WorkflowStep, ReviewComment, CharacterRelation, CharacterEvent, ProjectMode, ExpertCreatePayload, WorldEntry, Character, OutlineItem, HiddenThread, ChapterVersion, DocumentRevision, DiffHunk, GenerationRecord } from '../api/types'
+import type { Project, Chapter, DocumentUnit, Expert, WorkflowStep, ReviewComment, ChapterReviewNote, ChapterReviewNoteCreatePayload, CharacterRelation, CharacterEvent, ProjectMode, ExpertCreatePayload, WorldEntry, Character, OutlineItem, HiddenThread, ChapterVersion, DocumentRevision, DiffHunk, GenerationRecord } from '../api/types'
 import type { ApiProject, ApiChapter, ApiDocument, ApiExpert, ApiWorldEntry, ApiCharacter, ApiCharacterRelation, ApiOutline, ApiHiddenThread, ApiChapterVersion, ApiDocumentVersion, ApiGenerationRecordListItem, ApiGenerationRecord } from '../api/types'
 import type { CharacterRelationCreatePayload, CharacterRelationUpdatePayload, CharacterEventUpsertPayload, OutlineUpdatePayload, HiddenThreadUpdatePayload, WorldEntryCreatePayload, WorldEntryUpdatePayload, CharacterCreatePayload, CharacterUpdatePayload, CharacterMergePayload, ProjectUpdatePayload } from '../api/types'
 import { api, ApiError } from '../api/client'
@@ -61,6 +61,23 @@ function apiDocumentToDocumentUnit(doc: ApiDocument, projectId: string): Documen
     word_count: doc.word_count,
     created_at: doc.created_at,
     updated_at: doc.updated_at,
+  }
+}
+
+function reviewNoteToComment(note: ChapterReviewNote): ReviewComment {
+  const metadata = note.metadata ?? {}
+  const expertId = typeof metadata.expert_id === 'string' ? metadata.expert_id : note.source_type
+  return {
+    id: note.id,
+    chapter_id: `${note.project_id}:${note.chapter_sequence_number}`,
+    expert_id: expertId,
+    comment: note.content,
+    severity: note.severity,
+    resolved: note.resolved,
+    source_type: note.source_type,
+    created_at: note.created_at,
+    updated_at: note.updated_at,
+    metadata: note.metadata,
   }
 }
 
@@ -149,6 +166,7 @@ export const useProjectStore = defineStore('project', () => {
 export const useChapterStore = defineStore('chapter', () => {
   const chapters = ref<Chapter[]>([...MOCK_CHAPTERS])
   const reviewComments = ref<ReviewComment[]>([...MOCK_REVIEW_COMMENTS])
+  const reviewNotes = ref<ChapterReviewNote[]>([])
   const currentChapterNum = ref(1)
   const loadError = ref('')
   const saving = ref(false)
@@ -164,7 +182,84 @@ export const useChapterStore = defineStore('chapter', () => {
   function reviewCommentsForChapter(chapterId: string): ReviewComment[] {
     const chapter = chapters.value.find(c => c.id === chapterId)
     if (!chapter) return []
+    const notes = reviewNotes.value.filter(note =>
+      note.project_id === chapter.project_id && note.chapter_sequence_number === chapter.chapter_num,
+    )
+    if (notes.length) return notes.map(reviewNoteToComment)
     return reviewComments.value.filter(rc => chapter.review_comment_ids.includes(rc.id))
+  }
+
+  function reviewCommentsForProjectChapter(projectId: string, sequenceNumber: number): ReviewComment[] {
+    const notes = reviewNotes.value.filter(note =>
+      note.project_id === projectId && note.chapter_sequence_number === sequenceNumber,
+    )
+    if (notes.length) return notes.map(reviewNoteToComment)
+    const chapter = chapters.value.find(c => c.project_id === projectId && c.chapter_num === sequenceNumber)
+    return chapter ? reviewCommentsForChapter(chapter.id) : []
+  }
+
+  function upsertReviewNote(note: ChapterReviewNote) {
+    const idx = reviewNotes.value.findIndex(n => n.id === note.id)
+    if (idx === -1) {
+      reviewNotes.value.push(note)
+    } else {
+      reviewNotes.value[idx] = note
+    }
+  }
+
+  function removeReviewNote(projectId: string, sequenceNumber: number, noteId: string) {
+    reviewNotes.value = reviewNotes.value.filter(note =>
+      !(note.project_id === projectId && note.chapter_sequence_number === sequenceNumber && note.id === noteId),
+    )
+  }
+
+  async function loadReviewNotes(projectId: string, sequenceNumber: number) {
+    try {
+      const list = await api.listChapterReviewNotes(projectId, sequenceNumber)
+      reviewNotes.value = reviewNotes.value.filter(note =>
+        !(note.project_id === projectId && note.chapter_sequence_number === sequenceNumber),
+      )
+      reviewNotes.value.push(...list)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载审核意见失败'
+      loadError.value = msg
+    }
+  }
+
+  async function createReviewNote(projectId: string, sequenceNumber: number, payload: ChapterReviewNoteCreatePayload): Promise<ChapterReviewNote | null> {
+    try {
+      const note = await api.createChapterReviewNote(projectId, sequenceNumber, payload)
+      upsertReviewNote(note)
+      return note
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '保存审核意见失败'
+      loadError.value = msg
+      return null
+    }
+  }
+
+  async function markReviewCommentResolved(projectId: string, sequenceNumber: number, noteId: string) {
+    const note = reviewNotes.value.find(n =>
+      n.id === noteId && n.project_id === projectId && n.chapter_sequence_number === sequenceNumber,
+    )
+    if (note) note.resolved = true
+    const mockComment = reviewComments.value.find(rc => rc.id === noteId)
+    if (mockComment) mockComment.resolved = true
+    if (!note) return
+    try {
+      const updated = await api.updateChapterReviewNote(projectId, sequenceNumber, noteId, { resolved: true })
+      upsertReviewNote(updated)
+    } catch (e: unknown) {
+      note.resolved = false
+      const msg = e instanceof Error ? e.message : '标记审核意见失败'
+      loadError.value = msg
+      throw e
+    }
+  }
+
+  async function deleteReviewNote(projectId: string, sequenceNumber: number, noteId: string) {
+    await api.deleteChapterReviewNote(projectId, sequenceNumber, noteId)
+    removeReviewNote(projectId, sequenceNumber, noteId)
   }
 
   function setCurrentChapter(num: number) {
@@ -244,10 +339,11 @@ export const useChapterStore = defineStore('chapter', () => {
   }
 
   return {
-    chapters, reviewComments, currentChapterNum, loadError, saving,
-    chaptersForProject, currentChapterForProject, reviewCommentsForChapter,
+    chapters, reviewComments, reviewNotes, currentChapterNum, loadError, saving,
+    chaptersForProject, currentChapterForProject, reviewCommentsForChapter, reviewCommentsForProjectChapter,
     setCurrentChapter, updateDraft, nextChapterNum,
     loadChapters, createChapterRemote, saveCurrentChapter, updateChapterTitle, deleteChapterRemote,
+    loadReviewNotes, createReviewNote, markReviewCommentResolved, deleteReviewNote,
   }
 })
 

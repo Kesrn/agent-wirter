@@ -44,7 +44,7 @@ const currentUnitTitle = computed(() => currentWritingUnit.value?.title?.trim() 
 const currentUnitOrdinal = computed(() => currentWritingUnit.value ? (isNovel.value ? `第 ${currentUnitPosition.value} 章` : `第 ${currentUnitPosition.value} 篇`) : '未选择')
 const reviewComments = computed(() => {
   if (!isNovel.value || !currentWritingUnit.value) return []
-  return chapterStore.reviewCommentsForChapter(currentWritingUnit.value.id)
+  return chapterStore.reviewCommentsForProjectChapter(pid.value, currentUnitPosition.value)
 })
 
 function unitPosition(unit: WritingUnit): number {
@@ -87,6 +87,9 @@ async function fetchContextStats() {
 watch([() => props.projectId, currentUnitPosition], () => {
   contextStats.value = null
   fetchContextStats()
+  if (isNovel.value && currentUnitPosition.value) {
+    chapterStore.loadReviewNotes(pid.value, currentUnitPosition.value)
+  }
 }, { immediate: true })
 
 // ─── Direction picker state ───
@@ -225,6 +228,46 @@ function articleReviewTitle(type: string): string {
     risk: '风险/事实性提醒',
   }
   return labels[type] ?? '文章审校'
+}
+
+function reviewSourceLabel(sourceType?: string): string {
+  if (!sourceType) return '审校'
+  const labels: Record<string, string> = {
+    critic_output: '审校意见',
+    consistency_check: '一致性检查',
+    critic: '审校意见',
+    consistency: '一致性检查',
+  }
+  return labels[sourceType] ?? expertStore.getExpertName(sourceType)
+}
+
+function reviewCommentAuthor(comment: { expert_id: string; source_type?: string }): string {
+  if (comment.expert_id && comment.expert_id !== comment.source_type) {
+    return expertStore.getExpertName(comment.expert_id)
+  }
+  return reviewSourceLabel(comment.source_type || comment.expert_id)
+}
+
+async function saveReviewNoteFromStream(sourceType: 'critic_output' | 'consistency_check', content: string, severity: 'info' | 'warning' | 'critical' = 'warning') {
+  if (!isNovel.value || !content.trim() || !currentUnitPosition.value) return
+  await chapterStore.createReviewNote(pid.value, currentUnitPosition.value, {
+    source_type: sourceType,
+    severity,
+    content: content.trim(),
+    resolved: false,
+    metadata: { expert_id: sourceType === 'critic_output' ? 'cruel' : 'editor' },
+  })
+  await chapterStore.loadReviewNotes(pid.value, currentUnitPosition.value)
+}
+
+async function resolveReviewComment(commentId: string) {
+  if (!isNovel.value || !currentUnitPosition.value) return
+  try {
+    await chapterStore.markReviewCommentResolved(pid.value, currentUnitPosition.value, commentId)
+    ui.showToast('已标记解决', 'success')
+  } catch (e: unknown) {
+    ui.showToast(friendlyError(e, '标记审核意见失败'), 'error')
+  }
 }
 
 function formatReviewResult(result: unknown): string {
@@ -619,12 +662,14 @@ function handleSSEEvent(envelope: SSEEnvelope) {
       const payload = data as unknown as CriticOutputPayload
       const text = payload.critiques?.join('\n') ?? ''
       if (text) expertStore.appendOutput(pid.value, `\n[审校意见]\n${text}\n`)
+      saveReviewNoteFromStream('critic_output', text, 'warning')
       expertStore.updateStepStatus(pid.value, 'critic', 'success')
       break
     }
     case 'consistency_check': {
       const payload = data as unknown as ConsistencyCheckPayload
       if (payload.report) expertStore.appendOutput(pid.value, `\n[一致性检查]\n${payload.report}\n`)
+      if (payload.report) saveReviewNoteFromStream('consistency_check', payload.report, 'info')
       expertStore.updateStepStatus(pid.value, 'consistency', 'success')
       break
     }
@@ -883,8 +928,19 @@ defineExpose({ testExpert, cancelStream })
         class="review-comment"
         :class="comment.severity"
       >
-        <span class="comment-expert">{{ expertStore.getExpertName(comment.expert_id) }}</span>
-        <span class="comment-text">{{ comment.comment }}</span>
+        <div class="comment-main">
+          <span class="comment-expert">{{ reviewCommentAuthor(comment) }}</span>
+          <span class="comment-text">{{ comment.comment }}</span>
+        </div>
+        <button
+          v-if="!comment.resolved"
+          class="resolve-comment-btn"
+          type="button"
+          @click="resolveReviewComment(comment.id)"
+        >
+          解决
+        </button>
+        <span v-else class="comment-resolved">已解决</span>
       </div>
     </div>
 
@@ -1150,6 +1206,10 @@ defineExpose({ testExpert, cancelStream })
   gap: var(--sp-2);
 }
 .review-comment {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-2);
   padding: 12px 14px;
   border-radius: 14px;
   font-size: var(--text-xs);
@@ -1164,6 +1224,28 @@ defineExpose({ testExpert, cancelStream })
   margin-right: var(--sp-2);
 }
 .comment-text { color: var(--text-secondary); }
+.comment-main {
+  min-width: 0;
+  flex: 1;
+}
+.resolve-comment-btn {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.resolve-comment-btn:hover {
+  color: var(--text);
+  border-color: var(--border);
+}
+.comment-resolved {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
 
 .stream-section {
   display: flex;

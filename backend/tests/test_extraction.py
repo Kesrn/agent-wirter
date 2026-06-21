@@ -22,13 +22,14 @@ from models.extraction_pipeline import (
 from models.structured_knowledge import (
     CharacterProfile, AbilityProfile, EventTimeline, WorldRule,
 )
+from models.project_knowledge_fact import ProjectKnowledgeFact
 from services.extraction_schema import (
     ChapterExtraction, CharacterItem, AbilityItem, EventItem, WorldRuleItem,
     AbilityType, AbilityStatus, RulePriority,
 )
 from services.extraction_service import (
     advance_extraction_job, get_latest_job_status, StagingStatus, JobStatus,
-    _try_parse_json, _handle_retry_or_fail,
+    _try_parse_json, _handle_retry_or_fail, _normalize_extraction_abilities,
 )
 from services.chapter_splitter import split_source_chapters
 from test_smoke import client, _auth_headers, setup_db, test_session_factory
@@ -147,6 +148,119 @@ def test_invalid_json_validation_failed():
     assert _try_parse_json("```json\n{\"a\":1}\n```") == {"a": 1}
     # 合法 JSON
     assert _try_parse_json('{"chapter_no":1}') == {"chapter_no": 1}
+    # 前后带解释文本时也应提取 JSON 对象
+    assert _try_parse_json('说明：\n{"chapter_no":1,"characters":[]}\n已完成。') == {
+        "chapter_no": 1,
+        "characters": [],
+    }
+
+
+def test_normalize_extraction_infers_mofan_lightning_from_purple_arc():
+    """真实样本里“电流 + 紫色弧线”应补为莫凡雷系，不能只留下 unknown 异象。"""
+    extraction = ChapterExtraction(
+        chapter_no=5,
+        chapter_title="天生双系（上）",
+        abilities=[
+            AbilityItem(
+                character="莫凡",
+                ability_type=AbilityType.unknown,
+                ability_name="觉醒异象：紫色弧线",
+                level="未知",
+                status=AbilityStatus.new,
+                importance=5,
+                confidence=0.9,
+                evidence="突然在自己那片虚无的精神世界里划过了一道紫色的弧线",
+            )
+        ],
+    )
+    content = (
+        "就在莫凡将手放在觉醒石上的时候，他能够感觉到一股电流的力量。"
+        "这股力量从手掌传递到全身，紧接着在精神世界里划过了一道紫色的弧线。"
+    )
+
+    normalized = _normalize_extraction_abilities(extraction, content)
+    pairs = {(a.character, a.ability_type.value, a.ability_name) for a in normalized.abilities}
+    assert ("莫凡", "magic_element", "雷系") in pairs
+
+
+def test_normalize_extraction_infers_system_from_spell_alias():
+    """抽到“风轨·疾行”这类技能时，应补出同人物风系，支撑“是什么系”问答。"""
+    extraction = ChapterExtraction(
+        chapter_no=19,
+        chapter_title="风轨疾行",
+        abilities=[
+            AbilityItem(
+                character="张小侯",
+                ability_type=AbilityType.spell,
+                ability_name="风轨·疾行",
+                level="初阶",
+                status=AbilityStatus.used,
+                importance=4,
+                confidence=0.88,
+                evidence="张小侯释放风轨·疾行。",
+            )
+        ],
+    )
+    normalized = _normalize_extraction_abilities(extraction, "张小侯释放风轨·疾行，速度骤然提升。")
+    pairs = {(a.character, a.ability_type.value, a.ability_name) for a in normalized.abilities}
+    assert ("张小侯", "magic_element", "风系") in pairs
+
+
+def test_normalize_extraction_does_not_infer_magic_system_for_non_magic_genre():
+    """技能别名推法系只适用于 magic_fantasy，避免污染其它题材。"""
+    extraction = ChapterExtraction(
+        chapter_no=1,
+        chapter_title="风轨",
+        abilities=[
+            AbilityItem(
+                character="李靖",
+                ability_type=AbilityType.spell,
+                ability_name="风轨",
+                level="",
+                status=AbilityStatus.used,
+                importance=3,
+                confidence=0.8,
+                evidence="李靖沿风轨追敌。",
+            )
+        ],
+    )
+    normalized = _normalize_extraction_abilities(extraction, "李靖沿风轨追敌。", genre="historical")
+    pairs = {(a.character, a.ability_type.value, a.ability_name) for a in normalized.abilities}
+    assert ("李靖", "magic_element", "风系") not in pairs
+    assert pairs == {("李靖", "spell", "风轨")}
+
+
+def test_normalize_extraction_canonicalizes_magic_system_names():
+    """雷霆系魔法、火炎系等模型常见叫法应规整为标准法系名。"""
+    extraction = ChapterExtraction(
+        chapter_no=3,
+        abilities=[
+            AbilityItem(
+                character="莫凡",
+                ability_type=AbilityType.magic_element,
+                ability_name="雷霆系魔法",
+                level="初阶",
+                status=AbilityStatus.new,
+                importance=5,
+                confidence=0.9,
+                evidence="莫凡的雷霆系魔法。",
+            ),
+            AbilityItem(
+                character="莫凡",
+                ability_type=AbilityType.magic_element,
+                ability_name="火炎系",
+                level="初阶",
+                status=AbilityStatus.new,
+                importance=5,
+                confidence=0.9,
+                evidence="莫凡拥有火炎系。",
+            ),
+        ],
+    )
+    normalized = _normalize_extraction_abilities(extraction, "莫凡拥有雷霆系魔法和火炎系。")
+    names = [a.ability_name for a in normalized.abilities]
+    assert "雷系" in names
+    assert "火系" in names
 
 
 # ── 4. 缺 evidence 验收（§17.7） ────────────────────────
@@ -334,6 +448,115 @@ def test_structured_qa_not_found_message():
     assert "未找到" in data["answer"] or "无记录" in data["answer"]
     assert data["citations"] == []
     assert data["retrieval_stats"]["structured_hits"] == 0
+
+
+def test_structured_qa_character_name_hou_variant():
+    """张小侯/张小候/张候这类常见异体写法应能命中同一结构化能力。"""
+    import uuid as _uuid
+    pid = str(_uuid.uuid4())
+    sid = str(_uuid.uuid4())
+
+    async def _run():
+        async with test_session_factory() as session:
+            session.add(AbilityProfile(
+                project_id=pid,
+                source_id=sid,
+                character_name="张候",
+                ability_type="magic_element",
+                ability_name="风系",
+                first_seen_chapter=5,
+                canon_level="original",
+                origin="llm_extracted",
+                source_priority=60,
+                confidence=0.9,
+                evidence=["张候觉醒了风系。"],
+            ))
+            session.add(AbilityProfile(
+                project_id=pid,
+                source_id=sid,
+                character_name="张小侯",
+                ability_type="magic_element",
+                ability_name="风系",
+                first_seen_chapter=19,
+                canon_level="original",
+                origin="llm_extracted",
+                source_priority=60,
+                confidence=0.85,
+                evidence=["张小侯释放风轨，证明他掌握风系。"],
+            ))
+            session.add(AbilityProfile(
+                project_id=pid,
+                source_id=sid,
+                character_name="张小侯",
+                ability_type="spell",
+                ability_name="风轨·疾行",
+                first_seen_chapter=19,
+                canon_level="original",
+                origin="llm_extracted",
+                source_priority=60,
+                confidence=0.85,
+                evidence=["张小侯释放风轨·疾行。"],
+            ))
+            await session.flush()
+
+            from services.structured_qa import answer_structured_question
+            result = await answer_structured_question(session, pid, "张小侯是什么系的")
+            assert "风系" in result["answer"], result["answer"]
+            assert "风轨" not in result["answer"], result["answer"]
+            assert result["answer"].count("风系") == 1, result["answer"]
+            assert result["retrieval_stats"]["structured_hits"] == 1
+
+    asyncio.run(_run())
+
+
+def test_structured_qa_character_name_variants_do_not_create_short_duplicate_for_repeated_xiao():
+    """李小小这类名字不应生成李小这种脏变体。"""
+    from services.structured_qa import _character_name_variants
+
+    assert _character_name_variants("张小侯") == ["张小侯", "张小候", "张侯", "张候"]
+    assert _character_name_variants("李小小") == ["李小小"]
+
+
+def test_structured_qa_falls_back_to_facts_when_only_unknown_ability():
+    """问系别时，如果 ability_profile 只有 unknown 异象，应继续查 facts。"""
+    import uuid as _uuid
+    pid = str(_uuid.uuid4())
+    sid = str(_uuid.uuid4())
+
+    async def _run():
+        async with test_session_factory() as session:
+            session.add(AbilityProfile(
+                project_id=pid,
+                source_id=sid,
+                character_name="莫凡",
+                ability_type="unknown",
+                ability_name="觉醒异象：紫色弧线",
+                first_seen_chapter=5,
+                canon_level="original",
+                origin="llm_extracted",
+                source_priority=60,
+                confidence=0.9,
+                evidence=["紫色弧线"],
+            ))
+            session.add(ProjectKnowledgeFact(
+                project_id=pid,
+                source_id=sid,
+                fact_type="character_system",
+                subject="莫凡",
+                predicate="has_magic_system",
+                object="雷系",
+                confidence="explicit",
+                evidence_text="莫凡觉醒雷系。",
+                extractor="rule.character_system.v1",
+            ))
+            await session.flush()
+
+            from services.structured_qa import answer_structured_question
+            result = await answer_structured_question(session, pid, "莫凡有什么系别?")
+            assert "雷系" in result["answer"], result["answer"]
+            assert result["query_plan"]["tables"] == ["project_knowledge_facts"]
+
+    asyncio.run(_run())
 
 
 # ── 9. 状态查询接口（§15.4） ────────────────────────────
@@ -593,6 +816,33 @@ def test_event_query_like_escapes_percent():
                 f"'%' 不应被当通配符匹配到 abc，实际命中: {titles}"
             )
             assert "事件B" in titles, f"应命中字面 a%c，实际命中: {titles}"
+
+    asyncio.run(_run())
+
+
+def test_event_query_parses_chinese_chapter_number():
+    """提问“第一章发生了什么”应按 chapter_no=1 精确查事件。"""
+    import uuid as _uuid
+    pid = str(_uuid.uuid4())
+
+    async def _run():
+        async with test_session_factory() as session:
+            session.add(EventTimeline(
+                project_id=pid, source_id=str(_uuid.uuid4()),
+                event_title="第一章事件", event_desc="主角完成觉醒。", chapter_no=1,
+                evidence=["第一章证据"],
+            ))
+            session.add(EventTimeline(
+                project_id=pid, source_id=str(_uuid.uuid4()),
+                event_title="第二章事件", event_desc="主角参加试炼。", chapter_no=2,
+                evidence=["第二章证据"],
+            ))
+            await session.flush()
+
+            from services.structured_qa import _answer_event_query
+            result = await _answer_event_query(session, pid, "第一章发生了什么?", "event_query", None)
+            titles = [c["title"] for c in result["citations"]]
+            assert titles == ["第一章事件"], f"应只命中第一章事件，实际: {titles}"
 
     asyncio.run(_run())
 

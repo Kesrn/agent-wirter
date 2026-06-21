@@ -28,15 +28,26 @@ from models.structured_knowledge import (
     CharacterProfile, AbilityProfile, EventTimeline, WorldRule,
 )
 from services.extraction_schema import (
-    ChapterExtraction, build_extraction_user_prompt,
+    AbilityItem, AbilityStatus, AbilityType, ChapterExtraction, build_extraction_user_prompt,
     EXTRACTION_SYSTEM_PROMPT, SCHEMA_VERSION, TEMPLATE_NAME, MAX_EXTRACT_CHARS,
 )
+from services.magic_systems import normalize_magic_system_label
 
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 2
+# 真实章节抽取容易因证据/事件描述过长截断 JSON；保持在全局上限内给抽取更多输出空间。
+EXTRACTION_MAX_TOKENS = 8000
 # 每次轮询推进的章节数（控制单次接口耗时）
 CHAPTERS_PER_ADVANCE = 5
+SKILL_ALIAS_TO_SYSTEM = {
+    "风轨": "风系", "风刃": "风系",
+    "火滋": "火系", "烈拳": "火系", "火浪": "火系",
+    "雷印": "雷系", "霹雳": "雷系", "雷击": "雷系",
+    "冰蔓": "冰系", "冰锁": "冰系", "冰封": "冰系",
+    "地波": "土系", "岩障": "土系", "陨石": "土系",
+    "遁影": "暗影系", "影遁": "暗影系",
+}
 
 
 # ── 状态常量 ─────────────────────────────────────────────
@@ -310,7 +321,7 @@ async def _process_single_chapter(
         llm_config = await get_user_llm_config(user_id, db)
         provider = get_llm_provider(llm_config)
         raw_output = await provider.generate(
-            EXTRACTION_SYSTEM_PROMPT, user_prompt, temperature=0.2, max_tokens=4000,
+            EXTRACTION_SYSTEM_PROMPT, user_prompt, temperature=0.2, max_tokens=EXTRACTION_MAX_TOKENS,
         )
     except LLMConfigError as e:
         # 模型不可用：记录失败，不影响其它章
@@ -346,6 +357,7 @@ async def _process_single_chapter(
         await _handle_retry_or_fail(db, staging)
         return
 
+    extraction = _normalize_extraction_abilities(extraction, content, genre=genre)
     staging.status = StagingStatus.VALIDATED
 
     # 合并到正式表
@@ -412,7 +424,7 @@ async def _save_staging(
 
 
 def _try_parse_json(text: str) -> dict | None:
-    """尝试 parse JSON，容错去除 markdown 代码块包裹。"""
+    """尝试 parse JSON，容错去除 markdown 代码块包裹和前后解释文本。"""
     if not text or not text.strip():
         return None
     text = text.strip()
@@ -421,11 +433,116 @@ def _try_parse_json(text: str) -> dict | None:
         lines = text.split("\n")
         if len(lines) >= 2:
             text = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
-    try:
-        parsed = json.loads(text)
-        return parsed if isinstance(parsed, dict) else None
-    except (json.JSONDecodeError, TypeError):
-        return None
+    candidates = [text]
+    first_obj = text.find("{")
+    last_obj = text.rfind("}")
+    if first_obj >= 0 and last_obj > first_obj:
+        candidates.append(text[first_obj:last_obj + 1])
+
+    decoder = json.JSONDecoder()
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+            return parsed if isinstance(parsed, dict) else None
+        except (json.JSONDecodeError, TypeError):
+            pass
+        if candidate.startswith("{"):
+            try:
+                parsed, _ = decoder.raw_decode(candidate)
+                return parsed if isinstance(parsed, dict) else None
+            except (json.JSONDecodeError, TypeError):
+                pass
+    return None
+
+
+def _normalize_extraction_abilities(
+    extraction: ChapterExtraction, chapter_content: str, *, genre: str = "magic_fantasy",
+) -> ChapterExtraction:
+    """补齐模型容易漏归一化的明确能力线索。
+
+    真实抽取中模型可能把“电流 + 紫色弧线”识别成 unknown 异象，而不是雷系。
+    这里只处理证据很窄、可解释的场景，避免把愿望/旁观描述误归因。
+    """
+    if genre != "magic_fantasy":
+        return extraction
+
+    abilities = []
+    existing = {
+        (a.character, a.ability_type.value, a.ability_name)
+        for a in extraction.abilities
+    }
+
+    for ability in extraction.abilities:
+        normalized_name = _normalize_ability_name(ability.ability_name)
+        if ability.ability_type == AbilityType.magic_element and normalized_name != ability.ability_name:
+            original_key = (ability.character, ability.ability_type.value, ability.ability_name)
+            normalized_key = (ability.character, ability.ability_type.value, normalized_name)
+            # Drop the noisy original key so 雷霆系魔法 + 雷系 collapses to one canonical row.
+            existing.discard(original_key)
+            if normalized_key in existing:
+                continue
+            existing.add(normalized_key)
+            abilities.append(ability.model_copy(update={"ability_name": normalized_name}))
+        else:
+            abilities.append(ability)
+
+    def _add(character: str, ability_name: str, evidence: str) -> None:
+        key = (character, AbilityType.magic_element.value, ability_name)
+        if key in existing:
+            return
+        existing.add(key)
+        abilities.append(AbilityItem(
+            character=character,
+            ability_type=AbilityType.magic_element,
+            ability_name=ability_name,
+            level="觉醒",
+            status=AbilityStatus.new,
+            importance=5,
+            confidence=0.85,
+            evidence=evidence,
+        ))
+
+    has_lightning_cue = "电流" in chapter_content and ("紫色" in chapter_content or "弧线" in chapter_content)
+    if has_lightning_cue:
+        for ability in extraction.abilities:
+            cue_text = f"{ability.ability_name} {ability.evidence}"
+            if ability.ability_type == AbilityType.unknown and ("紫色" in cue_text or "弧线" in cue_text):
+                evidence = _extract_evidence_excerpt(chapter_content, ("电流", "紫色", "弧线"))
+                _add(ability.character, "雷系", evidence)
+
+    for ability in extraction.abilities:
+        cue_text = f"{ability.ability_name} {ability.evidence}"
+        system_name = _system_from_skill_alias(cue_text)
+        if system_name and ability.ability_type in (AbilityType.spell, AbilityType.skill, AbilityType.unknown):
+            evidence = _extract_evidence_excerpt(chapter_content, tuple(
+                alias for alias in SKILL_ALIAS_TO_SYSTEM if alias in cue_text
+            ))
+            _add(ability.character, system_name, evidence or ability.evidence)
+
+    if abilities == list(extraction.abilities):
+        return extraction
+    return extraction.model_copy(update={"abilities": abilities})
+
+
+def _normalize_ability_name(name: str) -> str:
+    """Normalize obvious system label variants without changing non-system abilities."""
+    return normalize_magic_system_label(name)
+
+
+def _system_from_skill_alias(text: str) -> str | None:
+    for alias, system_name in SKILL_ALIAS_TO_SYSTEM.items():
+        if alias in text:
+            return system_name
+    return None
+
+
+def _extract_evidence_excerpt(text: str, terms: tuple[str, ...], *, radius: int = 80) -> str:
+    positions = [text.find(term) for term in terms if text.find(term) >= 0]
+    if not positions:
+        return text.strip()[:240]
+    start = max(0, min(positions) - radius)
+    end = min(len(text), max(positions) + radius)
+    return " ".join(text[start:end].strip().split())[:300]
 
 
 async def _handle_retry_or_fail(db: AsyncSession, staging: ExtractionStaging) -> None:

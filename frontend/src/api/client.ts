@@ -20,6 +20,7 @@ import {
   type DocumentVersionDiffRequest, type DocumentVersionDiffResponse,
   type ApiGenerationRecordListItem, type ApiGenerationRecord,
   type GenerationRecordUpdatePayload, type GenerationRecordDiffRequest, type GenerationRecordDiffResponse,
+  type ChapterReviewNote, type ChapterReviewNoteCreatePayload, type ChapterReviewNoteUpdatePayload,
   type ApiEvaluationDataset, type ApiEvaluationCase, type ApiEvaluationRun,
   type EvaluationDatasetCreatePayload, type EvaluationDatasetUpdatePayload,
   type EvaluationCaseCreatePayload, type EvaluationCaseUpdatePayload, type EvaluationRunCreatePayload,
@@ -240,6 +241,14 @@ export const api = {
     request<{ ok: boolean }>(`/projects/${projectId}/chapters/${sequenceNumber}`, { method: 'DELETE' }),
   extractChapterStructure: (projectId: string, sequenceNumber: number, data: ChapterStructureExtractRequest) =>
     request<ChapterStructureExtractResponse>(`/projects/${projectId}/chapters/${sequenceNumber}/extract-structure`, { method: 'POST', body: JSON.stringify(data) }),
+  listChapterReviewNotes: (projectId: string, sequenceNumber: number) =>
+    request<ChapterReviewNote[]>(`/projects/${projectId}/chapters/${sequenceNumber}/review-notes`),
+  createChapterReviewNote: (projectId: string, sequenceNumber: number, data: ChapterReviewNoteCreatePayload) =>
+    request<ChapterReviewNote>(`/projects/${projectId}/chapters/${sequenceNumber}/review-notes`, { method: 'POST', body: JSON.stringify(data) }),
+  updateChapterReviewNote: (projectId: string, sequenceNumber: number, noteId: string, data: ChapterReviewNoteUpdatePayload) =>
+    request<ChapterReviewNote>(`/projects/${projectId}/chapters/${sequenceNumber}/review-notes/${noteId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteChapterReviewNote: (projectId: string, sequenceNumber: number, noteId: string) =>
+    request<void>(`/projects/${projectId}/chapters/${sequenceNumber}/review-notes/${noteId}`, { method: 'DELETE' }),
 
   // ─── Documents ───
   listDocuments: (projectId: string) => request<ApiDocument[]>(`/projects/${projectId}/documents`),

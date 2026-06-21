@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.structured_knowledge import (
     CharacterProfile, AbilityProfile, EventTimeline, WorldRule,
 )
+from services.magic_systems import canonical_magic_system_name
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,35 @@ def _like_escape(value: str) -> str:
     反斜杠本身先转义，再转义 % 与 _。配合 column.like(pattern, escape='\\\\') 使用。
     """
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _parse_chinese_int(value: str) -> int | None:
+    """Parse simple Chinese numerals used in chapter references."""
+    if not value:
+        return None
+    if value.isdigit():
+        return int(value)
+
+    digits = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+    units = {"十": 10, "百": 100, "千": 1000}
+    total = 0
+    section = 0
+    seen = False
+    for ch in value:
+        if ch in digits:
+            section = digits[ch]
+            seen = True
+        elif ch in units:
+            seen = True
+            unit = units[ch]
+            if section == 0:
+                section = 1
+            total += section * unit
+            section = 0
+        else:
+            return None
+    return total + section if seen else None
 
 
 # ── 意图识别（文档 §13 关键词） ─────────────────────────
@@ -72,6 +102,20 @@ def _extract_character_name(question: str) -> str | None:
     return None
 
 
+def _character_name_variants(name: str) -> list[str]:
+    """Generate a few lightweight variants for common name typos."""
+    bases = [name]
+    if len(name) == 3 and name[1] == "小" and name[2] != "小":
+        bases.append(name[0] + name[2])
+
+    variants: list[str] = []
+    for base in bases:
+        for candidate in (base, base.replace("侯", "候"), base.replace("候", "侯")):
+            if candidate not in variants:
+                variants.append(candidate)
+    return variants
+
+
 def _extract_system_name(question: str) -> str | None:
     """从问题中提取法系名（X系）。"""
     import re
@@ -79,6 +123,11 @@ def _extract_system_name(question: str) -> str | None:
     if m:
         return m.group(1)
     return None
+
+
+def _canonical_magic_system_name(name: str) -> str | None:
+    """Return canonical X系 name from noisy model labels such as 雷霆系魔法/雷系星尘."""
+    return canonical_magic_system_name(name)
 
 
 # ── 主入口 ───────────────────────────────────────────────
@@ -117,17 +166,20 @@ async def _answer_character_ability(
                              "请明确指定要查询的人物名称，例如「莫凡有什么系」。")
 
     # 优先查 ability_profile（按 source_priority 降序）
+    variants = _character_name_variants(character)
     result = await db.execute(
         select(AbilityProfile)
         .where(AbilityProfile.project_id == pid)
-        .where(AbilityProfile.character_name == character)
+        .where(AbilityProfile.character_name.in_(variants))
         .order_by(AbilityProfile.source_priority.desc(), AbilityProfile.confidence.desc())
     )
     abilities = list(result.scalars().all())
 
     # ability_profile 无记录 → 回退 project_knowledge_facts
-    if not abilities:
-        facts_citations, facts_answer = await _fallback_to_facts(db, pid, character)
+    wants_magic_system = any(term in question for term in ("什么系", "哪些系", "有什么系", "魔法系别"))
+    has_magic_system = any(a.ability_type == "magic_element" for a in abilities)
+    if not abilities or (wants_magic_system and not has_magic_system):
+        facts_citations, facts_answer = await _fallback_to_facts(db, pid, variants)
         if facts_answer:
             return {
                 "answer": facts_answer,
@@ -138,21 +190,47 @@ async def _answer_character_ability(
             }
         return _empty_result(intent, conversation_id)
 
-    # 按 (人物, 类型, 能力名) 去重。answer 和 citations 必须用同一批去重后的事实，
+    display_rows: list[tuple[AbilityProfile, str]] = []
+    for ability in abilities:
+        display_name = ability.ability_name
+        if wants_magic_system:
+            if ability.ability_type != "magic_element":
+                continue
+            canonical = _canonical_magic_system_name(ability.ability_name)
+            if not canonical:
+                continue
+            display_name = canonical
+        display_rows.append((ability, display_name))
+
+    if wants_magic_system and not display_rows:
+        facts_citations, facts_answer = await _fallback_to_facts(db, pid, variants)
+        if facts_answer:
+            return {
+                "answer": facts_answer,
+                "citations": facts_citations,
+                "query_plan": {"mode": "structured", "intent": intent, "tables": ["project_knowledge_facts"]},
+                "retrieval_stats": {"structured_hits": len(facts_citations), "vector_hits": 0},
+                "conversation_id": conversation_id or "",
+            }
+        return _empty_result(intent, conversation_id)
+
+    # 按能力展示名去重。answer 和 citations 必须用同一批去重后的事实，
     # 否则同一能力多条来源会在引用区刷屏。
     from collections import defaultdict
-    deduped_abilities: list[AbilityProfile] = []
-    best_by_key: dict[tuple[str, str, str], AbilityProfile] = {}
-    for a in abilities:
-        key = (a.character_name, a.ability_type, a.ability_name)
+    best_by_key: dict[tuple[str, ...], tuple[AbilityProfile, str]] = {}
+    for a, display_name in display_rows:
+        key = (a.ability_type, display_name) if wants_magic_system else (
+            a.character_name, a.ability_type, display_name,
+        )
         current = best_by_key.get(key)
         if current is None:
-            best_by_key[key] = a
+            best_by_key[key] = (a, display_name)
             continue
+        current_ability = current[0]
         current_score = (
-            current.source_priority or 0,
-            current.confidence or 0,
-            1 if current.evidence else 0,
+            current_ability.source_priority or 0,
+            current_ability.confidence or 0,
+            1 if current_ability.evidence else 0,
         )
         new_score = (
             a.source_priority or 0,
@@ -160,13 +238,13 @@ async def _answer_character_ability(
             1 if a.evidence else 0,
         )
         if new_score > current_score:
-            best_by_key[key] = a
+            best_by_key[key] = (a, display_name)
     deduped_abilities = list(best_by_key.values())
 
     # 按 ability_type 分组
-    grouped: dict[str, list[AbilityProfile]] = defaultdict(list)
-    for a in deduped_abilities:
-        grouped[a.ability_type].append(a)
+    grouped: dict[str, list[tuple[AbilityProfile, str]]] = defaultdict(list)
+    for a, display_name in deduped_abilities:
+        grouped[a.ability_type].append((a, display_name))
 
     lines = [f"根据结构化知识库，**{character}** 的能力如下：\n"]
     type_labels = {
@@ -176,7 +254,7 @@ async def _answer_character_ability(
     }
     for atype, items in grouped.items():
         label = type_labels.get(atype, atype)
-        names = "、".join(i.ability_name for i in items)
+        names = "、".join(display_name for _, display_name in items)
         lines.append(f"- **{label}**：{names}")
 
     answer = "\n".join(lines)
@@ -186,14 +264,14 @@ async def _answer_character_ability(
             "source_id": str(a.source_id) if a.source_id else None,
             "chunk_id": None,
             "chapter_no": a.first_seen_chapter,
-            "title": f"{a.character_name} - {a.ability_name}",
+            "title": f"{a.character_name} - {display_name}",
             "snippet": (a.evidence[0] if a.evidence else "")[:300],
             "evidence_type": "character_ability_fact",
-            "matched_query": f"{a.character_name} -> {a.ability_name}",
+            "matched_query": f"{a.character_name} -> {display_name}",
             "score": a.confidence,
             "table": "ability_profile",
         }
-        for a in deduped_abilities if a.source_id
+        for a, display_name in deduped_abilities if a.source_id
     ]
     return {
         "answer": answer,
@@ -205,14 +283,23 @@ async def _answer_character_ability(
 
 
 async def _fallback_to_facts(
-    db: AsyncSession, pid: str, character: str,
+    db: AsyncSession, pid: str, characters: list[str],
 ) -> tuple[list[dict], str | None]:
     """ability_profile 无记录时，回退查 project_knowledge_facts。"""
     try:
         from services.knowledge_fact_index import query_character_system_facts
-        facts = await query_character_system_facts(db, pid, subject=character, limit=50)
+        facts = []
+        seen: set[tuple[str, str]] = set()
+        for character in characters:
+            for fact in await query_character_system_facts(db, pid, subject=character, limit=50):
+                key = (fact.subject, fact.object)
+                if key in seen:
+                    continue
+                seen.add(key)
+                facts.append(fact)
         if not facts:
             return [], None
+        character = characters[0]
         systems = list(dict.fromkeys(f.object for f in facts))
         lines = "\n".join(f"- {s}" for s in systems[:12])
         answer = f"根据规则事实索引，**{character}** 明确绑定的法系有：\n\n{lines}"
@@ -244,12 +331,10 @@ async def _answer_event_query(
 ) -> dict:
     # 是否指定章节
     import re
-    chapter_match = re.search(r"第([\d]+|[一二三四五六七八九十百]+)章", question)
+    chapter_match = re.search(r"第([\d]+|[零〇一二两三四五六七八九十百千万]+)章", question)
     chapter_no = None
     if chapter_match:
-        cn = chapter_match.group(1)
-        if cn.isdigit():
-            chapter_no = int(cn)
+        chapter_no = _parse_chinese_int(chapter_match.group(1))
 
     stmt = select(EventTimeline).where(EventTimeline.project_id == pid)
     if chapter_no:

@@ -153,6 +153,27 @@ export interface ReviewComment {
   expert_id: string
   comment: string
   severity: 'info' | 'warning' | 'critical'
+  resolved?: boolean
+  source_type?: string
+  created_at?: string
+  updated_at?: string
+  metadata?: Record<string, unknown> | null
+}
+
+export type ReviewNoteSeverity = 'info' | 'warning' | 'critical'
+
+/** Backend chapter_review_notes response */
+export interface ChapterReviewNote {
+  id: string
+  project_id: string
+  chapter_sequence_number: number
+  source_type: string
+  severity: ReviewNoteSeverity
+  content: string
+  resolved: boolean
+  metadata: Record<string, unknown> | null
+  created_at: string
+  updated_at: string
 }
 
 /** 世界观条目 (UI / store) — mapped from ApiWorldEntry */
@@ -429,6 +450,22 @@ export interface ChapterCreatePayload {
   title: string
   outline?: string
   sequence_number?: number
+}
+
+export interface ChapterReviewNoteCreatePayload {
+  source_type: string
+  severity?: ReviewNoteSeverity
+  content: string
+  resolved?: boolean
+  metadata?: Record<string, unknown> | null
+}
+
+export interface ChapterReviewNoteUpdatePayload {
+  source_type?: string
+  severity?: ReviewNoteSeverity
+  content?: string
+  resolved?: boolean
+  metadata?: Record<string, unknown> | null
 }
 
 export interface ProjectUpdatePayload {
