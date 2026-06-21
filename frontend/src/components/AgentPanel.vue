@@ -713,7 +713,7 @@ function handleSSEEvent(envelope: SSEEnvelope) {
     }
     case 'skill_pack': {
       const payload = data as unknown as SkillPackPayload
-      expertStore.setExpertSkill(pid.value, payload.expert, payload.skill)
+      expertStore.setExpertSkillPack(pid.value, payload)
       break
     }
     case 'generation_record': {

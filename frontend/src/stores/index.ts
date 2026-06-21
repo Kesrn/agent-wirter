@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Project, Chapter, DocumentUnit, Expert, WorkflowStep, ReviewComment, ChapterReviewNote, ChapterReviewNoteCreatePayload, CharacterRelation, CharacterEvent, ProjectMode, ExpertCreatePayload, WorldEntry, Character, OutlineItem, HiddenThread, ChapterVersion, DocumentRevision, DiffHunk, GenerationRecord } from '../api/types'
+import type { Project, Chapter, DocumentUnit, Expert, WorkflowStep, ReviewComment, ChapterReviewNote, ChapterReviewNoteCreatePayload, CharacterRelation, CharacterEvent, ProjectMode, ExpertCreatePayload, WorldEntry, Character, OutlineItem, HiddenThread, ChapterVersion, DocumentRevision, DiffHunk, GenerationRecord, SkillPackPayload } from '../api/types'
 import type { ApiProject, ApiChapter, ApiDocument, ApiExpert, ApiWorldEntry, ApiCharacter, ApiCharacterRelation, ApiOutline, ApiHiddenThread, ApiChapterVersion, ApiDocumentVersion, ApiGenerationRecordListItem, ApiGenerationRecord } from '../api/types'
 import type { CharacterRelationCreatePayload, CharacterRelationUpdatePayload, CharacterEventUpsertPayload, OutlineUpdatePayload, HiddenThreadUpdatePayload, WorldEntryCreatePayload, WorldEntryUpdatePayload, CharacterCreatePayload, CharacterUpdatePayload, CharacterMergePayload, ProjectUpdatePayload } from '../api/types'
 import { api, ApiError } from '../api/client'
@@ -467,6 +467,7 @@ export interface ExpertProjectState {
   finalDraft: string
   workflowSteps: WorkflowStep[]
   expertSkills: Record<string, string>
+  expertSkillPacks: Record<string, SkillPackPayload>
   revisionCount: number
   maxRevisions: number
 }
@@ -477,6 +478,7 @@ const EMPTY_EXPERT_STATE: ExpertProjectState = {
   finalDraft: '',
   workflowSteps: [],
   expertSkills: {},
+  expertSkillPacks: {},
   revisionCount: 0,
   maxRevisions: 3,
 }
@@ -501,12 +503,12 @@ export const useExpertStore = defineStore('expert', () => {
   // ─── Per-project generation state ───
 
   function getState(pid: string): ExpertProjectState {
-    return states.value[pid] ?? { ...EMPTY_EXPERT_STATE, workflowSteps: [] }
+    return states.value[pid] ?? { ...EMPTY_EXPERT_STATE, workflowSteps: [], expertSkills: {}, expertSkillPacks: {} }
   }
 
   function ensureState(pid: string): ExpertProjectState {
     if (!states.value[pid]) {
-      states.value[pid] = { ...EMPTY_EXPERT_STATE, workflowSteps: [] }
+      states.value[pid] = { ...EMPTY_EXPERT_STATE, workflowSteps: [], expertSkills: {}, expertSkillPacks: {} }
     }
     return states.value[pid]
   }
@@ -518,6 +520,7 @@ export const useExpertStore = defineStore('expert', () => {
     s.finalDraft = ''
     s.workflowSteps = []
     s.expertSkills = {}
+    s.expertSkillPacks = {}
     s.revisionCount = 0
     s.maxRevisions = 3
   }
@@ -561,6 +564,12 @@ export const useExpertStore = defineStore('expert', () => {
 
   function setExpertSkill(pid: string, expert: string, skill: string) {
     ensureState(pid).expertSkills[expert] = skill
+  }
+
+  function setExpertSkillPack(pid: string, pack: SkillPackPayload) {
+    const s = ensureState(pid)
+    s.expertSkills[pack.expert] = pack.skill
+    s.expertSkillPacks[pack.expert] = pack
   }
 
   function setRevisionInfo(pid: string, revisionCount: number, maxRevisions: number) {
@@ -627,7 +636,7 @@ export const useExpertStore = defineStore('expert', () => {
     getExpertName, setActive,
     getState, startGenerating, stopGenerating, appendOutput, appendDraft, setDraft,
     setWorkflowSteps, updateStepStatus, clearProjectState,
-      setExpertSkill, setRevisionInfo,
+      setExpertSkill, setExpertSkillPack, setRevisionInfo,
     loadExperts, addExpert, addCustomExpert, toggleExpert,
   }
 })
@@ -1332,6 +1341,18 @@ export const useDocumentRevisionStore = defineStore('documentRevision', () => {
 
 // ─── AI Generation History store ───
 
+function skillPacksFromRequestParams(params: Record<string, unknown> | null | undefined): SkillPackPayload[] {
+  const packs = params?.skill_packs
+  if (!Array.isArray(packs)) return []
+  return packs.filter((item): item is SkillPackPayload => {
+    if (!item || typeof item !== 'object') return false
+    const pack = item as Partial<SkillPackPayload>
+    return typeof pack.expert === 'string'
+      && typeof pack.skill === 'string'
+      && typeof pack.skill_dir === 'string'
+  })
+}
+
 function apiGenerationRecordToRecord(record: ApiGenerationRecordListItem | ApiGenerationRecord): GenerationRecord {
   return {
     id: record.id,
@@ -1346,6 +1367,7 @@ function apiGenerationRecordToRecord(record: ApiGenerationRecordListItem | ApiGe
     langfuseTraceId: record.langfuse_trace_id ?? null,
     createdAt: record.created_at,
     content: 'content' in record ? record.content : null,
+    skillPacks: 'request_params' in record ? skillPacksFromRequestParams(record.request_params) : [],
   }
 }
 
@@ -1447,6 +1469,7 @@ export const useGenerationHistoryStore = defineStore('generationHistory', () => 
       langfuseTraceId: null,
       createdAt: new Date().toISOString(),
       content: null,
+      skillPacks: [],
     })
   }
 

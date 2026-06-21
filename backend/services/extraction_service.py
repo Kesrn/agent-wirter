@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.extraction_pipeline import ProjectSourceChapter, ExtractionJob, ExtractionStaging
@@ -141,7 +141,10 @@ async def advance_extraction_job(
 
     # 处理 CHAPTERS_PER_ADVANCE 章
     for chapter in chapters_to_process[:CHAPTERS_PER_ADVANCE]:
-        await _process_single_chapter(db, job_obj, chapter, genre, canon_level, origin, user_id)
+        await _process_single_chapter(
+            db, job_obj, chapter, genre, canon_level, origin, user_id,
+            force_reextract=force_reextract,
+        )
         await db.flush()
         # 更新 job 计数
         await _refresh_job_counts(db, job_obj)
@@ -296,6 +299,7 @@ async def _count_chapters_in_range(
 async def _process_single_chapter(
     db: AsyncSession, job: ExtractionJob, chapter: ProjectSourceChapter,
     genre: str, canon_level: str, origin: str, user_id: str,
+    force_reextract: bool = False,
 ) -> None:
     """处理单章：LLM 抽取 → 保存 raw_output → 校验 → 合并。"""
     content = chapter.content or ""
@@ -362,7 +366,12 @@ async def _process_single_chapter(
 
     # 合并到正式表
     try:
-        await _merge_extraction(db, job, chapter, extraction, canon_level, origin)
+        async with db.begin_nested():
+            if force_reextract:
+                await _clear_stale_structured_results_for_chapter(
+                    db, job, chapter, extraction, genre, canon_level, origin,
+                )
+            await _merge_extraction(db, job, chapter, extraction, canon_level, origin)
         staging.status = StagingStatus.MERGED
     except Exception as e:
         logger.exception("merge 失败 chapter=%s", chapter.chapter_no)
@@ -421,6 +430,169 @@ async def _save_staging(
     db.add(staging)
     await db.flush()
     return staging
+
+
+def _extraction_keys(extraction: ChapterExtraction) -> dict[str, set]:
+    """Build merge keys from a validated extraction snapshot."""
+    return {
+        "characters": {c.name for c in extraction.characters if c.name},
+        "abilities": {
+            (a.character, a.ability_type.value, a.ability_name)
+            for a in extraction.abilities
+            if a.character and a.ability_name
+        },
+        "world_rules": {
+            (r.category, r.rule_text)
+            for r in extraction.world_rules
+            if r.category and r.rule_text
+        },
+    }
+
+
+def _keys_from_staging_raw(raw_json: dict | None, chapter_content: str, genre: str) -> dict[str, set]:
+    """Recover structured merge keys from a historical staging raw_json row."""
+    empty = {"characters": set(), "abilities": set(), "world_rules": set()}
+    if not raw_json:
+        return empty
+    try:
+        extraction = ChapterExtraction.model_validate(raw_json)
+    except ValidationError:
+        return empty
+
+    raw_keys = _extraction_keys(extraction)
+    try:
+        normalized = _normalize_extraction_abilities(extraction, chapter_content, genre=genre)
+    except Exception:
+        return raw_keys
+
+    normalized_keys = _extraction_keys(normalized)
+    return {
+        key: raw_keys[key] | normalized_keys[key]
+        for key in raw_keys
+    }
+
+
+async def _staging_keys_for_source(
+    db: AsyncSession,
+    *,
+    source_id: str,
+    genre: str,
+    exclude_chapter_no: int | None = None,
+    include_chapter_no: int | None = None,
+) -> dict[str, set]:
+    stmt = (
+        select(ExtractionStaging.raw_json, ProjectSourceChapter.content)
+        .join(
+            ProjectSourceChapter,
+            (ProjectSourceChapter.source_id == ExtractionStaging.source_id)
+            & (ProjectSourceChapter.chapter_no == ExtractionStaging.chapter_no),
+            isouter=True,
+        )
+        .where(ExtractionStaging.source_id == source_id)
+        .where(ExtractionStaging.status == StagingStatus.MERGED)
+    )
+    if include_chapter_no is not None:
+        stmt = stmt.where(ExtractionStaging.chapter_no == include_chapter_no)
+    if exclude_chapter_no is not None:
+        stmt = stmt.where(ExtractionStaging.chapter_no != exclude_chapter_no)
+
+    result = await db.execute(stmt)
+    keys = {"characters": set(), "abilities": set(), "world_rules": set()}
+    for raw_json, content in result.all():
+        row_keys = _keys_from_staging_raw(raw_json, content or "", genre)
+        for key in keys:
+            keys[key].update(row_keys[key])
+    return keys
+
+
+async def _clear_stale_structured_results_for_chapter(
+    db: AsyncSession,
+    job: ExtractionJob,
+    chapter: ProjectSourceChapter,
+    extraction: ChapterExtraction,
+    genre: str,
+    canon_level: str,
+    origin: str,
+) -> None:
+    """Remove prior structured rows for a forced re-extraction target.
+
+    The cleanup is intentionally narrow:
+    - only the same project/source/origin/canon_level;
+    - only rows tied to this chapter, or exact keys previously emitted by this
+      chapter's merged staging snapshot;
+    - keys that also appear in other chapters are kept unless the fresh
+      extraction is about to replace them.
+    """
+    pid = str(job.project_id)
+    sid = str(job.source_id)
+    chapter_no = chapter.chapter_no
+    current_keys = _extraction_keys(extraction)
+    target_keys = await _staging_keys_for_source(
+        db,
+        source_id=sid,
+        genre=genre,
+        include_chapter_no=chapter_no,
+    )
+    outside_keys = await _staging_keys_for_source(
+        db,
+        source_id=sid,
+        genre=genre,
+        exclude_chapter_no=chapter_no,
+    )
+
+    def _base_stmt(model):
+        return (
+            delete(model)
+            .where(model.project_id == pid)
+            .where(model.source_id == sid)
+            .where(model.canon_level == canon_level)
+            .where(model.origin == origin)
+        )
+
+    # Events are intrinsically chapter-scoped and are appended on every merge.
+    event_stmt = _base_stmt(EventTimeline).where(EventTimeline.chapter_no == chapter_no)
+    if chapter.id:
+        event_stmt = event_stmt.where(or_(
+            EventTimeline.chapter_id == str(chapter.id),
+            EventTimeline.chapter_id.is_(None),
+        ))
+    await db.execute(event_stmt)
+
+    for name in target_keys["characters"]:
+        if name in current_keys["characters"] or name in outside_keys["characters"]:
+            continue
+        await db.execute(_base_stmt(CharacterProfile).where(CharacterProfile.name == name))
+
+    ability_keys = {
+        key for key in target_keys["abilities"]
+        if key not in outside_keys["abilities"]
+    }
+    for character_name, ability_type, ability_name in ability_keys:
+        await db.execute(
+            _base_stmt(AbilityProfile)
+            .where(AbilityProfile.character_name == character_name)
+            .where(AbilityProfile.ability_type == ability_type)
+            .where(AbilityProfile.ability_name == ability_name)
+            .where(AbilityProfile.first_seen_chapter == chapter_no)
+        )
+
+    world_rule_keys = {
+        key for key in target_keys["world_rules"]
+        if key not in outside_keys["world_rules"]
+    }
+    for category, rule_text in world_rule_keys:
+        world_rule_stmt = (
+            _base_stmt(WorldRule)
+            .where(WorldRule.category == category)
+            .where(WorldRule.rule_text == rule_text)
+            .where(WorldRule.chapter_no == chapter_no)
+        )
+        if chapter.id:
+            world_rule_stmt = world_rule_stmt.where(or_(
+                WorldRule.chapter_id == str(chapter.id),
+                WorldRule.chapter_id.is_(None),
+            ))
+        await db.execute(world_rule_stmt)
 
 
 def _try_parse_json(text: str) -> dict | None:

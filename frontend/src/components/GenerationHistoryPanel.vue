@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useGenerationHistoryStore } from '../stores'
 import type { GenerationRecord, ProjectMode } from '../api/types'
+import SkillPackDetail from './SkillPackDetail.vue'
 
 const props = defineProps<{
   projectId: string
@@ -73,7 +74,8 @@ async function togglePreview(record: GenerationRecord) {
     return
   }
   const content = await contentFor(record)
-  if (content) expandedId.value = record.id
+  const refreshed = store.records.find(item => item.id === record.id)
+  if (content !== null || (refreshed?.skillPacks.length ?? 0) > 0) expandedId.value = record.id
 }
 
 async function handleApply(record: GenerationRecord) {
@@ -131,7 +133,16 @@ watch(
           <button class="btn-action" @click="emit('compare-current', record.id)">与当前对比</button>
           <button class="btn-action btn-apply" @click="handleApply(record)">应用</button>
         </div>
-        <pre v-if="expandedId === record.id" class="generation-preview">{{ previewContent[record.id] }}</pre>
+        <div v-if="expandedId === record.id" class="generation-expanded">
+          <div v-if="record.skillPacks.length" class="generation-skill-packs">
+            <SkillPackDetail
+              v-for="pack in record.skillPacks"
+              :key="`${pack.expert}:${pack.skill_dir}`"
+              :pack="pack"
+            />
+          </div>
+          <pre class="generation-preview">{{ previewContent[record.id] }}</pre>
+        </div>
       </li>
     </ul>
   </div>
@@ -254,8 +265,18 @@ watch(
 .btn-apply:hover {
   color: var(--status-reviewing);
 }
-.generation-preview {
+.generation-expanded {
   margin: var(--sp-3) 0 0;
+}
+
+.generation-skill-packs {
+  display: grid;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+
+.generation-preview {
+  margin: 0;
   padding: var(--sp-3);
   max-height: 260px;
   overflow-y: auto;

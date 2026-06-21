@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useExpertStore } from '../stores'
 import type { ProjectMode } from '../api/types'
+import SkillPackDetail from './SkillPackDetail.vue'
 
 const props = defineProps<{ projectId: string; mode: ProjectMode }>()
 
@@ -54,6 +55,10 @@ function connectorStatus(index: number): 'pending' | 'done' {
   return 'pending'
 }
 
+function skillKeyForNode(id: string): string {
+  return stepSkillMap[id] ?? id
+}
+
 const progressPercent = computed(() => {
   const nodes = WORKFLOW_NODES.value
   const steps = nodes.map(n => nodeStatus(n.id))
@@ -85,7 +90,15 @@ const progressPercent = computed(() => {
         <!-- Label -->
         <span class="wf-label">{{ node.label }}</span>
         <!-- Skill name -->
-        <span v-if="projectState.expertSkills[stepSkillMap[node.id]]" class="wf-skill">{{ projectState.expertSkills[stepSkillMap[node.id]] }}</span>
+        <SkillPackDetail
+          v-if="projectState.expertSkillPacks[skillKeyForNode(node.id)]"
+          class="wf-skill"
+          :pack="projectState.expertSkillPacks[skillKeyForNode(node.id)]"
+          compact
+        />
+        <span v-else-if="projectState.expertSkills[skillKeyForNode(node.id)]" class="wf-skill-text">
+          {{ projectState.expertSkills[skillKeyForNode(node.id)] }}
+        </span>
         <!-- Running hint -->
         <span v-if="nodeStatus(node.id) === 'running'" class="wf-hint">进行中</span>
         <span v-else-if="nodeStatus(node.id) === 'cancelled'" class="wf-hint cancelled">已取消</span>
@@ -204,11 +217,19 @@ const progressPercent = computed(() => {
   opacity: 0.5;
 }
 
+.wf-skill,
+.wf-skill-text {
+  margin-left: var(--sp-1);
+}
+
 .wf-skill {
+  max-width: min(220px, 45%);
+}
+
+.wf-skill-text {
   font-size: 10px;
   color: var(--text-tertiary);
   opacity: 0.6;
-  margin-left: var(--sp-1);
 }
 
 /* Row states */

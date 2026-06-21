@@ -12,6 +12,7 @@
 """
 
 import asyncio
+import json
 import pytest
 from sqlalchemy import select
 
@@ -1275,6 +1276,24 @@ class _FakeProvider:
         yield ""
 
 
+class _SequenceProvider:
+    """测试用顺序 Provider，每次 generate 返回下一段 JSON。"""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self._index = 0
+
+    async def generate(self, system_prompt: str, user_prompt: str, **kwargs) -> str:
+        if self._index >= len(self._responses):
+            return self._responses[-1]
+        response = self._responses[self._index]
+        self._index += 1
+        return response
+
+    async def generate_stream(self, *args, **kwargs):
+        yield ""
+
+
 # ── 上传 novel genre/canon_level 闭环测试 ────────────────
 
 
@@ -1695,6 +1714,188 @@ def test_reset_extraction_clears_pipeline_and_structured_tables():
         f"/api/projects/{pid}/knowledge/sources/{sid}/extract/status", headers=headers,
     ).json()
     assert s["status"] == "NONE"
+
+
+def test_force_reextract_clears_stale_structured_rows_for_target_chapter():
+    """force_reextract 重抽单章时，应清掉该章旧 merged 行且不动其它章节。"""
+    from unittest.mock import patch
+
+    def _payload(chapter_no, title, *, abilities, events, rules):
+        characters = []
+        seen_characters = set()
+        for item in abilities:
+            character_name = item["character"]
+            if character_name in seen_characters:
+                continue
+            seen_characters.add(character_name)
+            characters.append({
+                "name": character_name,
+                "aliases": [],
+                "identity": "学生",
+                "status": "登场",
+                "importance": 3,
+                "confidence": 0.9,
+                "evidence": item["evidence"],
+            })
+        return json.dumps({
+            "chapter_no": chapter_no,
+            "chapter_title": title,
+            "chapter_summary": title,
+            "characters": characters,
+            "abilities": [
+                {
+                    "character": item["character"],
+                    "ability_type": item["ability_type"],
+                    "ability_name": item["ability_name"],
+                    "level": "",
+                    "status": "new",
+                    "importance": 3,
+                    "confidence": 0.9,
+                    "evidence": item["evidence"],
+                }
+                for item in abilities
+            ],
+            "events": [
+                {
+                    "event_title": item["title"],
+                    "event_desc": item["desc"],
+                    "characters": item["characters"],
+                    "location": "",
+                    "cause": "",
+                    "effect": "",
+                    "importance": 3,
+                    "confidence": 0.9,
+                    "evidence": item["evidence"],
+                }
+                for item in events
+            ],
+            "world_rules": [
+                {
+                    "category": item["category"],
+                    "rule_text": item["rule_text"],
+                    "priority": "medium",
+                    "confidence": 0.9,
+                    "evidence": item["evidence"],
+                }
+                for item in rules
+            ],
+        }, ensure_ascii=False)
+
+    pid, headers = _create_project()
+    create_resp = _create_novel_source(
+        pid,
+        "重抽清理小说",
+        "第一章 觉醒\n莫凡觉醒了火系。\n第二章 初战\n张小侯释放风轨。",
+        headers,
+    )
+    sid = create_resp.json()["id"]
+    client.post(f"/api/projects/{pid}/knowledge/sources/{sid}/split-chapters", headers=headers)
+
+    first_provider = _SequenceProvider([
+        _payload(
+            1,
+            "觉醒",
+            abilities=[
+                {"character": "莫凡", "ability_type": "magic_element", "ability_name": "火系", "evidence": "莫凡觉醒了火系"},
+                {"character": "莫凡", "ability_type": "magic_element", "ability_name": "冰系", "evidence": "莫凡误记为冰系"},
+            ],
+            events=[
+                {"title": "旧误判事件", "desc": "旧抽取误判", "characters": ["莫凡"], "evidence": "莫凡误记为冰系"},
+            ],
+            rules=[
+                {"category": "误判规则", "rule_text": "旧规则应该被清理", "evidence": "莫凡误记为冰系"},
+            ],
+        ),
+        _payload(
+            2,
+            "初战",
+            abilities=[
+                {"character": "张小侯", "ability_type": "magic_element", "ability_name": "风系", "evidence": "张小侯释放风轨"},
+            ],
+            events=[
+                {"title": "张小侯释放风轨", "desc": "第二章事件", "characters": ["张小侯"], "evidence": "张小侯释放风轨"},
+            ],
+            rules=[
+                {"category": "风系规则", "rule_text": "风轨属于风系技能", "evidence": "张小侯释放风轨"},
+            ],
+        ),
+    ])
+    with patch("agents.llm_provider.get_llm_provider", return_value=first_provider), \
+         patch("api.llm_deps.get_user_llm_config", return_value={"provider": "mock"}):
+        resp = client.post(
+            f"/api/projects/{pid}/knowledge/sources/{sid}/extract",
+            json={"genre": "magic_fantasy", "max_chapters_per_run": 5},
+            headers=headers,
+        )
+    assert resp.status_code == 200, resp.text
+
+    second_provider = _SequenceProvider([
+        _payload(
+            1,
+            "觉醒",
+            abilities=[
+                {"character": "莫凡", "ability_type": "magic_element", "ability_name": "火系", "evidence": "莫凡觉醒了火系"},
+            ],
+            events=[
+                {"title": "莫凡觉醒火系", "desc": "修正后的第一章事件", "characters": ["莫凡"], "evidence": "莫凡觉醒了火系"},
+            ],
+            rules=[
+                {"category": "觉醒规则", "rule_text": "觉醒可能获得魔法系别", "evidence": "莫凡觉醒了火系"},
+            ],
+        ),
+    ])
+    with patch("agents.llm_provider.get_llm_provider", return_value=second_provider), \
+         patch("api.llm_deps.get_user_llm_config", return_value={"provider": "mock"}):
+        resp = client.post(
+            f"/api/projects/{pid}/knowledge/sources/{sid}/extract",
+            json={
+                "genre": "magic_fantasy",
+                "chapter_no_start": 1,
+                "chapter_no_end": 1,
+                "max_chapters_per_run": 1,
+                "force_reextract": True,
+            },
+            headers=headers,
+        )
+    assert resp.status_code == 200, resp.text
+
+    async def _snapshot():
+        async with test_session_factory() as session:
+            abilities = (await session.execute(
+                select(AbilityProfile)
+                .where(AbilityProfile.source_id == sid)
+                .order_by(AbilityProfile.character_name, AbilityProfile.ability_name)
+            )).scalars().all()
+            events = (await session.execute(
+                select(EventTimeline)
+                .where(EventTimeline.source_id == sid)
+                .order_by(EventTimeline.chapter_no, EventTimeline.event_title)
+            )).scalars().all()
+            rules = (await session.execute(
+                select(WorldRule)
+                .where(WorldRule.source_id == sid)
+                .order_by(WorldRule.chapter_no, WorldRule.category)
+            )).scalars().all()
+            return abilities, events, rules
+
+    abilities, events, rules = asyncio.run(_snapshot())
+    ability_keys = {
+        (a.character_name, a.ability_type, a.ability_name)
+        for a in abilities
+    }
+    assert ("莫凡", "magic_element", "冰系") not in ability_keys
+    assert ("莫凡", "magic_element", "火系") in ability_keys
+    assert ("张小侯", "magic_element", "风系") in ability_keys
+
+    event_titles = {event.event_title for event in events}
+    assert "旧误判事件" not in event_titles
+    assert "莫凡觉醒火系" in event_titles
+    assert "张小侯释放风轨" in event_titles
+
+    rule_texts = {rule.rule_text for rule in rules}
+    assert "旧规则应该被清理" not in rule_texts
+    assert "觉醒可能获得魔法系别" in rule_texts
+    assert "风轨属于风系技能" in rule_texts
 
 
 # ── §4 reset / status 按 project_id + source_id 限定，不跨项目误删 ──

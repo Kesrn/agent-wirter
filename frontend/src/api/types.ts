@@ -929,6 +929,7 @@ export interface GenerationRecord {
   langfuseTraceId: string | null
   createdAt: string
   content: string | null
+  skillPacks: SkillPackPayload[]
 }
 
 export interface GenerationRecordUpdatePayload {
