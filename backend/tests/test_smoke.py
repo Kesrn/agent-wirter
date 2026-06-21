@@ -31,6 +31,7 @@ from db.session import get_db, set_engine
 from main import app
 from services.diff_service import compute_diff
 from services.version_service import create_version
+from services.skill_pack_planner import plan_direct_skill_pack
 from skills.runner import build_expert_skill_pack, build_expert_system_prompt
 from api.routes import _article_system_prompt, _article_brief
 from config.settings import settings
@@ -934,6 +935,38 @@ def test_expert_skill_pack_explicit_skill_dir_overrides_role_mapping():
     assert summary["skill_dir"] == "sensory-renderer"
     assert summary["skill"] == "sensory_renderer"
     assert pack.has_content is True
+
+
+def test_rule_based_skill_pack_planner_maps_novel_branches():
+    enhance_plan = plan_direct_skill_pack(project_mode="novel", generate_mode="enhance", action="enhance_apply")
+    continue_plan = plan_direct_skill_pack(project_mode="novel", generate_mode="continue", action="continue_suggest")
+    expert_plan = plan_direct_skill_pack(
+        project_mode="novel",
+        generate_mode="continue",
+        action="expert_generate",
+        expert_role_type="writer",
+        expert_skill_dir="creative-master",
+        expert_name="创意大师",
+    )
+
+    assert enhance_plan is not None
+    assert enhance_plan.role_type == "editor"
+    assert enhance_plan.event_expert == "editor"
+    assert enhance_plan.reason == "enhance_apply"
+
+    assert continue_plan is not None
+    assert continue_plan.role_type == "twister"
+    assert continue_plan.event_expert == "writer"
+
+    assert expert_plan is not None
+    assert expert_plan.role_type == "writer"
+    assert expert_plan.skill_dir == "creative-master"
+    assert expert_plan.event_expert == "创意大师"
+
+
+def test_rule_based_skill_pack_planner_skips_article_projects():
+    plan = plan_direct_skill_pack(project_mode="article", generate_mode="continue", action="continue_generate")
+    assert plan is None
 
 
 def test_chapter_patch_empty_title_rejected():

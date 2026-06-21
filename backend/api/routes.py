@@ -79,6 +79,7 @@ from rag.embedding_service import generate_embedding, _update_embedding_bg
 from services.diff_service import compute_diff
 from services.chapter_save import save_chapter_content
 from services.document_save import save_document_content
+from services.skill_pack_planner import SkillPackPlan, plan_direct_skill_pack
 from services.txt_import import decode_txt_bytes, split_txt_into_chapters, build_import_meta
 from services.structure_extraction import (
     apply_structure_extraction,
@@ -194,6 +195,32 @@ def _direct_skill_pack(
     )
     summary = pack.to_summary()
     summary["expert"] = event_expert
+    return pack, summary
+
+
+def _planned_direct_skill_pack(
+    plan: SkillPackPlan | None,
+    *,
+    project_id: str,
+    chapter_id: str = "",
+    draft: str = "",
+    context: str = "",
+    mode: str = "",
+) -> tuple[ExpertSkillResult, dict]:
+    if plan is None:
+        raise ValueError("No direct skill pack plan is available for this generation branch")
+    pack, summary = _direct_skill_pack(
+        plan.role_type,
+        skill_dir=plan.skill_dir,
+        event_expert=plan.event_expert,
+        project_id=project_id,
+        chapter_id=chapter_id,
+        draft=draft,
+        context=context,
+        mode=mode,
+    )
+    summary["planner"] = plan.planner
+    summary["planner_reason"] = plan.reason
     return pack, summary
 
 
@@ -2593,9 +2620,13 @@ async def generate_chapter(
                             "禁止给出续写、转折、新剧情、新角色登场、后续事件安排。"
                             "每个方向用一句话概括，只输出JSON字符串数组。"
                         )
-                        pack, summary = _direct_skill_pack(
-                            "editor",
-                            event_expert="editor",
+                        plan = plan_direct_skill_pack(
+                            project_mode=project.mode,
+                            generate_mode=req.mode,
+                            action="enhance_suggest",
+                        )
+                        pack, summary = _planned_direct_skill_pack(
+                            plan,
                             project_id=str(uid),
                             chapter_id=str(target_chapter_id or ""),
                             draft=chapter_content,
@@ -2664,9 +2695,13 @@ async def generate_chapter(
                         "保持原剧情、原事实、原场景边界和原结尾，不得续写后续内容。"
                         "输出必须控制字数，并以完整自然的句子结束。"
                     )
-                    pack, summary = _direct_skill_pack(
-                        "editor",
-                        event_expert="editor",
+                    plan = plan_direct_skill_pack(
+                        project_mode=project.mode,
+                        generate_mode=req.mode,
+                        action="enhance_apply",
+                    )
+                    pack, summary = _planned_direct_skill_pack(
+                        plan,
                         project_id=str(uid),
                         chapter_id=str(target_chapter_id or ""),
                         draft=chapter_content,
@@ -2711,9 +2746,13 @@ async def generate_chapter(
                         )
                     else:
                         base_system_prompt = "你是一位创意写作顾问。分析当前章节的写作进展，给出5个下一步情节发展方向的建议。每个建议用一句话概括，用JSON数组格式输出。"
-                        pack, summary = _direct_skill_pack(
-                            "twister",
-                            event_expert="writer",
+                        plan = plan_direct_skill_pack(
+                            project_mode=project.mode,
+                            generate_mode=req.mode,
+                            action="continue_suggest",
+                        )
+                        pack, summary = _planned_direct_skill_pack(
+                            plan,
                             project_id=str(uid),
                             chapter_id=str(target_chapter_id or ""),
                             draft=chapter_content,
@@ -2750,9 +2789,13 @@ async def generate_chapter(
                 else:
                     user_prompt = f"## 上下文\n{creative_context}\n\n## 续写方向\n{req.turn_direction}\n\n## 用户补充\n{req.user_note or '无'}\n\n## 当前章节（续写接在后面）\n{chapter_content}\n\n请严格按照上下文中的设定续写："
                     system_prompt = "你是一位才华横溢的创意写作大师。根据指定方向续写章节，注意与原文的标点衔接。"
-                    pack, summary = _direct_skill_pack(
-                        "writer",
-                        event_expert="writer",
+                    plan = plan_direct_skill_pack(
+                        project_mode=project.mode,
+                        generate_mode=req.mode,
+                        action="continue_generate",
+                    )
+                    pack, summary = _planned_direct_skill_pack(
+                        plan,
                         project_id=str(uid),
                         chapter_id=str(target_chapter_id or ""),
                         draft=chapter_content,
@@ -2798,10 +2841,16 @@ async def generate_chapter(
                 expert_system_prompt = expert.system_prompt
                 direct_skill_packs = []
                 if not is_article_project:
-                    pack, summary = _direct_skill_pack(
-                        expert.role_type,
-                        skill_dir=expert.skill_dir,
-                        event_expert=expert.name,
+                    plan = plan_direct_skill_pack(
+                        project_mode=project.mode,
+                        generate_mode=req.mode,
+                        action="expert_generate",
+                        expert_role_type=expert.role_type,
+                        expert_skill_dir=expert.skill_dir,
+                        expert_name=expert.name,
+                    )
+                    pack, summary = _planned_direct_skill_pack(
+                        plan,
                         project_id=str(uid),
                         chapter_id=str(target_chapter_id or ""),
                         draft=chapter_content,
@@ -2857,9 +2906,13 @@ async def generate_chapter(
                 else:
                     summarize_system_prompt = "你是一位普通读者。从阅读体验角度评价以下章节，给出真实感受：哪些段落吸引人、哪里节奏拖沓、角色是否立体、情节是否合理，以及是否与已知设定一致。用中文输出。"
                     summarize_prompt = f"## 上下文\n{creative_context}\n\n## 当前章节内容\n{chapter_content or '(空章节)'}\n\n请从读者视角分析这段内容，严格按照上下文中的设定进行评价："
-                    pack, summary = _direct_skill_pack(
-                        "summarizer",
-                        event_expert="reader",
+                    plan = plan_direct_skill_pack(
+                        project_mode=project.mode,
+                        generate_mode=req.mode,
+                        action="summarize",
+                    )
+                    pack, summary = _planned_direct_skill_pack(
+                        plan,
                         project_id=str(uid),
                         chapter_id=str(target_chapter_id or ""),
                         draft=chapter_content,
