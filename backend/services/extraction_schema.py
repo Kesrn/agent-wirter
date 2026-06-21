@@ -108,6 +108,7 @@ EXTRACTION_SYSTEM_PROMPT = """你是一个小说知识库结构化抽取引擎�
 10. 不要输出 Markdown，不要解释，只输出 JSON。
 11. 保持输出紧凑：chapter_summary 不超过 120 字；event_desc、rule_text、evidence 不超过 80 字。
 12. 单章最多输出 characters 8 条、abilities 12 条、events 8 条、world_rules 8 条，只保留明确且重要的信息。
+13. abilities 必须与 character 明确绑定：只有某人物觉醒、拥有、学习、使用或失去该能力时才抽为人物能力；仅解释某技能/法系概念、书中提到某技能、角色只是想象或询问其效果时，应抽为 world_rules 或不抽为 abilities。
 
 输出 JSON Schema（严格按此结构，数组无内容时返回 []）：
 {

@@ -263,6 +263,43 @@ def test_normalize_extraction_canonicalizes_magic_system_names():
     assert "火系" in names
 
 
+def test_normalize_extraction_drops_unbound_mentioned_spell():
+    """只是在章节里解释/提到的技能，不应被挂到人物能力上。"""
+    extraction = ChapterExtraction(
+        chapter_no=13,
+        abilities=[
+            AbilityItem(
+                character="莫凡",
+                ability_type=AbilityType.spell,
+                ability_name="风之翼",
+                level="高阶",
+                status=AbilityStatus.mentioned,
+                importance=3,
+                confidence=0.9,
+                evidence="风系高阶技能-风之翼，就是可以让人飞翔起来的技能",
+            ),
+            AbilityItem(
+                character="张小侯",
+                ability_type=AbilityType.spell,
+                ability_name="风轨",
+                level="初阶",
+                status=AbilityStatus.used,
+                importance=4,
+                confidence=0.9,
+                evidence="张小侯释放风轨疾行。",
+            ),
+        ],
+    )
+
+    normalized = _normalize_extraction_abilities(
+        extraction,
+        "风系高阶技能-风之翼，就是可以让人飞翔起来的技能。张小侯释放风轨疾行。",
+    )
+    pairs = {(a.character, a.ability_type.value, a.ability_name) for a in normalized.abilities}
+    assert ("莫凡", "spell", "风之翼") not in pairs
+    assert ("张小侯", "spell", "风轨") in pairs
+
+
 # ── 4. 缺 evidence 验收（§17.7） ────────────────────────
 
 

@@ -473,6 +473,8 @@ def _normalize_extraction_abilities(
     }
 
     for ability in extraction.abilities:
+        if _is_unbound_mentioned_ability(ability):
+            continue
         normalized_name = _normalize_ability_name(ability.ability_name)
         if ability.ability_type == AbilityType.magic_element and normalized_name != ability.ability_name:
             original_key = (ability.character, ability.ability_type.value, ability.ability_name)
@@ -511,6 +513,8 @@ def _normalize_extraction_abilities(
                 _add(ability.character, "雷系", evidence)
 
     for ability in extraction.abilities:
+        if _is_unbound_mentioned_ability(ability):
+            continue
         cue_text = f"{ability.ability_name} {ability.evidence}"
         system_name = _system_from_skill_alias(cue_text)
         if system_name and ability.ability_type in (AbilityType.spell, AbilityType.skill, AbilityType.unknown):
@@ -534,6 +538,16 @@ def _system_from_skill_alias(text: str) -> str | None:
         if alias in text:
             return system_name
     return None
+
+
+def _is_unbound_mentioned_ability(ability: AbilityItem) -> bool:
+    """Drop generic skill mentions that the model incorrectly attaches to a character."""
+    if ability.status != AbilityStatus.mentioned:
+        return False
+    if ability.ability_type not in {AbilityType.spell, AbilityType.skill, AbilityType.martial_art}:
+        return False
+    evidence = ability.evidence or ""
+    return ability.character not in evidence
 
 
 def _extract_evidence_excerpt(text: str, terms: tuple[str, ...], *, radius: int = 80) -> str:
