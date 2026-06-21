@@ -810,6 +810,8 @@ export interface SkillPackPayload {
   expert: string
   skill: string
   skill_dir: string
+  planner?: string
+  planner_reason?: string
   sources?: Array<Record<string, unknown>>
   warnings?: string[]
   token_estimate?: number

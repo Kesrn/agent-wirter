@@ -16,10 +16,15 @@ const warnings = computed(() => props.pack.warnings ?? [])
 const tokenLabel = computed(() =>
   typeof props.pack.token_estimate === 'number' ? `${props.pack.token_estimate} tokens` : '未估算',
 )
+const plannerLabel = computed(() => {
+  if (!props.pack.planner && !props.pack.planner_reason) return ''
+  return [props.pack.planner, props.pack.planner_reason].filter(Boolean).join(': ')
+})
 const hasMeta = computed(() =>
   sourceRows.value.length > 0
   || warnings.value.length > 0
   || typeof props.pack.token_estimate === 'number'
+  || Boolean(plannerLabel.value)
   || props.pack.truncated
   || props.pack.has_content === false,
 )
@@ -61,6 +66,7 @@ function sourceMeta(source: Record<string, unknown>): string {
       <div class="skill-pack-meta">
         <span>{{ pack.expert }}</span>
         <span>{{ tokenLabel }}</span>
+        <span v-if="plannerLabel">{{ plannerLabel }}</span>
         <span v-if="pack.truncated">truncated</span>
         <span v-if="pack.has_content === false">empty</span>
       </div>
