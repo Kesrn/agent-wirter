@@ -71,7 +71,12 @@ def _detect_structured_intent(question: str) -> str:
     q = question.strip()
     # character_ability
     if any(kw in q for kw in ("什么系", "什么系别", "什么能力", "掌握了什么", "会什么技能",
-                               "有哪些系", "有什么系", "有什么能力", "魔法系别", "什么魔法")):
+                               "有哪些系", "有什么系", "有什么能力", "魔法系别", "什么魔法",
+                               "会不会", "会.*吗")):
+        return "character_ability"
+    # "X会Y吗" 这类是非问句：用正则单独匹配（上面的子串匹配覆盖不到中间夹着能力名的情形）
+    import re
+    if re.search(r"[\u4e00-\u9fff]{2,4}会[\u4e00-\u9fff]{1,8}吗", q):
         return "character_ability"
     # world_rule_query
     if any(kw in q for kw in ("规则", "体系", "等级", "设定", "怎么划分", "是什么制度",
@@ -91,6 +96,7 @@ def _extract_character_name(question: str) -> str | None:
     patterns = [
         r"([\u4e00-\u9fff]{2,4})(?:的|有什么|有什么系|会什么|掌握了什么|是什么系|是什么)",
         r"([\u4e00-\u9fff]{2,4})有什么能力",
+        r"([\u4e00-\u9fff]{2,4})会[\u4e00-\u9fff]{1,8}吗",
     ]
     for p in patterns:
         m = re.search(p, question)
@@ -103,10 +109,20 @@ def _extract_character_name(question: str) -> str | None:
 
 
 def _character_name_variants(name: str) -> list[str]:
-    """Generate a few lightweight variants for common name typos."""
-    bases = [name]
-    if len(name) == 3 and name[1] == "小" and name[2] != "小":
-        bases.append(name[0] + name[2])
+    """Generate a few lightweight variants for common name typos.
+
+    复用 merge 层的 normalize_character_name，保证 QA 查询口径与正式表一致：
+    若 name 属于已知异体簇，返回 规范名 + 全部异体；否则做最小侯/候、去小变体。
+    """
+    from services.extraction_normalization import normalize_character_name
+
+    canonical, cluster_aliases = normalize_character_name(name)
+    bases = [canonical] + [a for a in cluster_aliases if a != canonical]
+    if not cluster_aliases:
+        # 无已知簇时保留原有的轻量变体逻辑（侯/候、去小）
+        bases = [name]
+        if len(name) == 3 and name[1] == "小" and name[2] != "小":
+            bases.append(name[0] + name[2])
 
     variants: list[str] = []
     for base in bases:
@@ -165,7 +181,11 @@ async def _answer_character_ability(
         return _empty_result(intent, conversation_id,
                              "请明确指定要查询的人物名称，例如「莫凡有什么系」。")
 
-    # 优先查 ability_profile（按 source_priority 降序）
+    # 是非问句："X会Y吗" → 检查 Y 是否在 X 的能力中
+    import re
+    yes_no_match = re.search(r"会([\u4e00-\u9fff]{1,8})吗", question)
+    queried_ability = yes_no_match.group(1) if yes_no_match else None
+
     variants = _character_name_variants(character)
     result = await db.execute(
         select(AbilityProfile)
@@ -174,6 +194,46 @@ async def _answer_character_ability(
         .order_by(AbilityProfile.source_priority.desc(), AbilityProfile.confidence.desc())
     )
     abilities = list(result.scalars().all())
+
+    # 是非问句：检查特定能力是否存在
+    if queried_ability:
+        from services.magic_systems import canonical_magic_system_name
+        queried_canonical = canonical_magic_system_name(queried_ability) or queried_ability
+        matched = []
+        for a in abilities:
+            a_canonical = canonical_magic_system_name(a.ability_name) or a.ability_name
+            if queried_ability in a.ability_name or a_canonical == queried_canonical:
+                matched.append(a)
+        if matched:
+            best = matched[0]
+            answer = (f"根据结构化知识库，**{character}** 会「{queried_ability}」。")
+            citations = [{
+                "source_kind": "structured_fact",
+                "source_id": str(best.source_id) if best.source_id else None,
+                "chunk_id": None,
+                "chapter_no": best.first_seen_chapter,
+                "title": f"{best.character_name} - {best.ability_name}",
+                "snippet": (best.evidence[0] if best.evidence else "")[:300],
+                "evidence_type": "character_ability_fact",
+                "matched_query": f"{character} -> {queried_ability}",
+                "score": best.confidence,
+                "table": "ability_profile",
+            }] if best.source_id else []
+            return {
+                "answer": answer,
+                "citations": citations,
+                "query_plan": {"mode": "structured", "intent": intent, "tables": ["ability_profile"]},
+                "retrieval_stats": {"structured_hits": len(matched), "vector_hits": 0},
+                "conversation_id": conversation_id or "",
+            }
+        # 不在能力列表中 → 明确说当前资料不支持
+        return {
+            "answer": f"当前结构化资料不支持 **{character}** 会「{queried_ability}」。",
+            "citations": [],
+            "query_plan": {"mode": "structured", "intent": intent, "tables": ["ability_profile"]},
+            "retrieval_stats": {"structured_hits": 0, "vector_hits": 0},
+            "conversation_id": conversation_id or "",
+        }
 
     # ability_profile 无记录 → 回退 project_knowledge_facts
     wants_magic_system = any(term in question for term in ("什么系", "哪些系", "有什么系", "魔法系别"))

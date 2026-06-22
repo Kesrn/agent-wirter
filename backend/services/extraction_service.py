@@ -32,6 +32,11 @@ from services.extraction_schema import (
     EXTRACTION_SYSTEM_PROMPT, SCHEMA_VERSION, TEMPLATE_NAME, MAX_EXTRACT_CHARS,
 )
 from services.magic_systems import normalize_magic_system_label
+from services.extraction_normalization import (
+    is_ability_bound_to_character,
+    normalize_character_name,
+    normalize_world_rule_category,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -433,7 +438,11 @@ async def _save_staging(
 
 
 def _extraction_keys(extraction: ChapterExtraction) -> dict[str, set]:
-    """Build merge keys from a validated extraction snapshot."""
+    """Build merge keys from a validated extraction snapshot.
+
+    world_rule category 经归一后再取 key，与 _merge_extraction 落库的归一 category 保持一致，
+    否则 _clear_stale_structured_results_for_chapter 会因 key 不匹配而漏删旧规则。
+    """
     return {
         "characters": {c.name for c in extraction.characters if c.name},
         "abilities": {
@@ -442,7 +451,7 @@ def _extraction_keys(extraction: ChapterExtraction) -> dict[str, set]:
             if a.character and a.ability_name
         },
         "world_rules": {
-            (r.category, r.rule_text)
+            (normalize_world_rule_category(r.category, r.rule_text), r.rule_text)
             for r in extraction.world_rules
             if r.category and r.rule_text
         },
@@ -751,29 +760,56 @@ async def _merge_extraction(
     db: AsyncSession, job: ExtractionJob, chapter: ProjectSourceChapter,
     extraction: ChapterExtraction, canon_level: str, origin: str,
 ) -> None:
-    """将校验通过的抽取结果合并到 4 张正式表。"""
+    """将校验通过的抽取结果合并到 4 张正式表。
+
+    merge 前做三层归一/过滤：
+      1. 人物名归一（张侯/张候→张小侯），aliases 追加异体
+      2. 能力 evidence 绑定校验：介绍性台词不入正式表
+      3. world_rule category 归一到白名单
+    """
     pid = str(job.project_id)
     sid = str(job.source_id)
     chapter_no = chapter.chapter_no
     source_priority = CANON_PRIORITY.get(canon_level, 60)
 
-    # 1. character_profile
+    # 1. character_profile（人物名归一）
     for char in extraction.characters:
+        canonical_name, alias_variants = normalize_character_name(char.name)
+        merged_aliases = list(dict.fromkeys(list(char.aliases or []) + alias_variants))
+        if canonical_name != char.name:
+            char = char.model_copy(update={"name": canonical_name, "aliases": merged_aliases})
+        elif alias_variants and merged_aliases != (char.aliases or []):
+            char = char.model_copy(update={"aliases": merged_aliases})
         await _merge_character(db, pid, sid, char, canon_level, origin, source_priority)
 
-    # 2. ability_profile
+    # 2. ability_profile（evidence 绑定校验 + 人物名归一）
     for ability in extraction.abilities:
+        if not is_ability_bound_to_character(ability.character, ability.ability_name, ability.evidence):
+            logger.debug("drop unbound ability: %s -> %s (evidence lacks binding)",
+                         ability.character, ability.ability_name)
+            continue
+        canonical_name, _ = normalize_character_name(ability.character)
+        if canonical_name != ability.character:
+            ability = ability.model_copy(update={"character": canonical_name})
         await _merge_ability(db, pid, sid, chapter_no, ability, canon_level, origin, source_priority)
 
-    # 3. event_timeline（MVP 不去重，直接新增）
+    # 3. event_timeline（MVP 不去重，直接新增；人物名归一）
     for event in extraction.events:
+        raw_chars = event.characters or []
+        normalized_chars: list[str] = []
+        seen: set[str] = set()
+        for c in raw_chars:
+            canonical_name, _ = normalize_character_name(c)
+            if canonical_name not in seen:
+                seen.add(canonical_name)
+                normalized_chars.append(canonical_name)
         db.add(EventTimeline(
             project_id=pid, source_id=sid,
             chapter_id=str(chapter.id) if chapter.id else None,
             chapter_no=chapter_no,
             event_title=event.event_title,
             event_desc=event.event_desc,
-            characters=event.characters,
+            characters=normalized_chars,
             location_desc=event.location or None,
             cause_desc=event.cause or None,
             effect_desc=event.effect or None,
@@ -783,8 +819,11 @@ async def _merge_extraction(
             evidence=[event.evidence],
         ))
 
-    # 4. world_rule（查重键 project_id + category + rule_text）
+    # 4. world_rule（category 归一 + 查重键 project_id + category + rule_text）
     for rule in extraction.world_rules:
+        normalized_category = normalize_world_rule_category(rule.category, rule.rule_text)
+        if normalized_category != rule.category:
+            rule = rule.model_copy(update={"category": normalized_category})
         await _merge_world_rule(db, pid, sid, chapter_no, rule, canon_level, origin, source_priority)
 
 

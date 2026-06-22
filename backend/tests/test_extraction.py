@@ -304,6 +304,104 @@ def test_normalize_extraction_drops_unbound_mentioned_spell():
 # ── 4. 缺 evidence 验收（§17.7） ────────────────────────
 
 
+def test_normalize_extraction_collapses_star_dust_and_magic_suffixes():
+    """真实抽取：雷系星尘/雷霆系魔法/火系星尘/火系魔法 应归一为 雷系/火系。"""
+    extraction = ChapterExtraction(
+        chapter_no=8,
+        abilities=[
+            AbilityItem(character="莫凡", ability_type=AbilityType.magic_element,
+                        ability_name="雷系星尘", level="初阶", status=AbilityStatus.new,
+                        importance=5, confidence=1.0, evidence="紫色星尘悬浮"),
+            AbilityItem(character="莫凡", ability_type=AbilityType.magic_element,
+                        ability_name="雷霆系魔法", level="觉醒", status=AbilityStatus.new,
+                        importance=5, confidence=1.0, evidence="莫凡觉醒雷霆系"),
+            AbilityItem(character="莫凡", ability_type=AbilityType.magic_element,
+                        ability_name="火系星尘", level="初阶", status=AbilityStatus.new,
+                        importance=5, confidence=1.0, evidence="红色星尘"),
+            AbilityItem(character="莫凡", ability_type=AbilityType.magic_element,
+                        ability_name="火系魔法", level="觉醒", status=AbilityStatus.new,
+                        importance=5, confidence=1.0, evidence="莫凡觉醒火系"),
+        ],
+    )
+    normalized = _normalize_extraction_abilities(extraction, "紫色星尘与红色星尘。")
+    names = [a.ability_name for a in normalized.abilities
+             if a.ability_type == AbilityType.magic_element]
+    assert names.count("雷系") == 1
+    assert names.count("火系") == 1
+    assert "雷系星尘" not in names
+    assert "雷霆系魔法" not in names
+    assert "火系星尘" not in names
+    assert "火系魔法" not in names
+
+
+def test_is_ability_bound_to_character_filters_introduction_evidence():
+    """介绍性/旁听性 evidence 不应入正式 ability_profile。"""
+    from services.extraction_normalization import is_ability_bound_to_character
+
+    # 介绍性台词：人物只是听/问/提到，不拥有
+    assert not is_ability_bound_to_character(
+        "莫凡", "风之翼",
+        "风系高阶技能-风之翼，就是可以让人飞翔起来的技能",
+    )
+    assert not is_ability_bound_to_character(
+        "莫凡", "风之翼", "莫凡听说风之翼可以让人飞翔",
+    )
+    assert not is_ability_bound_to_character(
+        "莫凡", "风之翼", "老师介绍风之翼是什么",
+    )
+    # 明确绑定：觉醒/拥有/释放/使用/掌握
+    assert is_ability_bound_to_character(
+        "莫凡", "火系", "莫凡觉醒火系，精神世界出现红色星尘",
+    )
+    assert is_ability_bound_to_character(
+        "张小侯", "风轨", "张小侯释放风轨冲出包围",
+    )
+    assert is_ability_bound_to_character(
+        "莫凡", "雷系星尘", "莫凡的雷系星尘内一共有七颗星子",
+    )
+    assert is_ability_bound_to_character(
+        "莫凡", "雷印", "莫凡使用雷印击倒了徐冰",
+    )
+    # 第一人称 evidence（LLM 以主角视角写 "自己觉醒了火系"）应判为绑定
+    assert is_ability_bound_to_character(
+        "莫凡", "火系", "自己精神世界里出现了红色星尘，自己又觉醒了一个火系",
+    )
+
+
+def test_normalize_character_name_merges_zhang_xiaohou_variants():
+    """张侯/张候/张小候/张小候 归一到 张小侯，保留异体为 aliases。"""
+    from services.extraction_normalization import normalize_character_name
+
+    for variant in ("张侯", "张候", "张小候", "张小侯"):
+        canonical, aliases = normalize_character_name(variant)
+        assert canonical == "张小侯"
+        assert "张侯" in aliases
+        assert "张候" in aliases
+        assert "张小候" in aliases
+
+    # 不该乱归一的普通名字保持不变
+    canonical, aliases = normalize_character_name("莫凡")
+    assert canonical == "莫凡"
+    assert aliases == []
+
+
+def test_normalize_world_rule_category_collapses_synonyms():
+    """world_rule category 同义归一到白名单。"""
+    from services.extraction_normalization import normalize_world_rule_category
+
+    assert normalize_world_rule_category("魔法修炼体系") == "魔法修炼"
+    assert normalize_world_rule_category("魔法修炼机制") == "魔法修炼"
+    assert normalize_world_rule_category("星子修炼") == "魔法修炼"
+    assert normalize_world_rule_category("魔法觉醒体系") == "魔法觉醒"
+    assert normalize_world_rule_category("觉醒机制") == "魔法觉醒"
+    assert normalize_world_rule_category("世家体系") == "势力组织"
+    assert normalize_world_rule_category("家族势力") == "势力组织"
+    assert normalize_world_rule_category("穆氏世家") == "势力组织"
+    assert normalize_world_rule_category("魔法体系") == "魔法体系"
+    assert normalize_world_rule_category("妖魔") == "妖魔体系"
+    assert normalize_world_rule_category("未知奇怪分类") == "其他"
+
+
 def test_missing_evidence_validation_failed():
     """LLM 返回合法 JSON 但缺 evidence 时校验失败，不得 merge。"""
     # 构造缺 evidence 的人物数据

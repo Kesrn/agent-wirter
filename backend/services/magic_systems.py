@@ -19,9 +19,14 @@ KNOWN_SYSTEM_NAMES = (
 
 
 def normalize_magic_system_label(name: str) -> str:
-    """Normalize obvious system label variants without changing non-system labels."""
+    """Normalize obvious system label variants without changing non-system labels.
+
+    去掉 魔法/星尘 后缀后做同义映射，使 雷霆系魔法/雷系星尘 都归一到 雷系。
+    """
     cleaned = name.strip(" ，,。；;：:（）()")
     if cleaned.endswith("魔法"):
+        cleaned = cleaned[:-2]
+    elif cleaned.endswith("星尘"):
         cleaned = cleaned[:-2]
     return SYSTEM_NORMALIZE_MAP.get(cleaned, cleaned)
 
