@@ -90,13 +90,15 @@ def _detect_structured_intent(question: str) -> str:
 
 
 def _extract_character_name(question: str) -> str | None:
-    """从问题中提取人物名（2-4 汉字，出现在问句里）。"""
+    """从问题中提取人物名（2-4 汉字，可能含尾部字母/数字，出现在问句里）。"""
     import re
+    # 名字模式：2-4 个汉字，可选尾部 1-2 个字母/数字（如"测试角色A"）
+    name_pat = r"[\u4e00-\u9fff]{2,4}[A-Za-z0-9]{0,2}"
     # 找"X的""X有什么""X会"等模式
     patterns = [
-        r"([\u4e00-\u9fff]{2,4})(?:的|有什么|有什么系|会什么|掌握了什么|是什么系|是什么)",
-        r"([\u4e00-\u9fff]{2,4})有什么能力",
-        r"([\u4e00-\u9fff]{2,4})会[\u4e00-\u9fff]{1,8}吗",
+        rf"({name_pat})(?:的|有什么|有什么系|会什么|掌握了什么|是什么系|是什么)",
+        rf"({name_pat})有什么能力",
+        rf"({name_pat})会[\u4e00-\u9fffA-Za-z]{{1,8}}吗",
     ]
     for p in patterns:
         m = re.search(p, question)

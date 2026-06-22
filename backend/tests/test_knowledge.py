@@ -2308,6 +2308,27 @@ def test_deleted_ability_not_used_by_structured_qa():
     assert "暗系" not in answer, f"删除后仍出现暗系: {answer}"
 
 
+def test_structured_qa_extracts_mixed_character_name():
+    """结构化 QA 支持测试角色A这类中英混合人物名。"""
+    from db.session import async_session
+    from services.structured_qa import answer_structured_question
+
+    pid, headers = _create_project("中英混合名QA测试")
+    create_resp = _create_structured(pid, "abilities", {
+        "character_name": "测试角色A", "ability_type": "magic_element",
+        "ability_name": "冰系", "manual_note": "E2E 手动新增能力",
+    }, headers)
+    assert create_resp.status_code == 200
+
+    async def _ask():
+        async with async_session() as db:
+            return await answer_structured_question(db, pid, "测试角色A有什么系别？")
+
+    result = asyncio.run(_ask())
+    answer = result.get("answer", "")
+    assert "冰系" in answer, f"中英混合名未正确识别: {answer}"
+
+
 def test_update_preserves_evidence_or_adds_manual_note():
     """编辑不应导致 evidence 完全丢失。"""
     from models.structured_knowledge import AbilityProfile
