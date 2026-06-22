@@ -103,6 +103,15 @@ const tabLabels: Record<StructTable, string> = {
   world_rule: '世界规则',
 }
 
+function extractionRequestBody() {
+  return {
+    genre: selectedGenre.value,
+    // 真实 LLM 单章就可能耗时几十秒；每次只推进 1 章，避免页面长时间卡在同一个请求里。
+    // mock 很快，保留较大的批量便于测试流程。
+    max_chapters_per_run: isMock.value ? 20 : 1,
+  }
+}
+
 async function loadStatus() {
   statusLoading.value = true
   try {
@@ -137,10 +146,7 @@ async function startExtraction() {
   }
   actionLoading.value = 'extract'
   try {
-    const r = await api.startExtraction(props.projectId, props.sourceId, {
-      genre: selectedGenre.value,
-      max_chapters_per_run: 20,
-    })
+    const r = await api.startExtraction(props.projectId, props.sourceId, extractionRequestBody())
     status.value = r
     ui.showToast(`抽取已启动，处理中...`, 'success')
     // 如果还在运行，轮询
@@ -157,10 +163,7 @@ async function startExtraction() {
 async function advanceExtraction() {
   actionLoading.value = 'advance'
   try {
-    const r = await api.startExtraction(props.projectId, props.sourceId, {
-      genre: selectedGenre.value,
-      max_chapters_per_run: 20,
-    })
+    const r = await api.startExtraction(props.projectId, props.sourceId, extractionRequestBody())
     status.value = r
     if (r.status === 'RUNNING' || r.status === 'PENDING') {
       pollStatus()
@@ -212,8 +215,7 @@ function pollStatus() {
         isAdvancing = true
         try {
           const r = await api.startExtraction(props.projectId, props.sourceId, {
-            genre: selectedGenre.value,
-            max_chapters_per_run: 20,
+            ...extractionRequestBody(),
           })
           status.value = r
         } catch (e) {
@@ -434,7 +436,7 @@ function priorityLabel(p: string) {
           {{ actionLoading === 'split' ? '切分中...' : '切分章节' }}
         </button>
         <button class="btn-sm" :disabled="actionLoading === 'extract'" @click="startExtraction">
-          {{ actionLoading === 'extract' ? '启动中...' : (status?.status === 'BATCH_DONE' ? '继续抽取下一批' : '开始抽取') }}
+          {{ actionLoading === 'extract' ? (isMock ? '启动中...' : '抽取中（约1章）...') : (status?.status === 'BATCH_DONE' ? '继续抽取下一批' : '开始抽取') }}
         </button>
         <button class="btn-sm" v-if="canAdvance && status?.status !== 'BATCH_DONE'" :disabled="actionLoading === 'advance'" @click="advanceExtraction">
           {{ actionLoading === 'advance' ? '推进中...' : '继续推进' }}
