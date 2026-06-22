@@ -226,6 +226,12 @@ async def context_loader_node(state: CreativeState) -> dict:
                     state["project_id"],
                     chapter_num,
                     intent=state.get("mode", "generate"),
+                    user_query="\n".join(
+                        part for part in (
+                            state.get("selected_direction", ""),
+                            state.get("user_note", ""),
+                        ) if part
+                    ) or None,
                     selected_outline_ids=selected_outlines or None,
                     selected_character_ids=selected_characters or None,
                     selected_world_entry_ids=selected_world_entries or None,

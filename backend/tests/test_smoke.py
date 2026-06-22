@@ -26,7 +26,7 @@ def compile_uuid_sqlite(type_, compiler, **kw):
 
 
 from models.base import Base
-from models import Project, Chapter, Expert, WorldEntry, Character, User, ChapterVersion, Document, DocumentVersion, EvaluationDataset, EvaluationCase, EvaluationRun, EvaluationResult, ProjectSource, ProjectSourceChunk, KnowledgeQaSession, KnowledgeQaMessage  # noqa: F401
+from models import Project, Chapter, Expert, WorldEntry, Character, User, ChapterVersion, Document, DocumentVersion, EvaluationDataset, EvaluationCase, EvaluationRun, EvaluationResult, ProjectSource, ProjectSourceChunk, ProjectKnowledgeFact, KnowledgeQaSession, KnowledgeQaMessage  # noqa: F401
 from db.session import get_db, set_engine
 from main import app
 from services.diff_service import compute_diff
@@ -272,7 +272,7 @@ def test_delete_project_removes_project_and_children():
 
     source_resp = client.post(
         f"/api/projects/{project_id}/knowledge/sources",
-        json={"title": "待删除资料", "content": "需要一起删除的资料库内容。" * 20},
+        json={"title": "待删除资料", "content": "张小侯是风系。需要一起删除的资料库内容。" * 20},
         headers=headers,
     )
     assert source_resp.status_code == 200
@@ -293,7 +293,7 @@ def test_delete_project_removes_project_and_children():
             )
             await session.commit()
             counts = {}
-            for model in (ProjectSource, ProjectSourceChunk, KnowledgeQaSession, KnowledgeQaMessage):
+            for model in (ProjectSource, ProjectSourceChunk, ProjectKnowledgeFact, KnowledgeQaSession, KnowledgeQaMessage):
                 result = await session.execute(
                     select(func.count()).select_from(model).where(model.project_id == project_id)
                 )
@@ -318,7 +318,7 @@ def test_delete_project_removes_project_and_children():
     async def _knowledge_counts():
         async with test_session_factory() as session:
             counts = {}
-            for model in (ProjectSource, ProjectSourceChunk, KnowledgeQaSession, KnowledgeQaMessage):
+            for model in (ProjectSource, ProjectSourceChunk, ProjectKnowledgeFact, KnowledgeQaSession, KnowledgeQaMessage):
                 result = await session.execute(
                     select(func.count()).select_from(model).where(model.project_id == project_id)
                 )
@@ -328,6 +328,7 @@ def test_delete_project_removes_project_and_children():
     assert asyncio.run(_knowledge_counts()) == {
         "project_sources": 0,
         "project_source_chunks": 0,
+        "project_knowledge_facts": 0,
         "knowledge_qa_sessions": 0,
         "knowledge_qa_messages": 0,
     }
@@ -964,9 +965,25 @@ def test_rule_based_skill_pack_planner_maps_novel_branches():
     assert expert_plan.event_expert == "创意大师"
 
 
-def test_rule_based_skill_pack_planner_skips_article_projects():
-    plan = plan_direct_skill_pack(project_mode="article", generate_mode="continue", action="continue_generate")
-    assert plan is None
+def test_rule_based_skill_pack_planner_maps_article_branches():
+    continue_plan = plan_direct_skill_pack(project_mode="article", generate_mode="continue", action="continue_generate")
+    enhance_plan = plan_direct_skill_pack(project_mode="article", generate_mode="enhance", action="enhance_apply")
+    summarize_plan = plan_direct_skill_pack(project_mode="article", generate_mode="summarize", action="summarize")
+
+    assert continue_plan is not None
+    assert continue_plan.role_type == "writer"
+    assert continue_plan.skill_dir == "article-copywriter"
+    assert continue_plan.event_expert == "article_writer"
+
+    assert enhance_plan is not None
+    assert enhance_plan.role_type == "editor"
+    assert enhance_plan.skill_dir == "article-editor"
+    assert enhance_plan.event_expert == "article_editor"
+
+    assert summarize_plan is not None
+    assert summarize_plan.role_type == "summarizer"
+    assert summarize_plan.skill_dir == "article-summarizer"
+    assert summarize_plan.event_expert == "article_reader"
 
 
 def test_rule_based_skill_pack_planner_maps_workflow_nodes():
@@ -1836,6 +1853,36 @@ def test_article_suggestions_are_not_story_turns():
     assert "新角色登场" not in resp2.text
 
 
+def test_article_continue_emits_skill_pack_metadata():
+    headers = _auth_headers("article_continue_skill", "article_continue_skill")
+    resp = client.post("/api/projects", json={"title": "文章Skill测试", "mode": "article"}, headers=headers)
+    project_id = resp.json()["id"]
+
+    resp_doc = client.post(f"/api/projects/{project_id}/documents", json={
+        "title": "第一篇", "position": 1,
+    }, headers=headers)
+    doc_id = resp_doc.json()["id"]
+    client.patch(f"/api/projects/{project_id}/documents/{doc_id}", json={
+        "content": "这是一篇原始文案。",
+    }, headers=headers)
+
+    resp2 = client.post(f"/api/projects/{project_id}/chapters/generate", json={
+        "chapter_id": doc_id,
+        "chapter_num": 1,
+        "mode": "continue",
+        "turn_direction": "强调价值与行动引导",
+        "content_type": "公众号文章",
+        "platform": "微信公众号",
+        "audience": "内容运营",
+        "content_goal": "提升转化",
+        "tone": "专业清晰",
+    }, headers=headers)
+    assert resp2.status_code == 200
+    assert "event: skill_pack" in resp2.text
+    assert '"skill_dir": "article-copywriter"' in resp2.text
+    assert "event: generation_record" in resp2.text
+
+
 # ==================== Export ====================
 
 def test_export_txt():
@@ -2420,6 +2467,8 @@ def test_article_full_pipeline_emits_review_events():
     assert "event: article_review" in resp2.text
     # 必须包含内容输出
     assert "event: content_output" in resp2.text
+    assert "event: skill_pack" in resp2.text
+    assert '"skill_dir": "article-copywriter"' in resp2.text
     # 不落库
     resp3 = client.get(f"/api/projects/{project_id}/documents/{doc_id}", headers=headers)
     assert resp3.json()["content"] is None

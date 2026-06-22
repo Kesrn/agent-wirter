@@ -33,6 +33,7 @@ from models.outline import Outline
 from models.hidden_thread import HiddenThread
 from models.project_source import ProjectSource
 from models.project_source_chunk import ProjectSourceChunk
+from models.project_knowledge_fact import ProjectKnowledgeFact
 from models.knowledge_qa_session import KnowledgeQaSession
 from models.knowledge_qa_message import KnowledgeQaMessage
 from models.structured_knowledge import (
@@ -371,6 +372,7 @@ async def _delete_project_tree(project_id: uuid.UUID, db: AsyncSession) -> None:
     await db.execute(delete(GenerationRecord).where(GenerationRecord.project_id == project_id))
     await db.execute(delete(KnowledgeQaMessage).where(KnowledgeQaMessage.project_id == project_id))
     await db.execute(delete(ProjectSourceChunk).where(ProjectSourceChunk.project_id == project_id))
+    await db.execute(delete(ProjectKnowledgeFact).where(ProjectKnowledgeFact.project_id == project_id))
     await db.execute(delete(KnowledgeQaSession).where(KnowledgeQaSession.project_id == project_id))
     await db.execute(delete(ProjectSource).where(ProjectSource.project_id == project_id))
     await db.execute(delete(ChapterReviewNote).where(ChapterReviewNote.project_id == project_id))
@@ -2604,12 +2606,28 @@ async def generate_chapter(
                     # 第一步：分析当前内容，输出 3 个编辑/润色方向。
                     yield f"event: agent_start\ndata: {json.dumps({'agent': 'editor', 'step': 'running'}, ensure_ascii=False)}\n\n"
                     if is_article_project:
+                        plan = plan_direct_skill_pack(
+                            project_mode=project.mode,
+                            generate_mode=req.mode,
+                            action="enhance_suggest",
+                        )
+                        pack, summary = _planned_direct_skill_pack(
+                            plan,
+                            project_id=str(uid),
+                            chapter_id=str(target_document_id or ""),
+                            draft=chapter_content,
+                            context=creative_context,
+                            mode=req.mode,
+                        )
+                        yield _skill_pack_sse_event(summary)
                         result = await provider.generate(
-                            (
+                            build_expert_system_prompt(
+                                "editor",
                                 "你是一位专业内容编辑。请分析当前文章/文案，给出3个“改写优化”方向。"
                                 "方向必须聚焦结构、标题吸引力、表达清晰度、受众说服力、平台适配、行动引导；"
                                 "禁止给出小说续写、剧情转折、角色行动、世界观设定。"
-                                "每个方向用一句话概括，只输出JSON字符串数组。"
+                                "每个方向用一句话概括，只输出JSON字符串数组。",
+                                pack,
                             ),
                             f"## 内容 brief\n{_article_brief(req)}\n\n## 当前稿件\n{chapter_content or '(空稿件)'}",
                         )
@@ -2657,6 +2675,20 @@ async def generate_chapter(
 
                 direct_skill_packs = []
                 if is_article_project:
+                    plan = plan_direct_skill_pack(
+                        project_mode=project.mode,
+                        generate_mode=req.mode,
+                        action="enhance_apply",
+                    )
+                    pack, summary = _planned_direct_skill_pack(
+                        plan,
+                        project_id=str(uid),
+                        chapter_id=str(target_document_id or ""),
+                        draft=chapter_content,
+                        context=creative_context,
+                        mode=req.mode,
+                    )
+                    yield _skill_pack_sse_event(summary)
                     user_prompt = (
                         f"## 内容 brief\n{_article_brief(req)}\n\n"
                         f"## 可用上下文\n{creative_context or '无'}\n\n"
@@ -2673,7 +2705,12 @@ async def generate_chapter(
                         "5. 最后一句必须完整，不能半截截断。\n"
                         "6. 不要输出解释、修改说明或“改写后文本”等前缀，只输出正文。"
                     )
-                    system_prompt = _article_system_prompt("改写优化当前文章/文案")
+                    system_prompt = build_expert_system_prompt(
+                        "editor",
+                        _article_system_prompt("改写优化当前文章/文案"),
+                        pack,
+                    )
+                    direct_skill_packs = [summary]
                 else:
                     user_prompt = (
                         f"## 上下文\n{creative_context}\n\n"
@@ -2736,11 +2773,27 @@ async def generate_chapter(
                     # 第一步：分析当前写作，输出 5 个方向建议
                     yield f"event: agent_start\ndata: {json.dumps({'agent': 'writer', 'step': 'running'}, ensure_ascii=False)}\n\n"
                     if is_article_project:
+                        plan = plan_direct_skill_pack(
+                            project_mode=project.mode,
+                            generate_mode=req.mode,
+                            action="continue_suggest",
+                        )
+                        pack, summary = _planned_direct_skill_pack(
+                            plan,
+                            project_id=str(uid),
+                            chapter_id=str(target_document_id or ""),
+                            draft=chapter_content,
+                            context=creative_context,
+                            mode=req.mode,
+                        )
+                        yield _skill_pack_sse_event(summary)
                         result = await provider.generate(
-                            (
+                            build_expert_system_prompt(
+                                "writer",
                                 "你是一位专业内容策划。请基于当前文章/文案和 brief，给出5个可执行的内容方向或标题角度。"
                                 "建议必须聚焦选题、结构、卖点、受众痛点、平台表达和行动引导；"
-                                "禁止小说剧情、角色、续写、转折等叙事建议。每个建议用一句话概括，只输出JSON字符串数组。"
+                                "禁止小说剧情、角色、续写、转折等叙事建议。每个建议用一句话概括，只输出JSON字符串数组。",
+                                pack,
                             ),
                             f"## 内容 brief\n{_article_brief(req)}\n\n## 当前稿件\n{chapter_content or '(空稿件)'}",
                         )
@@ -2776,6 +2829,20 @@ async def generate_chapter(
                 yield f"event: agent_start\ndata: {json.dumps({'agent': 'writer', 'step': 'running'}, ensure_ascii=False)}\n\n"
                 direct_skill_packs = []
                 if is_article_project:
+                    plan = plan_direct_skill_pack(
+                        project_mode=project.mode,
+                        generate_mode=req.mode,
+                        action="continue_generate",
+                    )
+                    pack, summary = _planned_direct_skill_pack(
+                        plan,
+                        project_id=str(uid),
+                        chapter_id=str(target_document_id or ""),
+                        draft=chapter_content,
+                        context=creative_context,
+                        mode=req.mode,
+                    )
+                    yield _skill_pack_sse_event(summary)
                     user_prompt = (
                         f"## 内容 brief\n{_article_brief(req)}\n\n"
                         f"## 可用上下文\n{creative_context or '无'}\n\n"
@@ -2784,7 +2851,12 @@ async def generate_chapter(
                         f"## 当前稿件\n{chapter_content or '(空稿件)'}\n\n"
                         "请根据以上信息生成完整文章/文案正文。不要把内容简单接在当前稿件后面，而是围绕方向输出一版完整可用稿。"
                     )
-                    system_prompt = _article_system_prompt("生成文章/文案内容")
+                    system_prompt = build_expert_system_prompt(
+                        "writer",
+                        _article_system_prompt("生成文章/文案内容"),
+                        pack,
+                    )
+                    direct_skill_packs = [summary]
                     done_message = "内容生成完成"
                 else:
                     user_prompt = f"## 上下文\n{creative_context}\n\n## 续写方向\n{req.turn_direction}\n\n## 用户补充\n{req.user_note or '无'}\n\n## 当前章节（续写接在后面）\n{chapter_content}\n\n请严格按照上下文中的设定续写："
@@ -2892,6 +2964,20 @@ async def generate_chapter(
             elif req.mode == "summarize":
                 yield f"event: agent_start\ndata: {json.dumps({'agent': 'reader', 'step': 'running'}, ensure_ascii=False)}\n\n"
                 if is_article_project:
+                    plan = plan_direct_skill_pack(
+                        project_mode=project.mode,
+                        generate_mode=req.mode,
+                        action="summarize",
+                    )
+                    pack, summary = _planned_direct_skill_pack(
+                        plan,
+                        project_id=str(uid),
+                        chapter_id=str(target_document_id or ""),
+                        draft=chapter_content,
+                        context=creative_context,
+                        mode=req.mode,
+                    )
+                    yield _skill_pack_sse_event(summary)
                     summarize_system_prompt = (
                         "你是一位目标受众研究员和内容编辑。请从目标受众视角评价文章/文案："
                         "是否清楚、有吸引力、可信、有行动动力，哪里啰嗦，哪里需要补充证据。"
@@ -2902,6 +2988,7 @@ async def generate_chapter(
                         f"## 当前稿件\n{chapter_content or '(空稿件)'}\n\n"
                         "请从目标受众视角给出反馈。"
                     )
+                    summarize_system_prompt = build_expert_system_prompt("summarizer", summarize_system_prompt, pack)
                     done_message = "受众反馈完成"
                 else:
                     summarize_system_prompt = "你是一位普通读者。从阅读体验角度评价以下章节，给出真实感受：哪些段落吸引人、哪里节奏拖沓、角色是否立体、情节是否合理，以及是否与已知设定一致。用中文输出。"
@@ -2942,9 +3029,27 @@ async def generate_chapter(
 
                 # Step 1: content_writer — 流式生成正文候选
                 yield f"event: agent_start\ndata: {json.dumps({'agent': 'content_writer', 'step': 'running'}, ensure_ascii=False)}\n\n"
+                plan = plan_direct_skill_pack(
+                    project_mode=project.mode,
+                    generate_mode=req.mode,
+                    action="full_pipeline_writer",
+                )
+                pack, summary = _planned_direct_skill_pack(
+                    plan,
+                    project_id=str(uid),
+                    chapter_id=str(target_document_id or ""),
+                    draft=chapter_content,
+                    context=creative_context,
+                    mode=req.mode,
+                )
+                yield _skill_pack_sse_event(summary)
                 writer_content = ""
                 async for chunk in provider.generate_stream(
-                    _article_system_prompt("生成完整文章/文案"),
+                    build_expert_system_prompt(
+                        "writer",
+                        _article_system_prompt("生成完整文章/文案"),
+                        pack,
+                    ),
                     _article_generate_prompt(req, creative_context, chapter_content),
                     temperature=0.65,
                     max_tokens=min(settings.MAX_TOKENS_LIMIT, max(1024, int((req.target_words or 1200) * 1.8) + 512)),
@@ -2991,6 +3096,7 @@ async def generate_chapter(
                         "platform": platform_result,
                         "risk": risk_result,
                     },
+                    skill_packs=[summary],
                 )
                 yield _generation_record_event(record_id)
                 yield f"event: done\ndata: {json.dumps({'message': '内容生成与审校完成'}, ensure_ascii=False)}\n\n"
@@ -4303,7 +4409,7 @@ async def delete_knowledge_source(
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """删除资料条目，级联删除关联的 chunks。"""
+    """删除资料条目，级联删除关联的 chunks 与事实索引。"""
     uid = _to_uuid(project_id)
     await _verify_project_owner(uid, user.id, db)
     sid = _to_uuid(source_id)
@@ -4323,6 +4429,13 @@ async def delete_knowledge_source(
     )
     for chunk in chunks_result.scalars().all():
         await db.delete(chunk)
+
+    await db.execute(
+        delete(ProjectKnowledgeFact).where(
+            ProjectKnowledgeFact.source_id == sid,
+            ProjectKnowledgeFact.project_id == uid,
+        )
+    )
 
     await db.delete(source)
     await db.commit()

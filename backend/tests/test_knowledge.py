@@ -283,6 +283,49 @@ def test_delete_source():
     assert get_resp.status_code == 404
 
 
+def test_delete_source_removes_associated_facts():
+    """删除 source 时应级联删除该 source 挂载的事实索引。"""
+    from sqlalchemy import select, func
+    from models.project_knowledge_fact import ProjectKnowledgeFact
+
+    pid, headers = _create_project()
+    sid = _create_source(pid, title="挂事实的资料", headers=headers).json()["id"]
+
+    async def _insert_fact():
+        async with test_session_factory() as session:
+            session.add(
+                ProjectKnowledgeFact(
+                    project_id=pid,
+                    source_id=sid,
+                    fact_type="character_system",
+                    subject="张小侯",
+                    predicate="has_magic_system",
+                    object="风系",
+                    confidence="explicit",
+                    evidence_text="张小侯是风系。",
+                    extractor="test",
+                    metadata_={"source_title": "挂事实的资料"},
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_insert_fact())
+
+    del_resp = client.delete(f"/api/projects/{pid}/knowledge/sources/{sid}", headers=headers)
+    assert del_resp.status_code == 204
+
+    async def _count_facts():
+        async with test_session_factory() as session:
+            result = await session.execute(
+                select(func.count()).select_from(ProjectKnowledgeFact).where(
+                    ProjectKnowledgeFact.source_id == sid,
+                )
+            )
+            return result.scalar_one()
+
+    assert asyncio.run(_count_facts()) == 0
+
+
 # ==================== Upload ====================
 
 def test_upload_txt_file():
@@ -1801,6 +1844,19 @@ def test_fact_extraction_multiple_systems():
     assert "火系" in objs
     assert "雷系" in objs  # 雷霆系归一化
     assert "暗影系" in objs
+
+
+def test_fact_extraction_skill_alias_weak_fact():
+    """规则抽取：技能别名能作为 weak 法系线索写出候选。"""
+    from services.knowledge_fact_rules import extract_character_system_facts_from_text
+
+    facts = extract_character_system_facts_from_text("张小侯释放风轨冲出包围。")
+    matched = [
+        f for f in facts
+        if f.subject == "张小侯" and f.object == "风系" and f.confidence == "weak"
+    ]
+
+    assert matched, f"风轨应抽为张小侯->风系 weak 事实，实际: {facts}"
 
 
 def test_fact_extraction_excludes_hypothetical_and_generic():

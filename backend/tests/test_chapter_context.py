@@ -140,6 +140,22 @@ def _create_hidden_thread(project_id, name, description="", chapter_nums=None):
     return resp.json()["id"]
 
 
+def _create_source(project_id, title, source_type="upload", content="", always_inject=False):
+    """通过 API 创建资料库条目"""
+    resp = client.post(
+        f"/api/projects/{project_id}/knowledge/sources",
+        json={
+            "title": title,
+            "source_type": source_type,
+            "content": content,
+            "always_inject": always_inject,
+        },
+        headers=_auth(),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["id"]
+
+
 # ── tests ──
 
 
@@ -350,6 +366,41 @@ class TestChapterContextService:
         assert "## 本章大纲\n第1章 第一章大纲" in text
         assert "## 参考大纲" in text
         assert "第2章 第二章大纲" in text
+
+    def test_project_sources_split_into_fanfic_rules_and_retrieved_sources(self):
+        """同人规则进入 fanfic_rules，其他资料继续走检索资料。"""
+        pid = _create_project("同人规则测试")
+        _create_chapter(pid, "第一章", 1, "第一章正文")
+        _create_outline(pid, 1, "第一章概要", "第一章概要", "第一章转折")
+        char_id = _create_character(pid, "主角", "protagonist")
+        _create_character_event(pid, char_id, 1, "主角登场")
+
+        _create_source(
+            pid,
+            title="平台同人规则",
+            source_type="fanfic_rule",
+            content="不可让主角突然性格崩坏。",
+        )
+        _create_source(
+            pid,
+            title="第一章资料",
+            source_type="upload",
+            content="这份资料会被章节标题命中。",
+            always_inject=True,
+        )
+
+        async def _run():
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(session, pid, 1, user_query="主角")
+                return ctx, context_to_stats(ctx), format_chapter_context_for_prompt(ctx)
+
+        ctx, stats, text = asyncio.new_event_loop().run_until_complete(_run())
+
+        assert [r.title for r in ctx.fanfic_rules] == ["平台同人规则"]
+        assert any(s.title == "第一章资料" for s in ctx.retrieved_sources)
+        assert stats["stats"]["fanfic_rules"] == 1
+        assert "## 同人规则" in text
+        assert "平台同人规则" in text
 
 
 class TestFormatChapterContext:

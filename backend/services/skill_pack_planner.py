@@ -1,14 +1,21 @@
 """Rule-based planner for choosing direct-route expert skill packs.
 
 This module keeps skill-pack selection decisions out of the API route. It is
-intentionally deterministic and narrow: current direct generation branches only
-inject skill packs for novel projects, while article projects keep their
-domain-specific prompts until article skill strategy is defined.
+intentionally deterministic and narrow: direct generation branches use
+mode-specific skill packs for novel and article projects.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+
+ARTICLE_ROLE_TO_SKILL: dict[str, str] = {
+    "writer": "article-copywriter",
+    "editor": "article-editor",
+    "summarizer": "article-summarizer",
+    "critic": "article-editor",
+}
 
 
 @dataclass(frozen=True)
@@ -30,6 +37,52 @@ def plan_direct_skill_pack(
     expert_name: str | None = None,
 ) -> SkillPackPlan | None:
     """Choose a skill pack for non-LangGraph direct generation branches."""
+    if project_mode == "article":
+        if expert_name:
+            return SkillPackPlan(
+                role_type=expert_role_type or "writer",
+                skill_dir=expert_skill_dir or ARTICLE_ROLE_TO_SKILL.get(expert_role_type or "writer"),
+                event_expert=expert_name,
+                reason="explicit_expert",
+            )
+        if generate_mode == "enhance":
+            return SkillPackPlan(
+                role_type="editor",
+                skill_dir="article-editor",
+                event_expert="article_editor",
+                reason=action if action in {"enhance_suggest", "enhance_apply"} else "enhance",
+            )
+        if generate_mode == "continue":
+            if action == "continue_suggest":
+                return SkillPackPlan(
+                    role_type="writer",
+                    skill_dir="article-strategist",
+                    event_expert="article_writer",
+                    reason="continue_suggest",
+                )
+            if action == "continue_generate":
+                return SkillPackPlan(
+                    role_type="writer",
+                    skill_dir="article-copywriter",
+                    event_expert="article_writer",
+                    reason="continue_generate",
+                )
+        if generate_mode == "summarize":
+            return SkillPackPlan(
+                role_type="summarizer",
+                skill_dir="article-summarizer",
+                event_expert="article_reader",
+                reason="summarize_feedback",
+            )
+        if generate_mode == "full_pipeline":
+            return SkillPackPlan(
+                role_type="writer",
+                skill_dir="article-copywriter",
+                event_expert="article_writer",
+                reason="full_pipeline_writer",
+            )
+        return None
+
     if project_mode != "novel":
         return None
 

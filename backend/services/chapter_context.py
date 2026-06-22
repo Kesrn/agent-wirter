@@ -103,11 +103,12 @@ class ContextStats:
     events: int = 0
     hidden_threads: int = 0
     world_entries: int = 0
+    fanfic_rules: int = 0
     sources: int = 0  # project_sources / 检索命中的资料
 
     @property
     def total(self) -> int:
-        return self.characters + self.events + self.hidden_threads + self.world_entries + self.sources
+        return self.characters + self.events + self.hidden_threads + self.world_entries + self.fanfic_rules + self.sources
 
 
 @dataclass
@@ -221,6 +222,7 @@ class ChapterContext:
                 "events": self.stats.events,
                 "hidden_threads": self.stats.hidden_threads,
                 "world_entries": self.stats.world_entries,
+                "fanfic_rules": self.stats.fanfic_rules,
                 "sources": self.stats.sources,
             },
         }
@@ -313,67 +315,7 @@ async def build_chapter_context(
     )
 
     # ── 接入 project_sources（同人规则 + 检索资料） ──
-    try:
-        from models.project_source import ProjectSource as _PS
-        from sqlalchemy import or_ as _or, func as _func
-
-        # 1. always_inject 资料无条件加载
-        ai_result = await db.execute(
-            select(_PS).where(_PS.project_id == pid, _PS.always_inject == True)
-        )
-        ai_sources = list(ai_result.scalars().all())
-
-        # 2. 自动检索：按本章角色名 + 大纲标题关键词匹配
-        auto_hits: list = []
-        search_kws: list[str] = []
-        for c in (ctx.characters or [])[:3]:
-            if c.name:
-                search_kws.append(c.name)
-        if ctx.outline and ctx.outline.title:
-            search_kws.extend(ctx.outline.title.split()[:3])
-        if ctx.chapter and ctx.chapter.title:
-            search_kws.extend(ctx.chapter.title.split()[:3])
-
-        if search_kws:
-            conds = []
-            for kw in search_kws[:5]:
-                # 转义 LIKE 通配符，避免角色名/标题中的 % _ 污染匹配
-                escaped = kw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-                conds.append(_PS.content.ilike(f"%{escaped}%", escape="\\"))
-                conds.append(_PS.title.ilike(f"%{escaped}%", escape="\\"))
-            hit_result = await db.execute(
-                select(_PS).where(
-                    _PS.project_id == pid,
-                    _PS.always_inject == False,
-                    _or(*conds),
-                ).limit(5)
-            )
-            auto_hits = list(hit_result.scalars().all())
-
-        # 去重合并
-        seen: set[str] = set()
-        merged: list = []
-        for s in ai_sources + auto_hits:
-            sid = str(s.id)
-            if sid not in seen:
-                seen.add(sid)
-                merged.append(s)
-
-        for s in merged:
-            snippet = (s.summary or s.content or "")[:200]
-            ctx.retrieved_sources.append(
-                RetrievedSourceInfo(
-                    id=str(s.id),
-                    title=s.title,
-                    snippet=snippet,
-                    source_type=s.source_type,
-                    always_inject=s.always_inject,
-                )
-            )
-        stats.sources = len(merged)
-    except Exception as e:
-        # 表可能不存在（首次迁移前），静默跳过
-        logger.warning("_load_knowledge_sources skipped: %s", e)
+    await _load_project_sources(db, pid, ctx, stats, user_query=user_query)
 
     logger.info(
         "chapter_context built: project=%s chapter=%d stats=%s intent=%s",
@@ -690,7 +632,127 @@ async def _load_selected(
                     )
                 )
                 existing_ht_ids.add(str(t.id))
-        stats.hidden_threads = len(ctx.hidden_threads)
+                stats.hidden_threads = len(ctx.hidden_threads)
+
+
+async def _load_project_sources(
+    db: AsyncSession,
+    project_id: str,
+    ctx: ChapterContext,
+    stats: ContextStats,
+    *,
+    user_query: str | None = None,
+) -> None:
+    """加载同人规则与自动检索到的资料源。"""
+    from models.project_source import ProjectSource
+    from sqlalchemy import or_ as _or
+
+    def _escape_like(term: str) -> str:
+        return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    def _source_snippet(source: ProjectSource) -> str:
+        return (source.summary or source.content or "")[:200]
+
+    def _append_fanfic_rule(source: ProjectSource) -> None:
+        ctx.fanfic_rules.append(
+            FanficRuleInfo(
+                id=str(source.id),
+                title=source.title,
+                content=source.content or source.summary or "",
+            )
+        )
+
+    def _append_retrieved_source(source: ProjectSource) -> None:
+        ctx.retrieved_sources.append(
+            RetrievedSourceInfo(
+                id=str(source.id),
+                title=source.title,
+                snippet=_source_snippet(source),
+                source_type=source.source_type,
+                always_inject=source.always_inject,
+            )
+        )
+
+    try:
+        # 1. fanfic_rule 资料无条件进入“同人规则”
+        fanfic_result = await db.execute(
+            select(ProjectSource).where(
+                ProjectSource.project_id == project_id,
+                ProjectSource.source_type == "fanfic_rule",
+            )
+        )
+        fanfic_sources = list(fanfic_result.scalars().all())
+        fanfic_seen: set[str] = set()
+        for source in fanfic_sources:
+            sid = str(source.id)
+            if sid in fanfic_seen:
+                continue
+            fanfic_seen.add(sid)
+            _append_fanfic_rule(source)
+        stats.fanfic_rules = len(ctx.fanfic_rules)
+
+        # 2. always_inject 的非 fanfic_rule 资料无条件进入检索资料
+        always_result = await db.execute(
+            select(ProjectSource).where(
+                ProjectSource.project_id == project_id,
+                ProjectSource.always_inject == True,  # noqa: E712
+                ProjectSource.source_type != "fanfic_rule",
+            )
+        )
+        always_sources = list(always_result.scalars().all())
+
+        # 3. 自动检索：按本章角色名 / 章节 / 目标关键词匹配
+        search_kws: list[str] = []
+        for c in (ctx.characters or [])[:3]:
+            if c.name:
+                search_kws.append(c.name)
+        if ctx.outline:
+            search_kws.extend((ctx.outline.title or "").split()[:3])
+            search_kws.extend((ctx.outline.summary or "").split()[:4])
+        if ctx.chapter:
+            search_kws.extend((ctx.chapter.title or "").split()[:3])
+            search_kws.extend((ctx.chapter.content_snippet or "").split()[:4])
+        if user_query:
+            search_kws.extend(user_query.split()[:6])
+
+        auto_hits: list[ProjectSource] = []
+        if search_kws:
+            conds = []
+            for kw in search_kws[:8]:
+                escaped = _escape_like(kw)
+                conds.extend(
+                    [
+                        ProjectSource.title.ilike(f"%{escaped}%", escape="\\"),
+                        ProjectSource.summary.ilike(f"%{escaped}%", escape="\\"),
+                        ProjectSource.content.ilike(f"%{escaped}%", escape="\\"),
+                    ]
+                )
+            if conds:
+                hit_result = await db.execute(
+                    select(ProjectSource).where(
+                        ProjectSource.project_id == project_id,
+                        ProjectSource.source_type != "fanfic_rule",
+                        ProjectSource.always_inject == False,  # noqa: E712
+                        _or(*conds),
+                    ).limit(5)
+                )
+                auto_hits = list(hit_result.scalars().all())
+
+        # 去重合并
+        seen: set[str] = set()
+        merged: list[ProjectSource] = []
+        for source in always_sources + auto_hits:
+            sid = str(source.id)
+            if sid not in seen:
+                seen.add(sid)
+                merged.append(source)
+
+        for source in merged:
+            _append_retrieved_source(source)
+        stats.sources = len(merged)
+    except Exception as e:
+        # 表可能不存在（首次迁移前），静默跳过
+        logger.warning("_load_project_sources skipped: %s", e)
 
 
 # ── Prompt 格式化 ──────────────────────────────────────
@@ -818,6 +880,7 @@ def context_to_stats(context: ChapterContext) -> dict:
             "events": context.stats.events,
             "hidden_threads": context.stats.hidden_threads,
             "world_entries": context.stats.world_entries,
+            "fanfic_rules": context.stats.fanfic_rules,
             "sources": context.stats.sources,
         },
         "chapter_goal": {

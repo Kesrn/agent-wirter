@@ -204,7 +204,7 @@ def extract_character_system_facts_from_text(
                 if _is_entity_attr_bound(name, alias, sentence, known_entities=(name,)):
                     _add(
                         subject=name,
-                        obj=system,
+                        obj=_normalize_system_name(system),
                         confidence="weak",
                         evidence=sentence,
                         start=text.find(sentence) if text.find(sentence) >= 0 else None,
