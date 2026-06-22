@@ -641,6 +641,24 @@ export const api = {
     )
   },
 
+  // 结构化知识表新增（手动修正）
+  createStructuredRecord: (projectId: string, table: string, body: Record<string, any>) =>
+    request<{ id: string; origin: string; canon_level: string; source_priority: number; evidence: string[] }>(
+      `/projects/${projectId}/knowledge/structured/${table}`, { method: 'POST', body: JSON.stringify(body) },
+    ),
+
+  // 结构化知识表编辑（手动修正，保留原 evidence）
+  updateStructuredRecord: (projectId: string, table: string, recordId: string, body: Record<string, any>) =>
+    request<{ id: string; origin: string; canon_level: string; source_priority: number; previous_origin: string; evidence: string[] }>(
+      `/projects/${projectId}/knowledge/structured/${table}/${recordId}`, { method: 'PATCH', body: JSON.stringify(body) },
+    ),
+
+  // 结构化知识表删除
+  deleteStructuredRecord: (projectId: string, table: string, recordId: string) =>
+    request<{ id: string; deleted: boolean; table: string }>(
+      `/projects/${projectId}/knowledge/structured/${table}/${recordId}`, { method: 'DELETE' },
+    ),
+
   // ─── Document Versions ───
   listDocumentVersions: (projectId: string, documentId: string) =>
     request<ApiDocumentVersion[]>(`/projects/${projectId}/documents/${documentId}/versions`),

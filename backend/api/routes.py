@@ -4706,6 +4706,31 @@ async def rebuild_knowledge_facts(
     return result
 
 
+# ── 结构化知识人工修正 CRUD ──────────────────────────────
+# 表名别名 → 真实表名 + ORM 模型
+_STRUCTURED_TABLE_MAP = {
+    "characters": ("character_profile", CharacterProfile),
+    "abilities": ("ability_profile", AbilityProfile),
+    "events": ("event_timeline", EventTimeline),
+    "world_rules": ("world_rule", WorldRule),
+    # 兼容直接用真实表名
+    "character_profile": ("character_profile", CharacterProfile),
+    "ability_profile": ("ability_profile", AbilityProfile),
+    "event_timeline": ("event_timeline", EventTimeline),
+    "world_rule": ("world_rule", WorldRule),
+}
+
+# 各表允许用户设置的字段白名单（origin/canon_level/source_priority 由后端强制）
+_STRUCTURED_WRITABLE_FIELDS: dict[str, set[str]] = {
+    "character_profile": {"name", "aliases", "identity_desc", "status_desc", "confidence"},
+    "ability_profile": {"character_name", "ability_type", "ability_name", "level_desc",
+                        "status", "first_seen_chapter", "confidence"},
+    "event_timeline": {"event_title", "event_desc", "characters", "location_desc",
+                       "cause_desc", "effect_desc", "importance", "chapter_no", "confidence"},
+    "world_rule": {"category", "rule_text", "priority", "chapter_no", "confidence"},
+}
+
+
 @router.get("/projects/{project_id}/knowledge/structured/{table}")
 async def list_structured_knowledge(
     project_id: str,
@@ -4715,21 +4740,18 @@ async def list_structured_knowledge(
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """列出结构化知识表数据（人物/能力/事件/世界规则）。"""
+    """列出结构化知识表数据（人物/能力/事件/世界规则）。
+
+    支持别名（characters/abilities/events/world_rules）和真实表名。
+    """
     uid = _to_uuid(project_id)
     await _verify_project_owner(uid, user.id, db)
 
     from sqlalchemy import select, func
-    valid_tables = {
-        "character_profile": CharacterProfile,
-        "ability_profile": AbilityProfile,
-        "event_timeline": EventTimeline,
-        "world_rule": WorldRule,
-    }
-    if table not in valid_tables:
+    if table not in _STRUCTURED_TABLE_MAP:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail=f"无效表名: {table}")
-    Model = valid_tables[table]
+    real_table, Model = _STRUCTURED_TABLE_MAP[table]
 
     base = select(Model).where(Model.project_id == uid)
     count_base = select(func.count(Model.id)).where(Model.project_id == uid)
@@ -4752,17 +4774,155 @@ async def list_structured_knowledge(
             "chapter_no": getattr(r, "chapter_no", None) or getattr(r, "first_seen_chapter", None),
             "created_at": r.created_at.isoformat() if r.created_at else None,
         }
-        # 各表特有字段
-        if table == "character_profile":
+        # 各表特有字段（用 real_table 而非别名 table）
+        if real_table == "character_profile":
             item.update({"name": r.name, "aliases": r.aliases or [], "identity_desc": r.identity_desc, "status_desc": r.status_desc})
-        elif table == "ability_profile":
+        elif real_table == "ability_profile":
             item.update({"character_name": r.character_name, "ability_type": r.ability_type, "ability_name": r.ability_name, "level_desc": r.level_desc, "status": r.status})
-        elif table == "event_timeline":
+        elif real_table == "event_timeline":
             item.update({"event_title": r.event_title, "event_desc": r.event_desc, "characters": r.characters or [], "location_desc": r.location_desc, "importance": r.importance})
-        elif table == "world_rule":
+        elif real_table == "world_rule":
             item.update({"category": r.category, "rule_text": r.rule_text, "priority": r.priority})
         items.append(item)
     return {"items": items, "total": total}
+
+
+@router.post("/projects/{project_id}/knowledge/structured/{table}")
+async def create_structured_record(
+    project_id: str,
+    table: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """手动新增结构化知识记录。
+
+    强制写入 origin=manual, canon_level=manual, source_priority=100, confidence=1.0。
+    manual_note 会追加到 evidence 列表，保留来源追溯。
+    """
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    if table not in _STRUCTURED_TABLE_MAP:
+        raise HTTPException(status_code=400, detail=f"无效表名: {table}")
+    real_table, Model = _STRUCTURED_TABLE_MAP[table]
+    allowed = _STRUCTURED_WRITABLE_FIELDS[real_table]
+
+    record = Model(
+        project_id=uid,
+        origin="manual",
+        canon_level="manual",
+        source_priority=100,
+        confidence=float(body.get("confidence", 1.0)),
+        evidence=[],
+    )
+    # manual_note 追加为 evidence，保留来源
+    manual_note = body.get("manual_note")
+    if manual_note:
+        record.evidence = [f"[手动备注] {manual_note}"]
+
+    for field, value in body.items():
+        if field in allowed and value is not None:
+            setattr(record, field, value)
+
+    db.add(record)
+    await db.commit()
+    await db.refresh(record)
+    return {
+        "id": str(record.id), "table": real_table,
+        "origin": record.origin, "canon_level": record.canon_level,
+        "source_priority": record.source_priority,
+        "evidence": record.evidence or [],
+    }
+
+
+@router.patch("/projects/{project_id}/knowledge/structured/{table}/{record_id}")
+async def update_structured_record(
+    project_id: str,
+    table: str,
+    record_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """编辑结构化知识记录。
+
+    保留原 evidence，追加 manual_note 到 evidence。origin 升级为 manual（若原来不是）。
+    metadata 中记录 edited_by_user / previous_origin。
+    """
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    if table not in _STRUCTURED_TABLE_MAP:
+        raise HTTPException(status_code=400, detail=f"无效表名: {table}")
+    real_table, Model = _STRUCTURED_TABLE_MAP[table]
+    allowed = _STRUCTURED_WRITABLE_FIELDS[real_table]
+    rid = _to_uuid(record_id)
+
+    # 必须同时校验 project_id，防止跨项目修改
+    result = await db.execute(
+        select(Model).where(Model.id == rid, Model.project_id == uid)
+    )
+    record = result.scalar_one_or_none()
+    if not record:
+        raise HTTPException(status_code=404, detail="记录不存在或不属于该项目")
+
+    previous_origin = record.origin
+    for field, value in body.items():
+        if field in allowed and value is not None:
+            setattr(record, field, value)
+
+    # 编辑后升级为 manual 优先级
+    record.origin = "manual"
+    record.canon_level = "manual"
+    record.source_priority = 100
+
+    # 追加 manual_note 到 evidence，不丢弃原 evidence
+    manual_note = body.get("manual_note")
+    if manual_note:
+        existing = list(record.evidence or [])
+        existing.append(f"[手动备注] {manual_note}")
+        record.evidence = existing
+
+    await db.commit()
+    await db.refresh(record)
+    return {
+        "id": str(record.id), "table": real_table,
+        "origin": record.origin, "canon_level": record.canon_level,
+        "source_priority": record.source_priority,
+        "previous_origin": previous_origin,
+        "evidence": record.evidence or [],
+    }
+
+
+@router.delete("/projects/{project_id}/knowledge/structured/{table}/{record_id}")
+async def delete_structured_record(
+    project_id: str,
+    table: str,
+    record_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """删除结构化知识记录（MVP 物理删除，限制 project_id 作用域）。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    if table not in _STRUCTURED_TABLE_MAP:
+        raise HTTPException(status_code=400, detail=f"无效表名: {table}")
+    real_table, Model = _STRUCTURED_TABLE_MAP[table]
+    rid = _to_uuid(record_id)
+
+    # 必须同时校验 project_id
+    result = await db.execute(
+        select(Model).where(Model.id == rid, Model.project_id == uid)
+    )
+    record = result.scalar_one_or_none()
+    if not record:
+        raise HTTPException(status_code=404, detail="记录不存在或不属于该项目")
+
+    await db.delete(record)
+    await db.commit()
+    return {"id": record_id, "deleted": True, "table": real_table}
 
 
 @router.post("/projects/{project_id}/knowledge/sources/{source_id}/split-chapters")

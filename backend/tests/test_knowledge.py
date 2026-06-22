@@ -2162,3 +2162,191 @@ def test_facts_api_rebuild_single_source():
     data = resp.json()
     assert data["fact_count"] > 0
     assert data["source_count"] == 1
+
+
+# ── 结构化知识人工修正 CRUD ──────────────────────────────
+
+
+def _create_structured(pid, table, payload, headers):
+    return client.post(
+        f"/api/projects/{pid}/knowledge/structured/{table}",
+        json=payload, headers=headers,
+    )
+
+
+def test_create_manual_character_profile():
+    """手动新增人物：origin/canon_level/source_priority 正确。"""
+    pid, headers = _create_project()
+    resp = _create_structured(pid, "characters", {
+        "name": "萧院长", "identity_desc": "天澜魔法高中院长", "manual_note": "手动补充",
+    }, headers)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["origin"] == "manual"
+    assert data["canon_level"] == "manual"
+    assert data["source_priority"] == 100
+    assert "[手动备注] 手动补充" in (data["evidence"] or [])
+
+    # 确认能查到
+    listing = client.get(f"/api/projects/{pid}/knowledge/structured/characters", headers=headers)
+    assert listing.status_code == 200
+    names = [it["name"] for it in listing.json()["items"]]
+    assert "萧院长" in names
+
+
+def test_update_structured_record_preserves_scope():
+    """project A 不能更新 project B 的记录。"""
+    pid_a, headers_a = _create_project("项目A")
+    pid_b, headers_b = _create_project("项目B")
+
+    # A 创建一条能力
+    create_resp = _create_structured(pid_a, "abilities", {
+        "character_name": "莫凡", "ability_type": "magic_element",
+        "ability_name": "雷系", "manual_note": "A项目的能力",
+    }, headers_a)
+    assert create_resp.status_code == 200
+    record_id = create_resp.json()["id"]
+
+    # B 尝试修改 A 的记录 → 应 404
+    patch_resp = client.patch(
+        f"/api/projects/{pid_b}/knowledge/structured/abilities/{record_id}",
+        json={"level_desc": "高阶"}, headers=headers_b,
+    )
+    assert patch_resp.status_code == 404
+
+
+def test_delete_structured_record_preserves_scope():
+    """project A 不能删除 project B 的记录。"""
+    pid_a, headers_a = _create_project("删除项目A")
+    pid_b, headers_b = _create_project("删除项目B")
+
+    create_resp = _create_structured(pid_a, "world_rules", {
+        "category": "魔法体系", "rule_text": "测试规则A",
+    }, headers_a)
+    assert create_resp.status_code == 200
+    record_id = create_resp.json()["id"]
+
+    # B 尝试删除 A 的记录 → 应 404
+    del_resp = client.delete(
+        f"/api/projects/{pid_b}/knowledge/structured/world_rules/{record_id}",
+        headers=headers_b,
+    )
+    assert del_resp.status_code == 404
+
+    # A 自己能删
+    del_ok = client.delete(
+        f"/api/projects/{pid_a}/knowledge/structured/world_rules/{record_id}",
+        headers=headers_a,
+    )
+    assert del_ok.status_code == 200
+    assert del_ok.json()["deleted"] is True
+
+
+def test_manual_ability_overrides_llm_extracted_in_qa():
+    """手动能力优先于 LLM 抽取能力。"""
+    from db.session import async_session
+    from models.structured_knowledge import AbilityProfile
+    from services.structured_qa import answer_structured_question
+
+    pid, headers = _create_project("QA优先级测试")
+
+    # 模拟 LLM 抽取：莫凡-雷系（original/60）
+    async def _insert_llm():
+        async with test_session_factory() as session:
+            session.add(AbilityProfile(
+                project_id=pid, character_name="莫凡",
+                ability_type="magic_element", ability_name="雷系",
+                origin="llm_extracted", canon_level="original",
+                source_priority=60, confidence=0.9, evidence=["莫凡觉醒雷系"],
+            ))
+            await session.commit()
+    asyncio.run(_insert_llm())
+
+    # 用户手动新增：莫凡-冰系（manual/100）
+    _create_structured(pid, "abilities", {
+        "character_name": "莫凡", "ability_type": "magic_element",
+        "ability_name": "冰系", "manual_note": "手动设定冰系",
+    }, headers)
+
+    # QA 查莫凡有什么系 → 应包含手动设定的冰系
+    async def _ask():
+        async with async_session() as db:
+            return await answer_structured_question(db, pid, "莫凡有什么系别？")
+    result = asyncio.run(_ask())
+    answer = result.get("answer", "")
+    assert "冰系" in answer, f"手动冰系未出现在回答中: {answer}"
+    assert "雷系" in answer, f"LLM雷系也应出现: {answer}"
+
+
+def test_deleted_ability_not_used_by_structured_qa():
+    """删除后 QA 不再使用该记录。"""
+    from db.session import async_session
+    from services.structured_qa import answer_structured_question
+
+    pid, headers = _create_project("删除后QA测试")
+
+    # 新增一条能力
+    create_resp = _create_structured(pid, "abilities", {
+        "character_name": "测试角色", "ability_type": "magic_element",
+        "ability_name": "暗系", "manual_note": "待删除",
+    }, headers)
+    record_id = create_resp.json()["id"]
+
+    # 删除
+    del_resp = client.delete(
+        f"/api/projects/{pid}/knowledge/structured/abilities/{record_id}",
+        headers=headers,
+    )
+    assert del_resp.status_code == 200
+
+    # QA 查 → 不应再出现暗系
+    async def _ask():
+        async with async_session() as db:
+            return await answer_structured_question(db, pid, "测试角色有什么系别？")
+    result = asyncio.run(_ask())
+    answer = result.get("answer", "")
+    assert "暗系" not in answer, f"删除后仍出现暗系: {answer}"
+
+
+def test_update_preserves_evidence_or_adds_manual_note():
+    """编辑不应导致 evidence 完全丢失。"""
+    from models.structured_knowledge import AbilityProfile
+
+    pid, headers = _create_project("evidence保留测试")
+
+    # 模拟 LLM 抽取带 evidence
+    async def _insert_llm():
+        async with test_session_factory() as session:
+            session.add(AbilityProfile(
+                project_id=pid, character_name="莫凡",
+                ability_type="magic_element", ability_name="火系",
+                origin="llm_extracted", canon_level="original",
+                source_priority=60, confidence=0.9, evidence=["莫凡觉醒火系"],
+            ))
+            await session.commit()
+    asyncio.run(_insert_llm())
+
+    # 查到该记录 id
+    listing = client.get(f"/api/projects/{pid}/knowledge/structured/abilities", headers=headers)
+    record_id = None
+    for it in listing.json()["items"]:
+        if it["character_name"] == "莫凡" and it["ability_name"] == "火系":
+            record_id = it["id"]
+            break
+    assert record_id is not None
+
+    # 编辑：加 manual_note
+    patch_resp = client.patch(
+        f"/api/projects/{pid}/knowledge/structured/abilities/{record_id}",
+        json={"level_desc": "初阶", "manual_note": "确认是初阶"},
+        headers=headers,
+    )
+    assert patch_resp.status_code == 200, patch_resp.text
+    evidence = patch_resp.json()["evidence"]
+    # 原 evidence 保留
+    assert any("莫凡觉醒火系" in e for e in evidence), f"原evidence丢失: {evidence}"
+    # manual_note 追加
+    assert any("手动备注" in e for e in evidence), f"manual_note未追加: {evidence}"
+    # 升级为 manual
+    assert patch_resp.json()["origin"] == "manual"
+    assert patch_resp.json()["source_priority"] == 100

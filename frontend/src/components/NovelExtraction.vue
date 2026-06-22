@@ -264,6 +264,104 @@ async function askStructured() {
   }
 }
 
+// ── 结构化知识人工修正（增删改查） ──
+const editing = ref(false)
+const editingRecord = ref<Record<string, any> | null>(null)
+const editingId = ref<string | null>(null) // null = 新增
+const editSaving = ref(false)
+
+// 各表编辑字段配置
+const editFieldConfig: Record<StructTable, { key: string; label: string; type?: 'text' | 'textarea' | 'number' }[]> = {
+  character_profile: [
+    { key: 'name', label: '姓名' },
+    { key: 'aliases', label: '别名（逗号分隔）' },
+    { key: 'identity_desc', label: '身份', type: 'textarea' },
+    { key: 'status_desc', label: '状态', type: 'textarea' },
+  ],
+  ability_profile: [
+    { key: 'character_name', label: '人物名' },
+    { key: 'ability_type', label: '类型' },
+    { key: 'ability_name', label: '能力名' },
+    { key: 'level_desc', label: '等级' },
+    { key: 'status', label: '状态' },
+  ],
+  event_timeline: [
+    { key: 'event_title', label: '标题' },
+    { key: 'event_desc', label: '描述', type: 'textarea' },
+    { key: 'characters', label: '人物（逗号分隔）' },
+    { key: 'location_desc', label: '地点' },
+    { key: 'importance', label: '重要度(1-5)', type: 'number' },
+  ],
+  world_rule: [
+    { key: 'category', label: '分类' },
+    { key: 'rule_text', label: '规则文本', type: 'textarea' },
+    { key: 'priority', label: '优先级(high/medium/low)' },
+  ],
+}
+
+function openCreate() {
+  editingRecord.value = {}
+  editingId.value = null
+  editing.value = true
+}
+
+function openEdit(item: Record<string, any>) {
+  // 深拷贝，aliases/characters 转为逗号字符串方便编辑
+  const copy: Record<string, any> = { ...item }
+  if (Array.isArray(copy.aliases)) copy.aliases = copy.aliases.join('、')
+  if (Array.isArray(copy.characters)) copy.characters = copy.characters.join('、')
+  editingRecord.value = copy
+  editingId.value = item.id
+  editing.value = true
+}
+
+async function saveEdit() {
+  if (!editingRecord.value) return
+  editSaving.value = true
+  try {
+    const body: Record<string, any> = { ...editingRecord.value }
+    // 删除不应提交的字段
+    delete body.id
+    delete body.source_id
+    delete body.canon_level
+    delete body.origin
+    delete body.source_priority
+    delete body.evidence
+    delete body.created_at
+    delete body.chapter_no
+    // 数组字段从逗号字符串转回
+    if (typeof body.aliases === 'string') body.aliases = body.aliases.split(/[、,，]/).map((s: string) => s.trim()).filter(Boolean)
+    if (typeof body.characters === 'string') body.characters = body.characters.split(/[、,，]/).map((s: string) => s.trim()).filter(Boolean)
+    if (body.importance != null) body.importance = Number(body.importance)
+
+    if (editingId.value) {
+      await api.updateStructuredRecord(props.projectId, activeTab.value, editingId.value, body)
+      ui.showToast('已保存（手动修正，优先级最高）', 'success')
+    } else {
+      await api.createStructuredRecord(props.projectId, activeTab.value, body)
+      ui.showToast('已新增（手动记录）', 'success')
+    }
+    editing.value = false
+    editingRecord.value = null
+    await loadStructuredData()
+  } catch (e) {
+    ui.showToast(friendlyError(e, '保存失败'), 'error')
+  } finally {
+    editSaving.value = false
+  }
+}
+
+async function deleteRecord(item: Record<string, any>) {
+  if (!confirm(`确认删除「${item.name || item.ability_name || item.event_title || item.rule_text || ''}」？`)) return
+  try {
+    await api.deleteStructuredRecord(props.projectId, activeTab.value, item.id)
+    ui.showToast('已删除', 'success')
+    await loadStructuredData()
+  } catch (e) {
+    ui.showToast(friendlyError(e, '删除失败'), 'error')
+  }
+}
+
 watch(() => props.sourceId, () => {
   // source 切换时同步 genre（从 metadata 读取）
   if (props.initialGenre === 'historical') {
@@ -361,6 +459,7 @@ function priorityLabel(p: string) {
         >
           {{ label }} <span class="tab-count">{{ structTotals[key as StructTable] }}</span>
         </button>
+        <button class="btn-add" @click="openCreate">+ 新增{{ tabLabels[activeTab] }}</button>
       </div>
 
       <div class="struct-list">
@@ -375,6 +474,10 @@ function priorityLabel(p: string) {
               <strong>{{ c.name }}</strong>
               <span class="badge" :class="c.canon_level">{{ c.canon_level }}</span>
               <span class="confidence">置信度 {{ (c.confidence * 100).toFixed(0) }}%</span>
+              <span class="item-actions">
+                <button class="btn-icon" title="编辑" @click="openEdit(c)">✏️</button>
+                <button class="btn-icon" title="删除" @click="deleteRecord(c)">🗑️</button>
+              </span>
             </div>
             <div v-if="c.identity_desc" class="item-field">身份：{{ c.identity_desc }}</div>
             <div v-if="c.status_desc" class="item-field">状态：{{ c.status_desc }}</div>
@@ -390,6 +493,10 @@ function priorityLabel(p: string) {
               <strong>{{ a.character_name }} - {{ a.ability_name }}</strong>
               <span class="badge" :class="a.canon_level">{{ a.canon_level }}</span>
               <span class="type-tag">{{ abilityTypeLabel(a.ability_type) }}</span>
+              <span class="item-actions">
+                <button class="btn-icon" title="编辑" @click="openEdit(a)">✏️</button>
+                <button class="btn-icon" title="删除" @click="deleteRecord(a)">🗑️</button>
+              </span>
             </div>
             <div v-if="a.level_desc" class="item-field">等级：{{ a.level_desc }}</div>
             <div v-if="a.status" class="item-field">状态：{{ a.status }}</div>
@@ -405,6 +512,10 @@ function priorityLabel(p: string) {
               <strong>{{ e.event_title }}</strong>
               <span v-if="e.chapter_no" class="chapter-tag">第{{ e.chapter_no }}章</span>
               <span class="importance-tag">重要度 {{ e.importance }}</span>
+              <span class="item-actions">
+                <button class="btn-icon" title="编辑" @click="openEdit(e)">✏️</button>
+                <button class="btn-icon" title="删除" @click="deleteRecord(e)">🗑️</button>
+              </span>
             </div>
             <div v-if="e.event_desc" class="item-field">{{ e.event_desc }}</div>
             <div v-if="e.characters?.length" class="item-field">人物：{{ e.characters.join('、') }}</div>
@@ -418,6 +529,10 @@ function priorityLabel(p: string) {
             <div class="item-header">
               <strong>{{ w.category }}</strong>
               <span class="priority-tag" :class="w.priority">{{ priorityLabel(w.priority) }}</span>
+              <span class="item-actions">
+                <button class="btn-icon" title="编辑" @click="openEdit(w)">✏️</button>
+                <button class="btn-icon" title="删除" @click="deleteRecord(w)">🗑️</button>
+              </span>
             </div>
             <div class="item-field">{{ w.rule_text }}</div>
             <div v-if="w.evidence?.length" class="item-evidence">证据：{{ w.evidence[0] }}</div>
@@ -452,6 +567,36 @@ function priorityLabel(p: string) {
             <span v-if="c.chapter_no" class="citation-chapter">第{{ c.chapter_no }}章</span>
             <span class="citation-snippet">{{ c.snippet }}</span>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 编辑/新增弹窗 -->
+    <div v-if="editing" class="edit-modal-overlay" @click.self="editing = false">
+      <div class="edit-modal">
+        <h4>{{ editingId ? '编辑' : '新增' }}{{ tabLabels[activeTab] }}</h4>
+        <div v-for="field in editFieldConfig[activeTab]" :key="field.key" class="edit-field">
+          <label>{{ field.label }}</label>
+          <textarea
+            v-if="field.type === 'textarea'"
+            v-model="editingRecord![field.key]"
+            rows="2"
+          ></textarea>
+          <input
+            v-else
+            v-model="editingRecord![field.key]"
+            :type="field.type === 'number' ? 'number' : 'text'"
+          />
+        </div>
+        <div class="edit-field">
+          <label>手动备注（可选）</label>
+          <textarea v-model="editingRecord!.manual_note" rows="2" placeholder="修正说明，会追加到 evidence"></textarea>
+        </div>
+        <div class="edit-actions">
+          <button class="btn-sm" @click="editing = false">取消</button>
+          <button class="btn-sm btn-primary" :disabled="editSaving" @click="saveEdit">
+            {{ editSaving ? '保存中...' : '保存' }}
+          </button>
         </div>
       </div>
     </div>
@@ -518,4 +663,18 @@ function priorityLabel(p: string) {
 .citation-table { color: #3b82f6; flex-shrink: 0; }
 .citation-chapter { color: var(--text-soft); flex-shrink: 0; }
 .citation-snippet { color: var(--text-soft); }
+.btn-add { margin-left: auto; padding: 4px 10px; font-size: 12px; border: 1px dashed var(--border); border-radius: 4px; background: none; cursor: pointer; color: #3b82f6; }
+.btn-add:hover { background: var(--bg-soft); }
+.item-actions { margin-left: auto; display: flex; gap: 4px; }
+.btn-icon { padding: 2px 6px; font-size: 13px; border: none; background: none; cursor: pointer; border-radius: 3px; }
+.btn-icon:hover { background: var(--bg-soft); }
+.btn-sm.btn-primary { color: #fff; background: #2563eb; border-color: #2563eb; }
+.edit-modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.edit-modal { background: var(--bg); border-radius: 8px; padding: 20px; width: 480px; max-width: 90vw; max-height: 80vh; overflow-y: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
+.edit-modal h4 { margin: 0 0 12px; }
+.edit-field { margin-bottom: 10px; }
+.edit-field label { display: block; font-size: 12px; color: var(--text-soft); margin-bottom: 4px; }
+.edit-field input, .edit-field textarea { width: 100%; padding: 6px 8px; font-size: 13px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); box-sizing: border-box; }
+.edit-field textarea { resize: vertical; }
+.edit-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
 </style>
