@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
-import { api } from '../api/client'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { api, type ExtractionFailure } from '../api/client'
 import { friendlyError, useUiStore } from '../stores'
 
 const props = defineProps<{
@@ -21,10 +21,17 @@ interface ExtractionStatus {
   validated_count: number
   merged_count: number
   failed_count: number
+  pending_count?: number
   error_message?: string | null
   provider?: string | null
   is_mock?: boolean
   last_run_outcome?: string  // none | success | partial | failed
+  current_chapter_no?: number | null
+  last_error?: string | null
+  paused_at?: string | null
+  cancelled_at?: string | null
+  last_run_started_at?: string | null
+  last_run_finished_at?: string | null
 }
 const status = ref<ExtractionStatus | null>(null)
 const statusLoading = ref(false)
@@ -64,11 +71,6 @@ const progressPercent = computed(() => {
 })
 
 const isRunning = computed(() => status.value?.status === 'RUNNING' || status.value?.status === 'PENDING')
-const canAdvance = computed(() => {
-  if (!status.value) return false
-  // BATCH_DONE 表示本批完成但全书还有未处理章节，可继续推进
-  return ['RUNNING', 'PENDING', 'PARTIAL_FAILED', 'BATCH_DONE'].includes(status.value.status)
-})
 // 是否还有未处理章节（用于显示"待继续"提示）
 const hasMoreChapters = computed(() => {
   if (!status.value || !status.value.total_chapters) return false
@@ -160,24 +162,6 @@ async function startExtraction() {
   }
 }
 
-async function advanceExtraction() {
-  actionLoading.value = 'advance'
-  try {
-    const r = await api.startExtraction(props.projectId, props.sourceId, extractionRequestBody())
-    status.value = r
-    if (r.status === 'RUNNING' || r.status === 'PENDING') {
-      pollStatus()
-    } else {
-      // 完成后刷新结构化数据
-      await loadStructuredData()
-    }
-  } catch (e) {
-    ui.showToast(friendlyError(e, '推进失败'), 'error')
-  } finally {
-    actionLoading.value = ''
-  }
-}
-
 async function resetExtraction() {
   if (!confirm('会清空当前资料的抽取任务和结构化结果，但不会删除原文资料。确认？')) return
   actionLoading.value = 'reset'
@@ -187,6 +171,8 @@ async function resetExtraction() {
     // 重置后状态回到 NONE，结构化数据清空
     status.value = null
     splitResult.value = null
+    autoAdvance.value = false
+    failures.value = []
     for (const key of Object.keys(structData.value) as (keyof typeof structData.value)[]) {
       structData.value[key] = []
       structTotals.value[key] = 0
@@ -202,6 +188,112 @@ async function resetExtraction() {
   }
 }
 
+// ── 任务控制：暂停/取消/失败列表/单章重试/自动连续 ──
+const autoAdvance = ref(false)
+const failures = ref<ExtractionFailure[]>([])
+
+async function pauseExtraction() {
+  actionLoading.value = 'pause'
+  try {
+    const r = await api.pauseExtraction(props.projectId, props.sourceId)
+    status.value = r
+    autoAdvance.value = false
+    ui.showToast('已暂停', 'success')
+  } catch (e) {
+    ui.showToast(friendlyError(e, '暂停失败'), 'error')
+  } finally {
+    actionLoading.value = ''
+  }
+}
+
+async function cancelExtraction() {
+  if (!confirm('确认取消抽取任务？已有结果不会删除。')) return
+  actionLoading.value = 'cancel'
+  try {
+    const r = await api.cancelExtraction(props.projectId, props.sourceId)
+    status.value = r
+    autoAdvance.value = false
+    ui.showToast('已取消', 'success')
+    await loadFailures()
+  } catch (e) {
+    ui.showToast(friendlyError(e, '取消失败'), 'error')
+  } finally {
+    actionLoading.value = ''
+  }
+}
+
+async function loadFailures() {
+  try {
+    const r = await api.listExtractionFailures(props.projectId, props.sourceId)
+    failures.value = r.items
+  } catch {
+    // 静默失败
+  }
+}
+
+async function retryChapter(chapterNo: number) {
+  actionLoading.value = `retry-${chapterNo}`
+  try {
+    const r = await api.retryExtractionChapter(props.projectId, props.sourceId, chapterNo)
+    if (r.chapter_status === 'MERGED') {
+      ui.showToast(`第${chapterNo}章重试成功`, 'success')
+    } else {
+      ui.showToast(`第${chapterNo}章重试完成（状态：${r.chapter_status}）`, 'info')
+    }
+    await loadFailures()
+    await loadStatus()
+    await loadStructuredData()
+  } catch (e) {
+    ui.showToast(friendlyError(e, '重试失败'), 'error')
+  } finally {
+    actionLoading.value = ''
+  }
+}
+
+function onAutoAdvanceToggle() {
+  if (autoAdvance.value) {
+    // 开启自动连续抽取：启动推进循环
+    autoAdvanceLoop()
+  }
+}
+
+let autoAdvanceTimer: ReturnType<typeof setTimeout> | null = null
+
+async function autoAdvanceLoop() {
+  if (!autoAdvance.value) return
+  // 暂停/取消/完成时停止
+  if (!status.value || !['BATCH_DONE', 'RUNNING'].includes(status.value.status)) {
+    autoAdvance.value = false
+    return
+  }
+  if (!hasMoreChapters.value) {
+    autoAdvance.value = false
+    ui.showToast('全部章节已处理完', 'success')
+    return
+  }
+  // 推进 1 章
+  if (!isAdvancing) {
+    isAdvancing = true
+    try {
+      const r = await api.startExtraction(props.projectId, props.sourceId, extractionRequestBody())
+      status.value = r
+      if (r.failed_count > 0) await loadFailures()
+      // 完成后刷新结构化数据
+      if (!['RUNNING', 'PENDING', 'BATCH_DONE'].includes(r.status)) {
+        await loadStructuredData()
+      }
+    } catch {
+      // 推进失败不中断，下次再试
+    } finally {
+      isAdvancing = false
+    }
+  }
+  // 间隔 2 秒继续
+  if (autoAdvance.value && hasMoreChapters.value) {
+    autoAdvanceTimer = setTimeout(() => autoAdvanceLoop(), 2000)
+  }
+}
+
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let isAdvancing = false  // 防止轮询推进重叠
 
@@ -210,27 +302,26 @@ function pollStatus() {
   pollTimer = setTimeout(async () => {
     await loadStatus()
     if (isRunning.value) {
-      // 自动推进下一批章节（轮询推进模式，不依赖用户手动点）
-      if (!isAdvancing) {
-        isAdvancing = true
-        try {
-          const r = await api.startExtraction(props.projectId, props.sourceId, {
-            ...extractionRequestBody(),
-          })
-          status.value = r
-        } catch (e) {
-          // 推进失败不中断轮询，下次再试
-        } finally {
-          isAdvancing = false
-        }
-      }
+      // RUNNING 状态：只轮询状态，不自动推进（自动推进由 autoAdvance 开关控制）
       pollStatus()
     } else {
-      // 完成后刷新结构化数据
+      // 完成后刷新结构化数据和失败列表
       await loadStructuredData()
+      if (status.value?.failed_count) await loadFailures()
+      // 如果自动连续抽取开启，继续推进
+      if (autoAdvance.value && hasMoreChapters.value) {
+        autoAdvanceLoop()
+      }
     }
   }, 3000)
 }
+
+// 组件卸载时清理定时器
+onUnmounted(() => {
+  if (pollTimer) clearTimeout(pollTimer)
+  if (autoAdvanceTimer) clearTimeout(autoAdvanceTimer)
+  autoAdvance.value = false
+})
 
 async function loadStructuredData() {
   structLoading.value = true
@@ -404,6 +495,11 @@ function priorityLabel(p: string) {
         <span v-if="status && status.total_chapters">章节 {{ status.extracted_count }}/{{ status.total_chapters }}</span>
         <span v-if="status && status.merged_count">已合并 {{ status.merged_count }}</span>
         <span v-if="status && status.failed_count" class="failed-count">失败 {{ status.failed_count }}</span>
+        <span v-if="status?.provider" class="provider-tag">{{ status.provider }}</span>
+      </div>
+
+      <div v-if="status?.current_chapter_no" class="current-chapter">
+        正在处理第 {{ status.current_chapter_no }} 章
       </div>
 
       <div v-if="status && status.total_chapters" class="progress-bar">
@@ -411,11 +507,15 @@ function priorityLabel(p: string) {
         <span class="progress-text">{{ progressPercent }}%</span>
       </div>
 
+      <div v-if="status?.last_error" class="error-msg">最近错误：{{ status.last_error }}</div>
       <div v-if="status?.error_message" class="error-msg">{{ status.error_message }}</div>
       <div v-if="splitResult" class="split-info">已切分 {{ splitResult.chapter_count }} 章</div>
 
       <div v-if="isMock" class="mock-warning">
-        当前为测试模型，结构化抽取结果为模拟数据，不代表真实小说抽取结果。请在设置中配置真实模型后再进行正式抽取。
+        当前为 mock，结果仅用于流程测试。
+      </div>
+      <div v-else class="real-model-hint">
+        真实模型每章可能需要几十秒。当前采用单章推进，避免页面长时间无响应。
       </div>
 
       <div v-if="realProviderNoResult" class="real-no-result-warning">
@@ -435,19 +535,57 @@ function priorityLabel(p: string) {
         <button class="btn-sm" :disabled="actionLoading === 'split'" @click="splitChapters">
           {{ actionLoading === 'split' ? '切分中...' : '切分章节' }}
         </button>
-        <button class="btn-sm" :disabled="actionLoading === 'extract'" @click="startExtraction">
-          {{ actionLoading === 'extract' ? (isMock ? '启动中...' : '抽取中（约1章）...') : (status?.status === 'BATCH_DONE' ? '继续抽取下一批' : '开始抽取') }}
+        <!-- 未开始 / BATCH_DONE / PAUSED → 开始/继续抽取 -->
+        <button
+          class="btn-sm"
+          v-if="!status || status.status === 'NONE' || status.status === 'BATCH_DONE' || status.status === 'PAUSED'"
+          :disabled="actionLoading === 'extract'"
+          @click="startExtraction"
+        >
+          {{ actionLoading === 'extract' ? (isMock ? '启动中...' : '抽取中（约1章）...') : (status?.status === 'BATCH_DONE' ? '继续抽取下一章' : status?.status === 'PAUSED' ? '继续抽取' : '开始抽取') }}
         </button>
-        <button class="btn-sm" v-if="canAdvance && status?.status !== 'BATCH_DONE'" :disabled="actionLoading === 'advance'" @click="advanceExtraction">
-          {{ actionLoading === 'advance' ? '推进中...' : '继续推进' }}
+        <!-- 运行中 → 暂停 + 取消 -->
+        <button class="btn-sm" v-if="status?.status === 'RUNNING'" :disabled="actionLoading === 'pause'" @click="pauseExtraction">
+          {{ actionLoading === 'pause' ? '暂停中...' : '暂停' }}
         </button>
-        <button class="btn-sm btn-danger" v-if="status && status.status !== 'NONE'" :disabled="actionLoading === 'reset'" @click="resetExtraction">
+        <!-- BATCH_DONE → 暂停 + 取消 -->
+        <button class="btn-sm" v-if="status?.status === 'BATCH_DONE'" :disabled="actionLoading === 'pause'" @click="pauseExtraction">
+          {{ actionLoading === 'pause' ? '暂停中...' : '暂停' }}
+        </button>
+        <!-- 非终态 → 取消 -->
+        <button class="btn-sm btn-danger" v-if="status && ['RUNNING', 'BATCH_DONE', 'PAUSED'].includes(status.status)" :disabled="actionLoading === 'cancel'" @click="cancelExtraction">
+          {{ actionLoading === 'cancel' ? '取消中...' : '取消' }}
+        </button>
+        <!-- 终态 → 重置 -->
+        <button class="btn-sm btn-danger" v-if="status && ['COMPLETED', 'FAILED', 'PARTIAL_FAILED', 'CANCELLED'].includes(status.status)" :disabled="actionLoading === 'reset'" @click="resetExtraction">
           {{ actionLoading === 'reset' ? '重置中...' : '重置抽取' }}
         </button>
       </div>
 
+      <!-- 自动连续抽取开关（默认关闭） -->
+      <div v-if="status && ['BATCH_DONE', 'RUNNING'].includes(status.status) && hasMoreChapters && !isMock" class="auto-advance-row">
+        <label class="auto-advance-toggle">
+          <input type="checkbox" v-model="autoAdvance" @change="onAutoAdvanceToggle" />
+          自动连续抽取
+        </label>
+        <span class="auto-advance-hint" v-if="autoAdvance">已开启，每章间隔 2 秒自动推进</span>
+      </div>
+
       <div v-if="status?.status === 'BATCH_DONE' && hasMoreChapters" class="batch-hint">
-        已处理 {{ status.extracted_count }} / {{ status.total_chapters }} 章。本批已完成，可继续抽取下一批。
+        已处理 {{ status.extracted_count }} / {{ status.total_chapters }} 章。本批已完成，可继续抽取下一章。
+      </div>
+    </div>
+
+    <!-- 失败章节面板 -->
+    <div v-if="failures.length > 0" class="failures-panel">
+      <div class="failures-title">失败章节（{{ failures.length }}）</div>
+      <div v-for="f in failures" :key="f.chapter_no" class="failure-item">
+        <span class="failure-chapter">第{{ f.chapter_no }}章 {{ f.chapter_title || '' }}</span>
+        <span class="failure-status">{{ f.status }}</span>
+        <span class="failure-error" v-if="f.error_message">{{ f.error_message }}</span>
+        <button class="btn-sm btn-retry" :disabled="actionLoading === `retry-${f.chapter_no}`" @click="retryChapter(f.chapter_no)">
+          {{ actionLoading === `retry-${f.chapter_no}` ? '重试中...' : '重试' }}
+        </button>
       </div>
     </div>
 
@@ -626,6 +764,21 @@ function priorityLabel(p: string) {
 .real-no-result-warning { font-size: 12px; color: #b91c1c; margin: 6px 0; padding: 6px 10px; background: rgba(220,38,38,0.10); border: 1px solid rgba(220,38,38,0.4); border-radius: 4px; line-height: 1.5; }
 .batch-hint { font-size: 12px; color: #2563eb; margin-top: 6px; padding: 4px 8px; background: rgba(37,99,235,0.1); border-radius: 4px; }
 .extraction-actions { display: flex; gap: 8px; margin-top: 8px; }
+.current-chapter { font-size: 13px; color: #2563eb; margin: 4px 0; font-weight: 500; }
+.provider-tag { font-size: 11px; padding: 1px 6px; border-radius: 3px; background: var(--bg-soft); color: var(--text-soft); }
+.real-model-hint { font-size: 12px; color: var(--text-soft); margin: 6px 0; padding: 6px 8px; background: #eff6ff; border-radius: 4px; border-left: 3px solid #3b82f6; }
+.auto-advance-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; }
+.auto-advance-toggle { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.auto-advance-toggle input { cursor: pointer; }
+.auto-advance-hint { font-size: 12px; color: var(--text-soft); }
+.failures-panel { margin-top: 12px; padding: 8px; border: 1px solid #fca5a5; border-radius: 6px; background: #fef2f2; }
+.failures-title { font-size: 13px; font-weight: 600; color: #b91c1c; margin-bottom: 6px; }
+.failure-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; border-bottom: 1px solid #fecaca; }
+.failure-item:last-child { border-bottom: none; }
+.failure-chapter { flex-shrink: 0; min-width: 120px; }
+.failure-status { font-size: 11px; padding: 1px 6px; border-radius: 3px; background: #fee2e2; color: #991b1b; }
+.failure-error { flex: 1; color: #7f1d1d; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn-retry { padding: 2px 8px; font-size: 12px; }
 .genre-row { display: flex; align-items: center; gap: 6px; margin: 8px 0; font-size: 12px; }
 .genre-label { color: var(--text-soft); }
 .genre-select { padding: 2px 6px; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); }

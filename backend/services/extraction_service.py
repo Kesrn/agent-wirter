@@ -61,6 +61,7 @@ class JobStatus:
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     BATCH_DONE = "BATCH_DONE"        # 本批配额完成，但全书还有未处理章节，可继续推进
+    PAUSED = "PAUSED"                # 用户暂停，下次推进不执行
     COMPLETED = "COMPLETED"          # 全书范围内章节全部处理完（真正的完成）
     PARTIAL_FAILED = "PARTIAL_FAILED"
     FAILED = "FAILED"
@@ -131,28 +132,45 @@ async def advance_extraction_job(
         provider_name,
     )
 
-    if job["status"] in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+    if job["status"] in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED,
+                         JobStatus.PAUSED):
         return job
 
     # 标记 RUNNING
     job_obj = await db.get(ExtractionJob, uuid.UUID(job["id"]))
     job_obj.status = JobStatus.RUNNING
     job_obj.started_at = job_obj.started_at or datetime.now(timezone.utc)
+    job_obj.last_run_started_at = datetime.now(timezone.utc)
+
+    # 真实 LLM 下每次只推进 1 章，避免长请求卡页面（方案 §3/§4.3）
+    is_mock = provider_name == "mock"
+    chapters_this_advance = 1 if not is_mock else CHAPTERS_PER_ADVANCE
 
     # 计算本次要处理的章节范围
     chapters_to_process = await _select_chapters_to_process(
         db, pid, sid, job_obj, force_reextract,
     )
 
-    # 处理 CHAPTERS_PER_ADVANCE 章
-    for chapter in chapters_to_process[:CHAPTERS_PER_ADVANCE]:
-        await _process_single_chapter(
-            db, job_obj, chapter, genre, canon_level, origin, user_id,
-            force_reextract=force_reextract,
-        )
-        await db.flush()
-        # 更新 job 计数
-        await _refresh_job_counts(db, job_obj)
+    # 处理 chapters_this_advance 章
+    for chapter in chapters_to_process[:chapters_this_advance]:
+        job_obj.current_chapter_no = chapter.chapter_no
+        try:
+            await _process_single_chapter(
+                db, job_obj, chapter, genre, canon_level, origin, user_id,
+                force_reextract=force_reextract,
+            )
+            await db.flush()
+            await _refresh_job_counts(db, job_obj)
+            job_obj.last_error = None
+        except Exception as exc:
+            job_obj.last_error = str(exc)[:500]
+            logger.exception("extraction chapter failed: job=%s chapter=%d",
+                             str(job_obj.id), chapter.chapter_no)
+            await db.flush()
+            await _refresh_job_counts(db, job_obj)
+            break
+
+    job_obj.last_run_finished_at = datetime.now(timezone.utc)
 
     # 判断 job 状态：所有已处理章节都到终态（MERGED/FAILED），无悬空态。
     total_in_range = await _count_chapters_in_range(db, pid, sid, job_obj)
@@ -177,7 +195,7 @@ async def advance_extraction_job(
             job_obj.status = JobStatus.BATCH_DONE
 
     # ── 批次 summary 日志：汇总本批推进结果，便于真实 LLM 下定位问题 ──
-    processed_chapters = chapters_to_process[:CHAPTERS_PER_ADVANCE]
+    processed_chapters = chapters_to_process[:chapters_this_advance]
     run_chapter_nos = [c.chapter_no for c in processed_chapters]
     run_merged = run_failed = run_validation_failed = run_retrying = run_skipped = 0
     if run_chapter_nos:
@@ -224,6 +242,7 @@ async def _get_or_create_job(
         .where(ExtractionJob.source_id == sid)
         .where(ExtractionJob.status.in_([
             JobStatus.PENDING, JobStatus.RUNNING, JobStatus.BATCH_DONE,
+            JobStatus.PAUSED,
         ]))
         .order_by(ExtractionJob.created_at.desc())
         .limit(1)
@@ -1120,6 +1139,169 @@ async def _count_pending_staging(db: AsyncSession, job: ExtractionJob) -> int:
     return result.scalar() or 0
 
 
+async def pause_extraction_job(db: AsyncSession, project_id: str, source_id: str) -> dict | None:
+    """暂停抽取任务：RUNNING/BATCH_DONE → PAUSED，记录 paused_at。
+
+    不打断正在执行的 LLM 请求，但下一次推进会被 advance_extraction_job 拦截。
+    """
+    result = await db.execute(
+        select(ExtractionJob)
+        .where(ExtractionJob.source_id == source_id)
+        .where(ExtractionJob.project_id == project_id)
+        .where(ExtractionJob.status.in_([
+            JobStatus.PENDING, JobStatus.RUNNING, JobStatus.BATCH_DONE,
+        ]))
+        .order_by(ExtractionJob.created_at.desc())
+        .limit(1)
+    )
+    job_obj = result.scalar_one_or_none()
+    if not job_obj:
+        return None
+    job_obj.status = JobStatus.PAUSED
+    job_obj.paused_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(job_obj)
+    return _job_to_dict(job_obj)
+
+
+async def cancel_extraction_job(db: AsyncSession, project_id: str, source_id: str) -> dict | None:
+    """取消抽取任务：置为 CANCELLED，记录 cancelled_at。
+
+    不删除已有 staging 和结构化结果。不打断正在执行的 LLM 请求。
+    """
+    result = await db.execute(
+        select(ExtractionJob)
+        .where(ExtractionJob.source_id == source_id)
+        .where(ExtractionJob.project_id == project_id)
+        .where(ExtractionJob.status.not_in([
+            JobStatus.COMPLETED, JobStatus.CANCELLED,
+        ]))
+        .order_by(ExtractionJob.created_at.desc())
+        .limit(1)
+    )
+    job_obj = result.scalar_one_or_none()
+    if not job_obj:
+        return None
+    job_obj.status = JobStatus.CANCELLED
+    job_obj.cancelled_at = datetime.now(timezone.utc)
+    job_obj.finished_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(job_obj)
+    return _job_to_dict(job_obj)
+
+
+async def list_extraction_failures(
+    db: AsyncSession, project_id: str, source_id: str,
+) -> dict:
+    """列出失败的章节 staging 记录，用于失败章节面板。"""
+    failed_statuses = [
+        StagingStatus.FAILED, StagingStatus.VALIDATION_FAILED,
+        StagingStatus.MERGE_FAILED,
+    ]
+    result = await db.execute(
+        select(ExtractionStaging)
+        .where(ExtractionStaging.project_id == project_id)
+        .where(ExtractionStaging.source_id == source_id)
+        .where(ExtractionStaging.status.in_(failed_statuses))
+        .order_by(ExtractionStaging.chapter_no.asc())
+    )
+    rows = result.scalars().all()
+    items = [
+        {
+            "chapter_no": r.chapter_no,
+            "chapter_title": r.chapter_title,
+            "status": r.status,
+            "retry_count": r.retry_count,
+            "error_message": r.error_message,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        }
+        for r in rows
+    ]
+    return {"items": items, "total": len(items)}
+
+
+async def retry_extraction_chapter(
+    db: AsyncSession, project_id: str, source_id: str,
+    chapter_no: int, user_id: str, force_reextract: bool = True,
+) -> dict:
+    """单章重试：只重跑指定章节，不影响其他章节。
+
+    流程：
+      1. 找到该章节 + 失败的 staging 记录
+      2. 重置 staging 状态为 PENDING（让 _select_chapters_to_process 重新选中）
+      3. 用 advance_extraction_job 推进 1 章（仅这一章）
+      4. 返回该章结果和 job status
+    """
+    pid = str(project_id)
+    sid = str(source_id)
+
+    # 找到该章节
+    chapter_result = await db.execute(
+        select(ProjectSourceChapter)
+        .where(ProjectSourceChapter.source_id == sid)
+        .where(ProjectSourceChapter.chapter_no == chapter_no)
+        .limit(1)
+    )
+    chapter = chapter_result.scalar_one_or_none()
+    if not chapter:
+        return {"error": f"章节 {chapter_no} 不存在", "chapter_no": chapter_no}
+
+    # 重置该章节的失败 staging → 删除旧 staging，让重新抽取
+    from sqlalchemy import delete as sa_delete
+    await db.execute(
+        sa_delete(ExtractionStaging)
+        .where(ExtractionStaging.source_id == sid)
+        .where(ExtractionStaging.chapter_no == chapter_no)
+    )
+    await db.flush()
+
+    # 找到当前 job（或创建）
+    provider_name = await _resolve_provider_name(str(user_id), db)
+    job = await _get_or_create_job(
+        db, pid, sid, "magic_fantasy", "original", "llm_extracted",
+        chapter_no, chapter_no, 1, True, provider_name,
+    )
+
+    if job["status"] in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED,
+                         JobStatus.PAUSED):
+        # 已完成/取消的 job 需要重置才能重试
+        job_obj = await db.get(ExtractionJob, uuid.UUID(job["id"]))
+        job_obj.status = JobStatus.BATCH_DONE
+        job_obj.force_reextract = True
+        job_obj.chapter_no_start = chapter_no
+        job_obj.chapter_no_end = chapter_no
+        await db.flush()
+        job = _job_to_dict(job_obj)
+
+    # 推进 1 章（advance 会处理该章节）
+    job = await advance_extraction_job(
+        db, pid, sid,
+        user_id=str(user_id),
+        genre="magic_fantasy", canon_level="original", origin="llm_extracted",
+        chapter_no_start=chapter_no, chapter_no_end=chapter_no,
+        max_chapters_per_run=1, force_reextract=force_reextract,
+    )
+
+    # 查该章节最新 staging 状态
+    staging_result = await db.execute(
+        select(ExtractionStaging)
+        .where(ExtractionStaging.source_id == sid)
+        .where(ExtractionStaging.chapter_no == chapter_no)
+        .order_by(ExtractionStaging.updated_at.desc())
+        .limit(1)
+    )
+    staging = staging_result.scalar_one_or_none()
+    chapter_status = staging.status if staging else "UNKNOWN"
+
+    return {
+        "chapter_no": chapter_no,
+        "chapter_status": chapter_status,
+        "job_status": job["status"],
+        "job_id": job["id"],
+        "error_message": staging.error_message if staging else None,
+    }
+
+
 def _compute_last_run_outcome(merged: int, failed: int, extracted: int) -> str:
     """基于 job 计数推断本批实际抽取结果，用于区分'配置了真实模型但没成功'。
 
@@ -1153,4 +1335,10 @@ def _job_to_dict(job: ExtractionJob) -> dict:
         "merged_count": job.merged_count,
         "failed_count": job.failed_count,
         "error_message": job.error_message,
+        "current_chapter_no": getattr(job, "current_chapter_no", None),
+        "last_error": getattr(job, "last_error", None),
+        "paused_at": getattr(job, "paused_at", None),
+        "cancelled_at": getattr(job, "cancelled_at", None),
+        "last_run_started_at": getattr(job, "last_run_started_at", None),
+        "last_run_finished_at": getattr(job, "last_run_finished_at", None),
     }

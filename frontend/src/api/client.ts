@@ -175,6 +175,24 @@ function sseHeaders(): Record<string, string> {
   return headers
 }
 
+// 抽取任务控制相关类型
+export type ExtractionStatus = {
+  job_id: string | null; status: string; total_chapters: number;
+  extracted_count: number; validated_count: number;
+  merged_count: number; failed_count: number; pending_count: number;
+  error_message: string | null;
+  provider: string | null; is_mock: boolean; last_run_outcome: string;
+  current_chapter_no: number | null; last_error: string | null;
+  paused_at: string | null; cancelled_at: string | null;
+  last_run_started_at: string | null; last_run_finished_at: string | null;
+}
+
+export type ExtractionFailure = {
+  chapter_no: number; chapter_title: string | null;
+  status: string; retry_count: number;
+  error_message: string | null; updated_at: string | null;
+}
+
 export const api = {
   // ─── Auth ───
   login: (data: LoginRequest) =>
@@ -583,6 +601,9 @@ export const api = {
   },
 
   // ─── Novel Extraction Pipeline ───
+
+  // 抽取任务状态（含控制字段）
+  // ExtractionStatus / ExtractionFailure 类型定义在下面，API 方法引用
   splitChapters: (projectId: string, sourceId: string) =>
     request<{ project_id: string; source_id: string; chapter_count: number; split_type: string }>(
       `/projects/${projectId}/knowledge/sources/${sourceId}/split-chapters`, { method: 'POST' },
@@ -593,12 +614,7 @@ export const api = {
     chapter_no_start?: number; chapter_no_end?: number;
     max_chapters_per_run?: number; force_reextract?: boolean;
   }) =>
-    request<{
-      job_id: string; status: string; total_chapters: number;
-      extracted_count: number; validated_count: number;
-      merged_count: number; failed_count: number;
-      provider: string | null; is_mock: boolean; last_run_outcome: string;
-    }>(`/projects/${projectId}/knowledge/sources/${sourceId}/extract`, {
+    request<ExtractionStatus>(`/projects/${projectId}/knowledge/sources/${sourceId}/extract`, {
       method: 'POST', body: JSON.stringify(params),
     }),
 
@@ -606,8 +622,12 @@ export const api = {
     request<{
       job_id: string | null; status: string; total_chapters: number;
       extracted_count: number; validated_count: number;
-      merged_count: number; failed_count: number; error_message: string | null;
+      merged_count: number; failed_count: number; pending_count: number;
+      error_message: string | null;
       provider: string | null; is_mock: boolean; last_run_outcome: string;
+      current_chapter_no: number | null; last_error: string | null;
+      paused_at: string | null; cancelled_at: string | null;
+      last_run_started_at: string | null; last_run_finished_at: string | null;
     }>(`/projects/${projectId}/knowledge/sources/${sourceId}/extract/status`),
 
   resetExtraction: (projectId: string, sourceId: string) =>
@@ -616,6 +636,21 @@ export const api = {
       deleted_characters: number; deleted_abilities: number;
       deleted_events: number; deleted_world_rules: number;
     }>(`/projects/${projectId}/knowledge/sources/${sourceId}/extract/reset`, { method: 'POST' }),
+
+  pauseExtraction: (projectId: string, sourceId: string) =>
+    request<ExtractionStatus>(`/projects/${projectId}/knowledge/sources/${sourceId}/extract/pause`, { method: 'POST' }),
+
+  cancelExtraction: (projectId: string, sourceId: string) =>
+    request<ExtractionStatus>(`/projects/${projectId}/knowledge/sources/${sourceId}/extract/cancel`, { method: 'POST' }),
+
+  listExtractionFailures: (projectId: string, sourceId: string) =>
+    request<{ items: ExtractionFailure[]; total: number }>(`/projects/${projectId}/knowledge/sources/${sourceId}/extract/failures`),
+
+  retryExtractionChapter: (projectId: string, sourceId: string, chapterNo: number) =>
+    request<{ chapter_no: number; chapter_status: string; job_status: string; job_id: string; error_message: string | null }>(
+      `/projects/${projectId}/knowledge/sources/${sourceId}/extract/retry-chapter`,
+      { method: 'POST', body: JSON.stringify({ chapter_no: chapterNo, force_reextract: true }) },
+    ),
 
   structuredQA: (projectId: string, question: string, conversationId?: string) =>
     request<{

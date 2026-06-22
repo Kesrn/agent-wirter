@@ -5017,13 +5017,17 @@ async def get_extraction_status(
         return {"job_id": None, "status": "NONE", "total_chapters": 0,
                 "extracted_count": 0, "validated_count": 0,
                 "merged_count": 0, "failed_count": 0,
+                "pending_count": 0,
                 "provider": provider_name, "is_mock": is_mock,
+                "current_chapter_no": None, "last_error": None,
                 "last_run_outcome": "none"}
     # 兼容文档 §15.4 字段名：id → job_id
     status["job_id"] = status.get("id")
     # provider 优先用 job 上记录的（反映抽取时的实际 provider），回退当前配置
     status["provider"] = status.get("provider") or provider_name
     status["is_mock"] = status["provider"] == "mock"
+    # pending_count = 总章节 - 已抽取数
+    status["pending_count"] = max(0, (status.get("total_chapters", 0) or 0) - (status.get("extracted_count", 0) or 0))
     return status
 
 
@@ -5046,6 +5050,79 @@ async def reset_extraction(
     from services.extraction_service import reset_extraction as _reset
 
     return await _reset(db, uid, sid)
+
+
+@router.post("/projects/{project_id}/knowledge/sources/{source_id}/extract/pause")
+async def pause_extraction(
+    project_id: str,
+    source_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """暂停抽取任务。不打断正在执行的 LLM 请求，但下一次推进不执行。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(source_id)
+    from services.extraction_service import pause_extraction_job
+    result = await pause_extraction_job(db, uid, sid)
+    if not result:
+        raise HTTPException(status_code=404, detail="没有可暂停的抽取任务")
+    return result
+
+
+@router.post("/projects/{project_id}/knowledge/sources/{source_id}/extract/cancel")
+async def cancel_extraction(
+    project_id: str,
+    source_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """取消抽取任务。不删除已有 staging 和结构化结果。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(source_id)
+    from services.extraction_service import cancel_extraction_job
+    result = await cancel_extraction_job(db, uid, sid)
+    if not result:
+        raise HTTPException(status_code=404, detail="没有可取消的抽取任务")
+    return result
+
+
+@router.get("/projects/{project_id}/knowledge/sources/{source_id}/extract/failures")
+async def list_extraction_failures(
+    project_id: str,
+    source_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """列出失败的章节列表。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(source_id)
+    from services.extraction_service import list_extraction_failures as _list
+    return await _list(db, uid, sid)
+
+
+@router.post("/projects/{project_id}/knowledge/sources/{source_id}/extract/retry-chapter")
+async def retry_extraction_chapter(
+    project_id: str,
+    source_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """单章重试：只重跑指定章节，不影响其他章节。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    sid = _to_uuid(source_id)
+    from services.extraction_service import retry_extraction_chapter as _retry
+    chapter_no = int(body.get("chapter_no", 0))
+    if chapter_no <= 0:
+        raise HTTPException(status_code=400, detail="chapter_no 必须为正整数")
+    return await _retry(
+        db, uid, sid, chapter_no, str(user.id),
+        force_reextract=body.get("force_reextract", True),
+    )
 
 
 @router.post("/projects/{project_id}/knowledge/structured-qa")

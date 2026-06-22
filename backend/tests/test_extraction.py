@@ -2104,3 +2104,223 @@ def test_get_latest_job_status_scoped_to_project():
             )
 
     asyncio.run(_run())
+
+
+# ── 抽取任务体验控制：暂停/取消/失败列表/单章重试/单章推进 ──
+
+_TEST_PID = "00000000-0000-0000-0000-0000000000a0"
+_TEST_SID = "00000000-0000-0000-0000-0000000000a1"
+
+
+async def _seed_job_and_chapters(session, n_chapters=3, provider="mock", status="PENDING",
+                                  pid=_TEST_PID, sid=_TEST_SID):
+    """造一个 job + n 个章节，返回 job_obj。"""
+    job = ExtractionJob(
+        project_id=pid, source_id=sid,
+        genre="magic_fantasy", status=status, provider=provider,
+        chapter_no_start=1, chapter_no_end=n_chapters,
+        total_chapters=n_chapters, max_chapters_per_run=1,
+    )
+    session.add(job)
+    await session.flush()
+    for i in range(1, n_chapters + 1):
+        session.add(ProjectSourceChapter(
+            project_id=_TEST_PID, source_id=_TEST_SID,
+            chapter_no=i, content=f"第{i}章内容",
+        ))
+    await session.flush()
+    return job
+
+
+def test_extract_advances_only_one_chapter_for_real_provider():
+    """非 mock provider 下，一次 advance 只处理 1 章。"""
+    PID = "00000000-0000-0000-0000-0000000000b0"
+    SID = "00000000-0000-0000-0000-0000000000b1"
+    import services.extraction_service as svc
+    original = svc._resolve_provider_name
+    async def _run():
+        async with test_session_factory() as session:
+            await _seed_job_and_chapters(session, n_chapters=3, provider="deepseek", pid=PID, sid=SID)
+            from services.extraction_service import advance_extraction_job
+            async def _fake_resolve(uid, db):
+                return "deepseek"
+            svc._resolve_provider_name = _fake_resolve
+            try:
+                job = await advance_extraction_job(
+                    session, PID, SID,
+                    user_id="test-user",
+                    genre="magic_fantasy", chapter_no_start=1, chapter_no_end=3,
+                    max_chapters_per_run=1,
+                )
+            finally:
+                svc._resolve_provider_name = original
+            # 只推进了 1 章
+            assert job["extracted_count"] <= 1, f"真实 provider 应只推进1章, 实际: {job['extracted_count']}"
+    asyncio.run(_run())
+
+
+def test_pause_extraction_stops_future_advance():
+    """pause 后再次 advance 不推进。"""
+    import services.extraction_service as svc
+    original_resolve = svc._resolve_provider_name
+    PID = "00000000-0000-0000-0000-0000000000c0"
+    SID = "00000000-0000-0000-0000-0000000000c1"
+
+    async def _run():
+        async with test_session_factory() as session:
+            await _seed_job_and_chapters(session, n_chapters=3, status="BATCH_DONE", pid=PID, sid=SID)
+            from services.extraction_service import pause_extraction_job, advance_extraction_job, JobStatus
+            async def _fake_resolve(uid, db):
+                return "mock"
+            svc._resolve_provider_name = _fake_resolve
+            try:
+                # 暂停
+                paused = await pause_extraction_job(session, PID, SID)
+                assert paused is not None
+                assert paused["status"] == JobStatus.PAUSED
+                assert paused.get("paused_at") is not None
+
+                # 再次 advance → 应直接返回，不推进
+                job = await advance_extraction_job(
+                    session, PID, SID,
+                    user_id="test-user", genre="magic_fantasy",
+                    chapter_no_start=1, chapter_no_end=3, max_chapters_per_run=1,
+                )
+                assert job["status"] == JobStatus.PAUSED, f"暂停后应不推进, status={job['status']}"
+                assert job["extracted_count"] == 0, f"暂停后 extracted_count 应为0, 实际: {job['extracted_count']}"
+            finally:
+                svc._resolve_provider_name = original_resolve
+    asyncio.run(_run())
+
+
+def test_cancel_extraction_stops_future_advance():
+    """cancel 后该 job 不会被继续推进（新 advance 会创建新 job，旧 job 保持 CANCELLED）。"""
+    import services.extraction_service as svc
+    original_resolve = svc._resolve_provider_name
+
+    async def _run():
+        async with test_session_factory() as session:
+            job_obj = await _seed_job_and_chapters(session, n_chapters=3, status="BATCH_DONE")
+            old_job_id = str(job_obj.id)
+            from services.extraction_service import cancel_extraction_job, JobStatus
+            from sqlalchemy import select
+            async def _fake_resolve(uid, db):
+                return "mock"
+            svc._resolve_provider_name = _fake_resolve
+            try:
+                cancelled = await cancel_extraction_job(session, _TEST_PID, _TEST_SID)
+                assert cancelled is not None
+                assert cancelled["status"] == JobStatus.CANCELLED
+                assert cancelled.get("cancelled_at") is not None
+
+                # 旧 job 保持 CANCELLED，extracted_count=0（未被推进）
+                r = await session.execute(
+                    select(ExtractionJob).where(ExtractionJob.id == job_obj.id)
+                )
+                old_job = r.scalar_one()
+                assert old_job.status == JobStatus.CANCELLED
+                assert old_job.extracted_count == 0, "旧 job 不应被推进"
+            finally:
+                svc._resolve_provider_name = original_resolve
+    asyncio.run(_run())
+
+
+def test_list_extraction_failures():
+    """构造失败 staging，接口能列出。"""
+    PID = "00000000-0000-0000-0000-0000000000e0"
+    SID = "00000000-0000-0000-0000-0000000000e1"
+    async def _run():
+        async with test_session_factory() as session:
+            job = await _seed_job_and_chapters(session, n_chapters=3, status="RUNNING", pid=PID, sid=SID)
+            from services.extraction_service import ExtractionStaging, StagingStatus, list_extraction_failures
+            session.add(ExtractionStaging(
+                job_id=str(job.id), project_id=PID, source_id=SID,
+                chapter_no=1, chapter_title="第1章", genre="magic_fantasy",
+                template_name="default", schema_version="1.0",
+                raw_output="bad", status=StagingStatus.VALIDATION_FAILED,
+                error_message="JSON 解析失败", retry_count=2,
+            ))
+            session.add(ExtractionStaging(
+                job_id=str(job.id), project_id=PID, source_id=SID,
+                chapter_no=3, chapter_title="第3章", genre="magic_fantasy",
+                template_name="default", schema_version="1.0",
+                raw_output="err", status=StagingStatus.FAILED,
+                error_message="LLM 超时", retry_count=1,
+            ))
+            await session.flush()
+
+            result = await list_extraction_failures(session, PID, SID)
+            assert result["total"] == 2
+            nos = [it["chapter_no"] for it in result["items"]]
+            assert 1 in nos and 3 in nos
+            item1 = [it for it in result["items"] if it["chapter_no"] == 1][0]
+            assert item1["status"] == StagingStatus.VALIDATION_FAILED
+            assert item1["retry_count"] == 2
+            assert "JSON" in item1["error_message"]
+    asyncio.run(_run())
+
+
+def test_retry_failed_chapter_only_reprocesses_that_chapter():
+    """只重试指定章节，不影响其他章节的 staging。"""
+    PID = "00000000-0000-0000-0000-0000000000f0"
+    SID = "00000000-0000-0000-0000-0000000000f1"
+    async def _run():
+        async with test_session_factory() as session:
+            job = await _seed_job_and_chapters(session, n_chapters=3, status="BATCH_DONE", pid=PID, sid=SID)
+            from services.extraction_service import ExtractionStaging, StagingStatus
+            for ch_no, st in [(1, StagingStatus.MERGED), (2, StagingStatus.FAILED), (3, StagingStatus.FAILED)]:
+                session.add(ExtractionStaging(
+                    job_id=str(job.id), project_id=PID, source_id=SID,
+                    chapter_no=ch_no, chapter_title=f"第{ch_no}章", genre="magic_fantasy",
+                    template_name="default", schema_version="1.0",
+                    raw_output="x", status=st, retry_count=0,
+                ))
+            await session.flush()
+
+            from services.extraction_service import retry_extraction_chapter
+            import services.extraction_service as svc
+            async def _fake_resolve(uid, db):
+                return "mock"
+            original = svc._resolve_provider_name
+            svc._resolve_provider_name = _fake_resolve
+            try:
+                result = await retry_extraction_chapter(
+                    session, PID, SID, chapter_no=2,
+                    user_id="test-user",
+                )
+            finally:
+                svc._resolve_provider_name = original
+
+            assert result["chapter_no"] == 2
+            from sqlalchemy import select
+            remaining = await session.execute(
+                select(ExtractionStaging.chapter_no, ExtractionStaging.status)
+                .where(ExtractionStaging.source_id == SID)
+                .where(ExtractionStaging.chapter_no.in_([1, 3]))
+            )
+            remaining_rows = {(r[0], r[1]) for r in remaining.all()}
+            assert (1, StagingStatus.MERGED) in remaining_rows, "第1章不应被影响"
+            assert (3, StagingStatus.FAILED) in remaining_rows, "第3章不应被影响"
+    asyncio.run(_run())
+
+
+def test_status_returns_current_chapter_and_last_error():
+    """状态接口包含新增字段 current_chapter_no / last_error / pending_count。"""
+    PID = "00000000-0000-0000-0000-000000000011"
+    SID = "00000000-0000-0000-0000-000000000012"
+    async def _run():
+        async with test_session_factory() as session:
+            job = await _seed_job_and_chapters(session, n_chapters=5, status="BATCH_DONE", pid=PID, sid=SID)
+            job.current_chapter_no = 3
+            job.last_error = "测试错误信息"
+            job.extracted_count = 2
+            await session.flush()
+
+            from services.extraction_service import get_latest_job_status
+            status = await get_latest_job_status(session, PID, SID)
+            assert status is not None
+            assert status["current_chapter_no"] == 3
+            assert status["last_error"] == "测试错误信息"
+            assert "last_run_started_at" in status
+            assert "last_run_finished_at" in status
+    asyncio.run(_run())
