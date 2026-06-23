@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { api, type ExtractionFailure } from '../api/client'
+import { api, type ExtractionFailure, type CharacterAppearanceItem } from '../api/client'
 import { friendlyError, useUiStore } from '../stores'
 
 const props = defineProps<{
@@ -444,6 +444,30 @@ async function saveEdit() {
   }
 }
 
+// ── 人物出场记录 ──
+const appearanceChar = ref<{ id: string; name: string } | null>(null)
+const appearances = ref<CharacterAppearanceItem[]>([])
+const appearanceLoading = ref(false)
+
+async function loadAppearances(char: { id: string; name: string }) {
+  appearanceChar.value = char
+  appearanceLoading.value = true
+  appearances.value = []
+  try {
+    const r = await api.listCharacterAppearances(props.projectId, char.id, 100)
+    appearances.value = r.items
+  } catch {
+    // 静默
+  } finally {
+    appearanceLoading.value = false
+  }
+}
+
+function closeAppearances() {
+  appearanceChar.value = null
+  appearances.value = []
+}
+
 async function deleteRecord(item: Record<string, any>) {
   if (!confirm(`确认删除「${item.name || item.ability_name || item.event_title || item.rule_text || ''}」？`)) return
   try {
@@ -499,7 +523,7 @@ function priorityLabel(p: string) {
       </div>
 
       <div v-if="status?.current_chapter_no" class="current-chapter">
-        正在处理第 {{ status.current_chapter_no }} 章
+        {{ status.status === 'RUNNING' ? '正在处理' : '上次处理' }}第 {{ status.current_chapter_no }} 章
       </div>
 
       <div v-if="status && status.total_chapters" class="progress-bar">
@@ -615,6 +639,7 @@ function priorityLabel(p: string) {
               <span class="badge" :class="c.canon_level">{{ c.canon_level }}</span>
               <span class="confidence">置信度 {{ (c.confidence * 100).toFixed(0) }}%</span>
               <span class="item-actions">
+                <button class="btn-icon" title="查看出场记录" @click="loadAppearances(c)">📋</button>
                 <button class="btn-icon" title="编辑" @click="openEdit(c)">✏️</button>
                 <button class="btn-icon" title="删除" @click="deleteRecord(c)">🗑️</button>
               </span>
@@ -622,7 +647,12 @@ function priorityLabel(p: string) {
             <div v-if="c.identity_desc" class="item-field">身份：{{ c.identity_desc }}</div>
             <div v-if="c.status_desc" class="item-field">状态：{{ c.status_desc }}</div>
             <div v-if="c.aliases?.length" class="item-field">别名：{{ c.aliases.join('、') }}</div>
-            <div v-if="c.evidence?.length" class="item-evidence">证据：{{ c.evidence[0] }}</div>
+            <div v-if="c.appearance_count" class="item-stats">
+              <span v-if="c.first_seen_chapter">首次：第{{ c.first_seen_chapter }}章</span>
+              <span v-if="c.last_seen_chapter">最近：第{{ c.last_seen_chapter }}章</span>
+              <span>出场：{{ c.appearance_count }}次</span>
+            </div>
+            <div v-if="c.evidence?.length" class="item-evidence">关键证据：{{ c.evidence[0] }}</div>
           </div>
         </template>
 
@@ -740,6 +770,28 @@ function priorityLabel(p: string) {
         </div>
       </div>
     </div>
+
+    <!-- 出场记录面板 -->
+    <div v-if="appearanceChar" class="edit-modal-overlay" @click.self="closeAppearances">
+      <div class="edit-modal">
+        <h4>{{ appearanceChar.name }} 的出场记录（{{ appearances.length }}）</h4>
+        <div v-if="appearanceLoading" class="loading-hint">加载中...</div>
+        <div v-else-if="appearances.length === 0" class="loading-hint">暂无出场记录</div>
+        <div v-else class="appearance-list">
+          <div v-for="a in appearances" :key="a.chapter_no" class="appearance-item">
+            <div class="appearance-header">
+              <span class="appearance-chapter">第{{ a.chapter_no }}章 {{ a.chapter_title || '' }}</span>
+              <span class="appearance-importance">重要度 {{ a.importance }}</span>
+            </div>
+            <div v-if="a.summary" class="appearance-summary">{{ a.summary }}</div>
+            <div class="appearance-evidence">{{ a.evidence_text }}</div>
+          </div>
+        </div>
+        <div class="edit-actions">
+          <button class="btn-sm" @click="closeAppearances">关闭</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -832,4 +884,13 @@ function priorityLabel(p: string) {
 .edit-field input, .edit-field textarea { width: 100%; padding: 6px 8px; font-size: 13px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); box-sizing: border-box; }
 .edit-field textarea { resize: vertical; }
 .edit-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+.item-stats { display: flex; gap: 12px; font-size: 12px; color: var(--text-soft); margin: 4px 0; }
+.appearance-list { max-height: 400px; overflow-y: auto; }
+.appearance-item { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.appearance-header { display: flex; justify-content: space-between; font-size: 13px; }
+.appearance-chapter { font-weight: 500; }
+.appearance-importance { font-size: 11px; color: var(--text-soft); }
+.appearance-summary { font-size: 12px; color: var(--text); margin: 2px 0; }
+.appearance-evidence { font-size: 12px; color: var(--text-soft); margin-top: 2px; }
+.loading-hint { text-align: center; padding: 20px; color: var(--text-soft); }
 </style>

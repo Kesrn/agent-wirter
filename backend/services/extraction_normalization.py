@@ -30,6 +30,37 @@ def normalize_character_name(name: str) -> tuple[str, list[str]]:
     return name, []
 
 
+# ── 身份/状态描述归一（用于判断是否"实质变化"） ─────────────
+
+import re as _re
+
+# 身份描述里常见的前缀/修饰噪声：班级编号、强调性短语
+_DESC_NOISE_PATTERNS = [
+    _re.compile(r"[0-9一二三四五六七八九十百]+班"),
+    _re.compile(r"，[^，]*重要性"),
+    _re.compile(r"，?强调[^，]*"),
+    _re.compile(r"，?仅提及"),
+    _re.compile(r"，?曾想[^，]*"),
+]
+
+
+def core_desc_token(desc: str | None) -> str:
+    """把身份/状态描述归一为"核心 token"，用于判断是否实质变化。
+
+    去掉班级编号、强调性后缀等噪声，只保留核心角色词。
+    例如："8班班主任" / "班主任，强调冥修重要性" / "班主任" → "班主任"
+    这样同一身份的不同重述不会被判成"身份变化"，避免 evidence 膨胀。
+    """
+    if not desc:
+        return ""
+    s = desc.strip()
+    for pat in _DESC_NOISE_PATTERNS:
+        s = pat.sub("", s)
+    # 去掉分隔符和空白，取剩余核心
+    s = s.strip("，,。.、 ")
+    return s
+
+
 # ── 能力 evidence 绑定校验 ─────────────────────────────────
 
 # 明确的拥有/使用动作词：evidence 中出现 [人物]+[动作] 才算绑定

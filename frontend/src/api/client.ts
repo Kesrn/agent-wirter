@@ -193,6 +193,12 @@ export type ExtractionFailure = {
   error_message: string | null; updated_at: string | null;
 }
 
+export type CharacterAppearanceItem = {
+  chapter_no: number; chapter_title: string | null;
+  summary: string | null; evidence_text: string;
+  importance: number; confidence: number;
+}
+
 export const api = {
   // ─── Auth ───
   login: (data: LoginRequest) =>
@@ -692,6 +698,12 @@ export const api = {
   deleteStructuredRecord: (projectId: string, table: string, recordId: string) =>
     request<{ id: string; deleted: boolean; table: string }>(
       `/projects/${projectId}/knowledge/structured/${table}/${recordId}`, { method: 'DELETE' },
+    ),
+
+  // 人物出场记录
+  listCharacterAppearances: (projectId: string, characterId: string, limit = 50, offset = 0) =>
+    request<{ items: CharacterAppearanceItem[]; total: number; offset: number; limit: number }>(
+      `/projects/${projectId}/knowledge/structured/characters/${characterId}/appearances?limit=${limit}&offset=${offset}`,
     ),
 
   // ─── Document Versions ───

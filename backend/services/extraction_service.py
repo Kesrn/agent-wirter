@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.extraction_pipeline import ProjectSourceChapter, ExtractionJob, ExtractionStaging
 from models.structured_knowledge import (
-    CharacterProfile, AbilityProfile, EventTimeline, WorldRule,
+    CharacterProfile, AbilityProfile, EventTimeline, WorldRule, CharacterAppearance,
 )
 from services.extraction_schema import (
     AbilityItem, AbilityStatus, AbilityType, ChapterExtraction, build_extraction_user_prompt,
@@ -179,20 +179,20 @@ async def advance_extraction_job(
     # 还有未处理章节 = 全书范围内已处理数 < 总章数
     has_more_chapters = job_obj.extracted_count < total_in_range
 
-    if pending == 0:
-        all_failed = job_obj.merged_count == 0 and job_obj.failed_count > 0
-        has_failures = job_obj.failed_count > 0
+    all_failed = job_obj.merged_count == 0 and job_obj.failed_count > 0
+    has_failures = job_obj.failed_count > 0
 
-        if reached_range and not has_more_chapters:
-            # 全书范围内章节全部处理完 → 真正完成
-            job_obj.status = JobStatus.FAILED if all_failed else (
-                JobStatus.PARTIAL_FAILED if has_failures else JobStatus.COMPLETED
-            )
-            job_obj.finished_at = datetime.now(timezone.utc)
-        else:
-            # 本批处理完但全书还有未处理章节 → 批次完成，可继续推进
-            # 不设 finished_at（任务未真正结束）
-            job_obj.status = JobStatus.BATCH_DONE
+    if pending == 0 and reached_range and not has_more_chapters:
+        # 全书范围内章节全部处理完 → 真正完成
+        job_obj.status = JobStatus.FAILED if all_failed else (
+            JobStatus.PARTIAL_FAILED if has_failures else JobStatus.COMPLETED
+        )
+        job_obj.finished_at = datetime.now(timezone.utc)
+    else:
+        # 本次 HTTP 推进已经结束。即便本章进入 RETRYING/VALIDATION_FAILED 等
+        # 非终态，也不能继续停留在 RUNNING，否则前端会误以为仍有请求在后台执行。
+        # 下次 /extract 会重新选择这些非终态章节继续处理。
+        job_obj.status = JobStatus.BATCH_DONE
 
     # ── 批次 summary 日志：汇总本批推进结果，便于真实 LLM 下定位问题 ──
     processed_chapters = chapters_to_process[:chapters_this_advance]
@@ -799,7 +799,7 @@ async def _merge_extraction(
             char = char.model_copy(update={"name": canonical_name, "aliases": merged_aliases})
         elif alias_variants and merged_aliases != (char.aliases or []):
             char = char.model_copy(update={"aliases": merged_aliases})
-        await _merge_character(db, pid, sid, char, canon_level, origin, source_priority)
+        await _merge_character(db, pid, sid, chapter_no, chapter.chapter_title, char, canon_level, origin, source_priority)
 
     # 2. ability_profile（evidence 绑定校验 + 人物名归一）
     for ability in extraction.abilities:
@@ -846,56 +846,159 @@ async def _merge_extraction(
         await _merge_world_rule(db, pid, sid, chapter_no, rule, canon_level, origin, source_priority)
 
 
+MAX_CHARACTER_PROFILE_EVIDENCE = 20
+
+
+def _append_limited_evidence(existing: list | None, new_item: str | None,
+                               max_items: int = MAX_CHARACTER_PROFILE_EVIDENCE) -> list:
+    """追加 evidence 但限制上限：保留前 10 + 最近 10 条关键证据。"""
+    if not new_item:
+        return list(existing or [])
+    items = list(existing or [])
+    if new_item in items:
+        return items
+    items.append(new_item)
+    if len(items) > max_items:
+        items = items[:10] + items[-(max_items - 10):]
+    return items
+
+
 async def _merge_character(
-    db: AsyncSession, pid: str, sid: str, char, canon_level: str, origin: str, priority: int,
+    db: AsyncSession, pid: str, sid: str, chapter_no: int,
+    chapter_title: str | None, char, canon_level: str, origin: str, priority: int,
 ) -> None:
-    """合并人物：UNIQUE(project_id, name)。
-    存在则追加 aliases/evidence，identity 为空才填充，confidence 取较高。
+    """合并人物：一人一档 + 章节出场记录。
+
+    - CharacterProfile 按 canonical name 去重，只保存稳定身份/状态/别名/关键证据。
+    - CharacterAppearance 每章每人物一条（upsert），保存普通出场证据。
+    - 普通出场不追加到 profile.evidence（限制 evidence 上限）。
     """
+    from services.extraction_normalization import normalize_character_name, core_desc_token
+    canonical_name, alias_variants = normalize_character_name(char.name)
+    # 查找已有档案（按 canonical name）
     result = await db.execute(
         select(CharacterProfile)
         .where(CharacterProfile.project_id == pid)
-        .where(CharacterProfile.name == char.name)
+        .where(CharacterProfile.name == canonical_name)
     )
     existing = result.scalar_one_or_none()
+
+    # 判断是否为"信息变化"（身份/状态/别名）→ 才更新 profile
+    # 用核心 token 归一后比较，避免"8班班主任"/"班主任，强调冥修重要性"
+    # 这类同一身份的不同重述被误判成变化、导致 evidence 膨胀。
+    has_new_alias = bool(alias_variants) and any(
+        a not in (existing.aliases or []) for a in alias_variants
+    ) if existing else bool(alias_variants)
+    is_important = getattr(char, 'importance', 2) >= 4
+    new_identity_core = core_desc_token(char.identity)
+    has_identity_change = bool(new_identity_core) and (
+        not existing
+        or not core_desc_token(existing.identity_desc)
+        or (new_identity_core != core_desc_token(existing.identity_desc)
+            and (priority > existing.source_priority
+                 or (priority >= existing.source_priority and is_important)))
+    ) if existing else bool(new_identity_core)
+    new_status_core = core_desc_token(char.status)
+    has_status_change = bool(new_status_core) and (
+        not existing
+        or (new_status_core != core_desc_token(existing.status_desc)
+            and priority > existing.source_priority)
+        or (new_status_core != core_desc_token(existing.status_desc)
+            and priority >= existing.source_priority
+            and (core_desc_token(existing.status_desc) == "" or is_important))
+    ) if existing else bool(new_status_core)
+
     if existing is None:
-        db.add(CharacterProfile(
-            project_id=pid, source_id=sid, name=char.name,
-            aliases=list(char.aliases) if char.aliases else [],
+        # 新人物首次出现
+        existing = CharacterProfile(
+            project_id=pid, source_id=sid, name=canonical_name,
+            aliases=list(dict.fromkeys(list(char.aliases or []) + alias_variants)),
             identity_desc=char.identity or None,
             status_desc=char.status or None,
             canon_level=canon_level, origin=origin,
             source_priority=priority, confidence=char.confidence,
-            evidence=[char.evidence],
-        ))
+            evidence=[char.evidence] if char.evidence else [],
+            first_seen_chapter=chapter_no,
+            last_seen_chapter=chapter_no,
+            appearance_count=0,
+        )
+        db.add(existing)
+        await db.flush()
     else:
-        # 优先级判断：低优先级来源不覆盖高优先级已有字段（manual > fanfic > original）
+        # 已有档案：只在信息变化时更新
         new_higher = priority > existing.source_priority
-        same_or_higher = priority >= existing.source_priority
-        # aliases 总是追加去重（补充信息不冲突）
-        if char.aliases:
+        if has_new_alias and char.aliases:
             existing_aliases = set(existing.aliases or [])
-            existing.aliases = list(existing_aliases | set(char.aliases))
-        # identity：为空才填充，或新来源优先级更高才覆盖
-        if char.identity:
-            if not existing.identity_desc or new_higher:
+            existing.aliases = list(existing_aliases | set(char.aliases) | set(alias_variants))
+        elif has_new_alias and alias_variants:
+            existing_aliases = set(existing.aliases or [])
+            existing.aliases = list(existing_aliases | set(alias_variants))
+        if has_identity_change and char.identity:
+            if not existing.identity_desc or new_higher or (priority >= existing.source_priority and is_important):
                 existing.identity_desc = char.identity
-        # status：新来源优先级更高才覆盖；同优先级追加最新状态摘要
-        if char.status:
+        if has_status_change and char.status:
             if new_higher:
                 existing.status_desc = char.status
-            elif same_or_higher and existing.status_desc != char.status:
+            elif priority >= existing.source_priority and existing.status_desc != char.status and (
+                not core_desc_token(existing.status_desc) or is_important
+            ):
                 existing.status_desc = char.status
-        # evidence 追加去重（所有来源都补充证据）
-        if char.evidence and char.evidence not in (existing.evidence or []):
-            existing.evidence = (existing.evidence or []) + [char.evidence]
-        # 更新来源元数据（若新优先级更高）
+        # evidence 只在"重要信息变化"时追加，且有上限。
+        # 注意：不再仅凭 has_status_change 追加——每章的临时状态
+        # （高兴/活/仅提及）本质多变，会膨胀 evidence。实质状态变化
+        # （如未觉醒→觉醒）伴随 importance>=4 章节，已被 is_important 覆盖。
+        if (is_important or has_identity_change) and char.evidence:
+            existing.evidence = _append_limited_evidence(existing.evidence, char.evidence)
         if new_higher:
             existing.canon_level = canon_level
             existing.origin = origin
             existing.source_priority = priority
-        # confidence 取较高
         existing.confidence = max(existing.confidence, char.confidence)
+
+    # ── 写入/更新 CharacterAppearance ──
+    app_result = await db.execute(
+        select(CharacterAppearance)
+        .where(CharacterAppearance.project_id == pid)
+        .where(CharacterAppearance.source_id == sid)
+        .where(CharacterAppearance.chapter_no == chapter_no)
+        .where(CharacterAppearance.canonical_name == canonical_name)
+    )
+    appearance = app_result.scalar_one_or_none()
+    if appearance is None:
+        db.add(CharacterAppearance(
+            project_id=pid, source_id=sid,
+            character_id=str(existing.id),
+            character_name=char.name,
+            canonical_name=canonical_name,
+            chapter_no=chapter_no,
+            chapter_title=chapter_title,
+            summary=(char.identity or char.status or None),
+            evidence_text=char.evidence or '',
+            importance=getattr(char, 'importance', 2),
+            confidence=char.confidence,
+            origin=origin, canon_level=canon_level,
+        ))
+    else:
+        appearance.summary = char.identity or char.status or appearance.summary
+        appearance.evidence_text = char.evidence or appearance.evidence_text
+        appearance.confidence = max(appearance.confidence, char.confidence)
+        appearance.importance = max(appearance.importance, getattr(char, 'importance', 2))
+        appearance.character_id = str(existing.id)
+
+    # ── 刷新人物统计字段 ──
+    count_result = await db.execute(
+        select(func.count(CharacterAppearance.id))
+        .where(CharacterAppearance.project_id == pid)
+        .where(CharacterAppearance.source_id == sid)
+        .where(CharacterAppearance.canonical_name == canonical_name)
+    )
+    existing.appearance_count = count_result.scalar() or 0
+    existing.first_seen_chapter = min(
+        existing.first_seen_chapter or chapter_no, chapter_no
+    )
+    existing.last_seen_chapter = max(
+        existing.last_seen_chapter or chapter_no, chapter_no
+    )
 
 
 async def _merge_ability(
@@ -1043,6 +1146,7 @@ async def reset_extraction(db: AsyncSession, project_id: str, source_id: str) ->
     deleted_abilities = await _count(AbilityProfile)
     deleted_events = await _count(EventTimeline)
     deleted_rules = await _count(WorldRule)
+    deleted_appearances = await _count(CharacterAppearance)
 
     # 按依赖顺序删除（限定 project_id + source_id，避免跨项目误删）
     await db.execute(delete(ExtractionStaging)
@@ -1051,6 +1155,9 @@ async def reset_extraction(db: AsyncSession, project_id: str, source_id: str) ->
     await db.execute(delete(ExtractionJob)
                      .where(ExtractionJob.project_id == pid)
                      .where(ExtractionJob.source_id == sid))
+    await db.execute(delete(CharacterAppearance)
+                     .where(CharacterAppearance.project_id == pid)
+                     .where(CharacterAppearance.source_id == sid))
     await db.execute(delete(CharacterProfile)
                      .where(CharacterProfile.project_id == pid)
                      .where(CharacterProfile.source_id == sid))
@@ -1300,6 +1407,46 @@ async def retry_extraction_chapter(
         "job_id": job["id"],
         "error_message": staging.error_message if staging else None,
     }
+
+
+async def list_character_appearances(
+    db: AsyncSession, project_id: str, character_id: str,
+    limit: int = 50, offset: int = 0,
+) -> dict:
+    """列出人物出场记录（按章节排序，支持分页）。"""
+    pid = str(project_id)
+    cid = str(character_id)
+    limit = min(max(limit, 1), 200)
+    offset = max(offset, 0)
+
+    count_result = await db.execute(
+        select(func.count(CharacterAppearance.id))
+        .where(CharacterAppearance.project_id == pid)
+        .where(CharacterAppearance.character_id == cid)
+    )
+    total = count_result.scalar() or 0
+
+    result = await db.execute(
+        select(CharacterAppearance)
+        .where(CharacterAppearance.project_id == pid)
+        .where(CharacterAppearance.character_id == cid)
+        .order_by(CharacterAppearance.chapter_no.asc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = result.scalars().all()
+    items = [
+        {
+            "chapter_no": r.chapter_no,
+            "chapter_title": r.chapter_title,
+            "summary": r.summary,
+            "evidence_text": r.evidence_text,
+            "importance": r.importance,
+            "confidence": r.confidence,
+        }
+        for r in rows
+    ]
+    return {"items": items, "total": total, "offset": offset, "limit": limit}
 
 
 def _compute_last_run_outcome(merged: int, failed: int, extracted: int) -> str:

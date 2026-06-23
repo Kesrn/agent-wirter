@@ -21,7 +21,7 @@ from models.extraction_pipeline import (
     ProjectSourceChapter, ExtractionJob, ExtractionStaging,
 )
 from models.structured_knowledge import (
-    CharacterProfile, AbilityProfile, EventTimeline, WorldRule,
+    CharacterProfile, AbilityProfile, EventTimeline, WorldRule, CharacterAppearance,
 )
 from models.project_knowledge_fact import ProjectKnowledgeFact
 from services.extraction_schema import (
@@ -830,7 +830,7 @@ def test_merge_priority_low_does_not_overwrite_high():
                 name="莫凡", identity="用户设定的法师身份", status="用户设定状态",
                 importance=5, confidence=1.0, evidence="用户手动设定",
             )
-            await _merge_character(session, pid, sid, char_manual,
+            await _merge_character(session, pid, sid, 1, "第1章", char_manual,
                                    "manual", "manual", CANON_PRIORITY["manual"])
             await session.flush()
 
@@ -839,7 +839,7 @@ def test_merge_priority_low_does_not_overwrite_high():
                 name="莫凡", identity="LLM抽取的不同身份", status="LLM抽取状态",
                 importance=3, confidence=0.8, evidence="原文证据",
             )
-            await _merge_character(session, pid, sid, char_original,
+            await _merge_character(session, pid, sid, 2, "第2章", char_original,
                                    "original", "llm_extracted", CANON_PRIORITY["original"])
             await session.flush()
 
@@ -1263,6 +1263,9 @@ def test_job_not_completed_when_retrying_pending():
     status = client.get(
         f"/api/projects/{pid}/knowledge/sources/{sid}/extract/status", headers=headers,
     ).json()
+    assert status["status"] == JobStatus.BATCH_DONE, (
+        f"RETRYING 待重试时本次请求已结束，应回到 BATCH_DONE 允许继续，实际: {status['status']}"
+    )
     assert status["status"] != JobStatus.COMPLETED, (
         f"存在 RETRYING 悬空态时不应 COMPLETED，实际: {status['status']}"
     )
@@ -2323,4 +2326,298 @@ def test_status_returns_current_chapter_and_last_error():
             assert status["last_error"] == "测试错误信息"
             assert "last_run_started_at" in status
             assert "last_run_finished_at" in status
+    asyncio.run(_run())
+
+
+# ── 人物档案去重与章节出场记录 ──
+
+async def _seed_character_extraction(session, pid, sid, chapter_no, name, identity="", status="",
+                                      evidence="出现证据", importance=3, confidence=0.9):
+    """模拟一章抽取到的人物，直接 merge 到正式库。"""
+    from services.extraction_schema import CharacterItem
+    from services.extraction_service import _merge_character
+    char = CharacterItem(
+        name=name, aliases=[], identity=identity or "", status=status or "",
+        importance=importance, confidence=confidence, evidence=evidence,
+    )
+    await _merge_character(session, pid, sid, chapter_no, f"第{chapter_no}章", char,
+                           "original", "llm_extracted", 60)
+
+
+def test_character_profile_dedup_across_chapters():
+    """连续两章抽到同一人物，profile 只有 1 条，appearance 有 2 条。"""
+    PID = "00000000-0000-0000-0000-000000000010"
+    SID = "00000000-0000-0000-0000-000000000020"
+    async def _run():
+        async with test_session_factory() as session:
+            await _seed_character_extraction(session, PID, SID, 1, "莫凡", identity="主角")
+            await _seed_character_extraction(session, PID, SID, 2, "莫凡", identity="主角")
+            await session.commit()
+
+            from sqlalchemy import select
+            profiles = (await session.execute(
+                select(CharacterProfile).where(CharacterProfile.project_id == PID)
+            )).scalars().all()
+            assert len(profiles) == 1, f"应只有1条profile, 实际{len(profiles)}"
+
+            appearances = (await session.execute(
+                select(CharacterAppearance)
+                .where(CharacterAppearance.project_id == PID)
+                .where(CharacterAppearance.canonical_name == "莫凡")
+            )).scalars().all()
+            assert len(appearances) == 2, f"应有2条appearance, 实际{len(appearances)}"
+    asyncio.run(_run())
+
+
+def test_character_profile_evidence_limited():
+    """连续多章普通出场，profile evidence 不超过上限。"""
+    PID = "00000000-0000-0000-0000-000000000030"
+    SID = "00000000-0000-0000-0000-000000000040"
+    async def _run():
+        async with test_session_factory() as session:
+            # 25 章普通出场（importance=2，非重要）
+            for ch in range(1, 26):
+                await _seed_character_extraction(
+                    session, PID, SID, ch, "路人甲",
+                    evidence=f"第{ch}章普通出场", importance=2,
+                )
+            await session.commit()
+
+            from sqlalchemy import select
+            profile = (await session.execute(
+                select(CharacterProfile)
+                .where(CharacterProfile.project_id == PID)
+                .where(CharacterProfile.name == "路人甲")
+            )).scalar_one()
+            # evidence 不应无限增长（普通出场不追加）
+            assert len(profile.evidence or []) <= 20, f"evidence应限制, 实际{len(profile.evidence or [])}"
+            # appearance 应有 25 条
+            appearances = (await session.execute(
+                select(CharacterAppearance).where(CharacterAppearance.project_id == PID)
+            )).scalars().all()
+            assert len(appearances) == 25, f"appearance应有25条, 实际{len(appearances)}"
+    asyncio.run(_run())
+
+
+def test_character_profile_evidence_not_polluted_by_repeated_identity():
+    """同一身份的普通重述不应被当成"状态变化"追加 evidence 到 profile。
+
+    复刻真实 DeepSeek 的薛木生 bug：
+      ch4: identity="天澜高中魔法导师、班主任", importance=4  (首次，进 profile)
+      ch5/7/15/21/23: identity 变体如"8班班主任"/"班主任，强调冥修重要性",
+                      importance=2 (普通出场，不应进 profile.evidence)
+
+    旧 bug：status_desc 字符串不等 → has_status_change=True → evidence 全部追加，
+    导致 14 次出场 / 14 条 evidence（但只有 1 次 importance>=4）。
+    期望：profile.evidence 只含首次（或关键）的，普通重述不追加。
+    """
+    PID = "00000000-0000-0000-0000-000000000070"
+    SID = "00000000-0000-0000-0000-000000000080"
+    async def _run():
+        async with test_session_factory() as session:
+            # 首次：重要出场，带核心身份
+            await _seed_character_extraction(
+                session, PID, SID, 4, "薛木生",
+                identity="天澜高中魔法导师、班主任",
+                status="主持觉醒仪式，评价学生天赋",
+                importance=4, evidence="导师-薛木生站在班级前列",
+            )
+            # 后续 5 章：同身份的不同重述 + 每章不同临时状态（复刻真实 LLM 输出）
+            # 这些都是"班主任"这一身份的不同措辞、每章的临时状态，
+            # 不是实质身份/状态变化，evidence 不应进 profile
+            restatements = [
+                (5, "8班班主任", "高兴，认为捡到宝", "班主任薛木生心里很开心"),
+                (7, "8班班主任", "主持觉醒", "班主任薛木生语气平和的说道"),
+                (15, "班主任，强调冥修重要性", "仅提及", "薛木生强调冥修"),
+                (21, "八班班主任", "活", "薛木生点名"),
+                (23, "班主任", "曾想内定莫凡为除名对象", "薛木生巡视"),
+            ]
+            for ch, ident, status, ev in restatements:
+                await _seed_character_extraction(
+                    session, PID, SID, ch, "薛木生",
+                    identity=ident, status=status, importance=2, evidence=ev,
+                )
+            await session.commit()
+
+            from sqlalchemy import select
+            profile = (await session.execute(
+                select(CharacterProfile)
+                .where(CharacterProfile.project_id == PID)
+                .where(CharacterProfile.name == "薛木生")
+            )).scalar_one()
+            ev_list = profile.evidence or []
+            # 6 次出场，但只首次是 importance>=4 的关键证据，其余是身份重述
+            # 期望 profile.evidence 远小于 6（普通重述不追加）
+            assert len(ev_list) <= 2, (
+                f"普通身份重述不应全部进 profile.evidence，实际 {len(ev_list)} 条: {ev_list}"
+            )
+            # appearance 应记录全部 6 次
+            apps = (await session.execute(
+                select(CharacterAppearance).where(CharacterAppearance.project_id == PID)
+            )).scalars().all()
+            assert len(apps) == 6, f"appearance 应有 6 条，实际 {len(apps)}"
+    asyncio.run(_run())
+
+
+def test_character_profile_evidence_keeps_substantive_identity_change():
+    """实质身份变化（不是重述）仍应进 profile.evidence。
+
+    场景：ch1 identity="学生"，ch5 identity="觉醒魔法师"（实质升级，非重述）。
+    期望：profile.evidence 含两条（首次 + 实质变化），不是只 1 条。
+    这是上一个测试的镜像，确保收紧不会误伤真实变化。
+    """
+    PID = "00000000-0000-0000-0000-0000000000b1"
+    SID = "00000000-0000-0000-0000-0000000000b2"
+    async def _run():
+        async with test_session_factory() as session:
+            await _seed_character_extraction(
+                session, PID, SID, 1, "李四",
+                identity="天澜高中学生", status="未觉醒",
+                importance=4, evidence="李四是个普通学生",
+            )
+            # 普通重述（不应追加）
+            await _seed_character_extraction(
+                session, PID, SID, 3, "李四",
+                identity="学生", status="上课",
+                importance=2, evidence="李四在上课",
+            )
+            # 实质身份变化：学生 → 觉醒法师
+            await _seed_character_extraction(
+                session, PID, SID, 5, "李四",
+                identity="火系觉醒法师", status="觉醒火系",
+                importance=5, evidence="李四觉醒了火系",
+            )
+            await session.commit()
+
+            from sqlalchemy import select
+            profile = (await session.execute(
+                select(CharacterProfile)
+                .where(CharacterProfile.project_id == PID)
+                .where(CharacterProfile.name == "李四")
+            )).scalar_one()
+            ev_list = profile.evidence or []
+            # 首次 + 实质变化 = 2 条；普通重述（ch3）不追加
+            assert len(ev_list) == 2, (
+                f"首次+实质变化应2条，普通重述不追加。实际 {len(ev_list)}: {ev_list}"
+            )
+            assert profile.identity_desc == "火系觉醒法师"
+            assert profile.status_desc == "觉醒火系"
+            assert "普通学生" in ev_list[0]
+    asyncio.run(_run())
+
+
+def test_character_appearance_upsert_same_chapter():
+    """同一章重复抽到同一人物，appearance 只有 1 条。"""
+    PID = "00000000-0000-0000-0000-000000000050"
+    SID = "00000000-0000-0000-0000-000000000060"
+    async def _run():
+        async with test_session_factory() as session:
+            await _seed_character_extraction(session, PID, SID, 5, "重复角色", evidence="第一次")
+            await _seed_character_extraction(session, PID, SID, 5, "重复角色", evidence="第二次")
+            await session.commit()
+
+            from sqlalchemy import select
+            appearances = (await session.execute(
+                select(CharacterAppearance)
+                .where(CharacterAppearance.project_id == PID)
+                .where(CharacterAppearance.chapter_no == 5)
+            )).scalars().all()
+            assert len(appearances) == 1, f"同一章应只有1条appearance, 实际{len(appearances)}"
+    asyncio.run(_run())
+
+
+def test_character_profile_seen_stats():
+    """first_seen / last_seen / appearance_count 正确。"""
+    PID = "00000000-0000-0000-0000-000000000070"
+    SID = "00000000-0000-0000-0000-000000000080"
+    async def _run():
+        async with test_session_factory() as session:
+            await _seed_character_extraction(session, PID, SID, 3, "统计角色")
+            await _seed_character_extraction(session, PID, SID, 7, "统计角色")
+            await _seed_character_extraction(session, PID, SID, 12, "统计角色")
+            await session.commit()
+
+            from sqlalchemy import select
+            profile = (await session.execute(
+                select(CharacterProfile)
+                .where(CharacterProfile.project_id == PID)
+                .where(CharacterProfile.name == "统计角色")
+            )).scalar_one()
+            assert profile.first_seen_chapter == 3, f"first_seen={profile.first_seen_chapter}"
+            assert profile.last_seen_chapter == 12, f"last_seen={profile.last_seen_chapter}"
+            assert profile.appearance_count == 3, f"count={profile.appearance_count}"
+    asyncio.run(_run())
+
+
+def test_reset_extraction_clears_character_appearances():
+    """reset 后 appearance 归零。"""
+    PID = "00000000-0000-0000-0000-000000000090"
+    SID = "00000000-0000-0000-0000-000000000091"
+    async def _run():
+        async with test_session_factory() as session:
+            await _seed_character_extraction(session, PID, SID, 1, "待清理角色")
+            await session.commit()
+
+            from services.extraction_service import reset_extraction
+            from sqlalchemy import select, func
+            await reset_extraction(session, PID, SID)
+
+            count = (await session.execute(
+                select(func.count(CharacterAppearance.id))
+                .where(CharacterAppearance.project_id == PID)
+            )).scalar()
+            assert count == 0, f"reset后appearance应归零, 实际{count}"
+    asyncio.run(_run())
+
+
+def test_delete_source_removes_character_appearances():
+    """删除 source 后 appearance 归零。"""
+    PID = "00000000-0000-0000-0000-0000000000a2"
+    SID = "00000000-0000-0000-0000-0000000000a3"
+    async def _run():
+        async with test_session_factory() as session:
+            await _seed_character_extraction(session, PID, SID, 1, "删源角色")
+            await session.commit()
+
+            # 直接删 source 关联的 appearance（模拟 delete_knowledge_source 的清理逻辑）
+            from sqlalchemy import delete, select, func
+            await session.execute(
+                delete(CharacterAppearance)
+                .where(CharacterAppearance.source_id == SID)
+                .where(CharacterAppearance.project_id == PID)
+            )
+            await session.commit()
+
+            count = (await session.execute(
+                select(func.count(CharacterAppearance.id))
+                .where(CharacterAppearance.project_id == PID)
+                .where(CharacterAppearance.source_id == SID)
+            )).scalar()
+            assert count == 0, f"删source后appearance应归零, 实际{count}"
+    asyncio.run(_run())
+
+
+def test_character_appearances_api():
+    """人物出场接口返回正确章节列表。"""
+    PID = "00000000-0000-0000-0000-0000000000a4"
+    SID = "00000000-0000-0000-0000-0000000000a5"
+    async def _run():
+        async with test_session_factory() as session:
+            await _seed_character_extraction(session, PID, SID, 1, "API角色", evidence="第1章出场")
+            await _seed_character_extraction(session, PID, SID, 3, "API角色", evidence="第3章出场")
+            await session.commit()
+
+            from sqlalchemy import select
+            profile = (await session.execute(
+                select(CharacterProfile)
+                .where(CharacterProfile.project_id == PID)
+                .where(CharacterProfile.name == "API角色")
+            )).scalar_one()
+
+            from services.extraction_service import list_character_appearances
+            result = await list_character_appearances(session, PID, str(profile.id))
+            assert result["total"] == 2
+            nos = [it["chapter_no"] for it in result["items"]]
+            assert nos == [1, 3], f"章节顺序应升序, 实际{nos}"
+            assert result["items"][0]["evidence_text"] == "第1章出场"
     asyncio.run(_run())

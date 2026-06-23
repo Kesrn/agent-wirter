@@ -37,7 +37,7 @@ from models.project_knowledge_fact import ProjectKnowledgeFact
 from models.knowledge_qa_session import KnowledgeQaSession
 from models.knowledge_qa_message import KnowledgeQaMessage
 from models.structured_knowledge import (
-    CharacterProfile, AbilityProfile, EventTimeline, WorldRule,
+    CharacterProfile, AbilityProfile, EventTimeline, WorldRule, CharacterAppearance,
 )
 from schemas.api import (
     ProjectCreate, ProjectUpdate, ProjectResponse,
@@ -373,6 +373,7 @@ async def _delete_project_tree(project_id: uuid.UUID, db: AsyncSession) -> None:
     await db.execute(delete(KnowledgeQaMessage).where(KnowledgeQaMessage.project_id == project_id))
     await db.execute(delete(ProjectSourceChunk).where(ProjectSourceChunk.project_id == project_id))
     await db.execute(delete(ProjectKnowledgeFact).where(ProjectKnowledgeFact.project_id == project_id))
+    await db.execute(delete(CharacterAppearance).where(CharacterAppearance.project_id == project_id))
     await db.execute(delete(KnowledgeQaSession).where(KnowledgeQaSession.project_id == project_id))
     await db.execute(delete(ProjectSource).where(ProjectSource.project_id == project_id))
     await db.execute(delete(ChapterReviewNote).where(ChapterReviewNote.project_id == project_id))
@@ -4436,6 +4437,12 @@ async def delete_knowledge_source(
             ProjectKnowledgeFact.project_id == uid,
         )
     )
+    await db.execute(
+        delete(CharacterAppearance).where(
+            CharacterAppearance.source_id == sid,
+            CharacterAppearance.project_id == uid,
+        )
+    )
 
     await db.delete(source)
     await db.commit()
@@ -4776,7 +4783,13 @@ async def list_structured_knowledge(
         }
         # 各表特有字段（用 real_table 而非别名 table）
         if real_table == "character_profile":
-            item.update({"name": r.name, "aliases": r.aliases or [], "identity_desc": r.identity_desc, "status_desc": r.status_desc})
+            item.update({
+                "name": r.name, "aliases": r.aliases or [],
+                "identity_desc": r.identity_desc, "status_desc": r.status_desc,
+                "first_seen_chapter": getattr(r, "first_seen_chapter", None),
+                "last_seen_chapter": getattr(r, "last_seen_chapter", None),
+                "appearance_count": getattr(r, "appearance_count", 0),
+            })
         elif real_table == "ability_profile":
             item.update({"character_name": r.character_name, "ability_type": r.ability_type, "ability_name": r.ability_name, "level_desc": r.level_desc, "status": r.status})
         elif real_table == "event_timeline":
@@ -5123,6 +5136,23 @@ async def retry_extraction_chapter(
         db, uid, sid, chapter_no, str(user.id),
         force_reextract=body.get("force_reextract", True),
     )
+
+
+@router.get("/projects/{project_id}/knowledge/structured/characters/{character_id}/appearances")
+async def list_character_appearances(
+    project_id: str,
+    character_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """列出人物出场记录（按章节排序，支持分页）。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    cid = _to_uuid(character_id)
+    from services.extraction_service import list_character_appearances
+    return await list_character_appearances(db, uid, cid, limit, offset)
 
 
 @router.post("/projects/{project_id}/knowledge/structured-qa")

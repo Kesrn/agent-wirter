@@ -42,7 +42,41 @@ class CharacterProfile(UUIDMixin, TimestampMixin, Base):
     source_priority: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
     evidence: Mapped[list | None] = mapped_column(JSONValue(), nullable=True, default=list)
+    # 人物统计字段（方案 §3.1）
+    first_seen_chapter: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_seen_chapter: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    appearance_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+
+class CharacterAppearance(UUIDMixin, TimestampMixin, Base):
+    """章节出场记录：每章每人物一条，避免 character_profile.evidence 无限膨胀。"""
+    __tablename__ = "character_appearance"
+
+    project_id: Mapped[str] = mapped_column(GUID(), nullable=False, index=True)
+    source_id: Mapped[str | None] = mapped_column(GUID(), nullable=True, index=True)
+    chapter_id: Mapped[str | None] = mapped_column(GUID(), nullable=True, index=True)
+    character_id: Mapped[str | None] = mapped_column(GUID(), nullable=True, index=True)
+
+    character_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    canonical_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    chapter_no: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    chapter_title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    role_in_chapter: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_text: Mapped[str] = mapped_column(Text, nullable=False)
+    importance: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.8)
+
+    origin: Mapped[str] = mapped_column(String(50), nullable=False, default="llm_extracted")
+    canon_level: Mapped[str] = mapped_column(String(50), nullable=False, default="original")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "source_id", "chapter_no", "canonical_name",
+            name="uq_character_appearance_per_chapter",
+        ),
+    )
 
 class AbilityProfile(UUIDMixin, TimestampMixin, Base):
     """人物能力。
