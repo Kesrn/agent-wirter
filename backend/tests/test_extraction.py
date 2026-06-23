@@ -2128,7 +2128,7 @@ async def _seed_job_and_chapters(session, n_chapters=3, provider="mock", status=
     await session.flush()
     for i in range(1, n_chapters + 1):
         session.add(ProjectSourceChapter(
-            project_id=_TEST_PID, source_id=_TEST_SID,
+            project_id=pid, source_id=sid,
             chapter_no=i, content=f"第{i}章内容",
         ))
     await session.flush()
