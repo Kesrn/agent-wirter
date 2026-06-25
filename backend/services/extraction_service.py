@@ -35,6 +35,7 @@ from services.magic_systems import normalize_magic_system_label
 from services.extraction_normalization import (
     is_ability_bound_to_character,
     normalize_character_name,
+    normalize_character_name_with_aliases,
     normalize_world_rule_category,
 )
 
@@ -142,6 +143,9 @@ async def advance_extraction_job(
     job_obj.started_at = job_obj.started_at or datetime.now(timezone.utc)
     job_obj.last_run_started_at = datetime.now(timezone.utc)
 
+    # 每批读一次项目级 alias_map，传给本批所有 merge（避免每章查 DB）
+    alias_map = await _load_alias_map(db, pid)
+
     # 真实 LLM 下每次只推进 1 章，避免长请求卡页面（方案 §3/§4.3）
     is_mock = provider_name == "mock"
     chapters_this_advance = 1 if not is_mock else CHAPTERS_PER_ADVANCE
@@ -157,7 +161,7 @@ async def advance_extraction_job(
         try:
             await _process_single_chapter(
                 db, job_obj, chapter, genre, canon_level, origin, user_id,
-                force_reextract=force_reextract,
+                force_reextract=force_reextract, alias_map=alias_map,
             )
             await db.flush()
             await _refresh_job_counts(db, job_obj)
@@ -324,6 +328,7 @@ async def _process_single_chapter(
     db: AsyncSession, job: ExtractionJob, chapter: ProjectSourceChapter,
     genre: str, canon_level: str, origin: str, user_id: str,
     force_reextract: bool = False,
+    alias_map: dict[str, str] | None = None,
 ) -> None:
     """处理单章：LLM 抽取 → 保存 raw_output → 校验 → 合并。"""
     content = chapter.content or ""
@@ -395,7 +400,7 @@ async def _process_single_chapter(
                 await _clear_stale_structured_results_for_chapter(
                     db, job, chapter, extraction, genre, canon_level, origin,
                 )
-            await _merge_extraction(db, job, chapter, extraction, canon_level, origin)
+            await _merge_extraction(db, job, chapter, extraction, canon_level, origin, alias_map=alias_map)
         staging.status = StagingStatus.MERGED
     except Exception as e:
         logger.exception("merge 失败 chapter=%s", chapter.chapter_no)
@@ -778,11 +783,12 @@ async def _handle_retry_or_fail(db: AsyncSession, staging: ExtractionStaging) ->
 async def _merge_extraction(
     db: AsyncSession, job: ExtractionJob, chapter: ProjectSourceChapter,
     extraction: ChapterExtraction, canon_level: str, origin: str,
+    alias_map: dict[str, str] | None = None,
 ) -> None:
     """将校验通过的抽取结果合并到 4 张正式表。
 
     merge 前做三层归一/过滤：
-      1. 人物名归一（张侯/张候→张小侯），aliases 追加异体
+      1. 人物名归一（项目级 alias_map 优先，回退静态簇；张侯/张候→张小侯）
       2. 能力 evidence 绑定校验：介绍性台词不入正式表
       3. world_rule category 归一到白名单
     """
@@ -793,13 +799,13 @@ async def _merge_extraction(
 
     # 1. character_profile（人物名归一）
     for char in extraction.characters:
-        canonical_name, alias_variants = normalize_character_name(char.name)
+        canonical_name, alias_variants = normalize_character_name_with_aliases(char.name, alias_map)
         merged_aliases = list(dict.fromkeys(list(char.aliases or []) + alias_variants))
         if canonical_name != char.name:
             char = char.model_copy(update={"name": canonical_name, "aliases": merged_aliases})
         elif alias_variants and merged_aliases != (char.aliases or []):
             char = char.model_copy(update={"aliases": merged_aliases})
-        await _merge_character(db, pid, sid, chapter_no, chapter.chapter_title, char, canon_level, origin, source_priority)
+        await _merge_character(db, pid, sid, chapter_no, chapter.chapter_title, char, canon_level, origin, source_priority, alias_map=alias_map)
 
     # 2. ability_profile（evidence 绑定校验 + 人物名归一）
     for ability in extraction.abilities:
@@ -807,7 +813,7 @@ async def _merge_extraction(
             logger.debug("drop unbound ability: %s -> %s (evidence lacks binding)",
                          ability.character, ability.ability_name)
             continue
-        canonical_name, _ = normalize_character_name(ability.character)
+        canonical_name, _ = normalize_character_name_with_aliases(ability.character, alias_map)
         if canonical_name != ability.character:
             ability = ability.model_copy(update={"character": canonical_name})
         await _merge_ability(db, pid, sid, chapter_no, ability, canon_level, origin, source_priority)
@@ -818,7 +824,7 @@ async def _merge_extraction(
         normalized_chars: list[str] = []
         seen: set[str] = set()
         for c in raw_chars:
-            canonical_name, _ = normalize_character_name(c)
+            canonical_name, _ = normalize_character_name_with_aliases(c, alias_map)
             if canonical_name not in seen:
                 seen.add(canonical_name)
                 normalized_chars.append(canonical_name)
@@ -863,18 +869,41 @@ def _append_limited_evidence(existing: list | None, new_item: str | None,
     return items
 
 
+async def _load_alias_map(db: AsyncSession, project_id: str) -> dict[str, str]:
+    """读取该 project 的全部 alias 簇，展开成 {异体名: 规范名}。
+
+    advance_extraction_job 每批读一次，传给本批所有 merge 调用，避免每章查 DB。
+    形态包含 {异体:规范, 规范:规范}，便于归一函数把同簇异体一并带回。
+    """
+    from models.structured_knowledge import CharacterAliasCluster
+    result = await db.execute(
+        select(CharacterAliasCluster).where(CharacterAliasCluster.project_id == str(project_id))
+    )
+    alias_map: dict[str, str] = {}
+    for cluster in result.scalars().all():
+        canon = cluster.canonical_name
+        alias_map[canon] = canon  # 规范名本身
+        for a in (cluster.aliases or []):
+            alias_map[a] = canon
+    return alias_map
+
+
 async def _merge_character(
     db: AsyncSession, pid: str, sid: str, chapter_no: int,
     chapter_title: str | None, char, canon_level: str, origin: str, priority: int,
+    alias_map: dict[str, str] | None = None,
 ) -> None:
     """合并人物：一人一档 + 章节出场记录。
 
     - CharacterProfile 按 canonical name 去重，只保存稳定身份/状态/别名/关键证据。
     - CharacterAppearance 每章每人物一条（upsert），保存普通出场证据。
     - 普通出场不追加到 profile.evidence（限制 evidence 上限）。
+    - alias_map 来自项目级 character_alias_clusters 表；为 None 时自动读取一次。
     """
-    from services.extraction_normalization import normalize_character_name, core_desc_token
-    canonical_name, alias_variants = normalize_character_name(char.name)
+    from services.extraction_normalization import normalize_character_name_with_aliases, core_desc_token
+    if alias_map is None:
+        alias_map = await _load_alias_map(db, pid)
+    canonical_name, alias_variants = normalize_character_name_with_aliases(char.name, alias_map)
     # 查找已有档案（按 canonical name）
     result = await db.execute(
         select(CharacterProfile)

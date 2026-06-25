@@ -22,6 +22,7 @@ from .project_knowledge_fact import ProjectKnowledgeFact
 from .extraction_pipeline import ProjectSourceChapter, ExtractionJob, ExtractionStaging
 from .structured_knowledge import (
     CharacterProfile, CharacterAppearance, AbilityProfile, EventTimeline, WorldRule,
+    CharacterAliasCluster,
 )
 from .knowledge_qa_session import KnowledgeQaSession
 from .knowledge_qa_message import KnowledgeQaMessage
@@ -35,5 +36,6 @@ __all__ = [
     "ProjectKnowledgeFact",
     "ProjectSourceChapter", "ExtractionJob", "ExtractionStaging",
     "CharacterProfile", "CharacterAppearance", "AbilityProfile", "EventTimeline", "WorldRule",
+    "CharacterAliasCluster",
     "KnowledgeQaSession", "KnowledgeQaMessage",
 ]

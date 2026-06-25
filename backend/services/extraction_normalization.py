@@ -17,17 +17,47 @@ _CHARACTER_ALIAS_CLUSTERS: list[tuple[frozenset[str], str]] = [
 ]
 
 
-def normalize_character_name(name: str) -> tuple[str, list[str]]:
-    """归一人物名，返回 (规范名, 全部异体列表)。
+def normalize_character_name_static(name: str) -> tuple[str, list[str]]:
+    """归一人物名（静态 fallback，不查 DB）。
 
-    本轮只处理真实验证暴露的异体簇。无匹配时返回原名、空 aliases。
-    不硬编码大量小说角色；后续通用 alias 审核另做。
+    只处理真实验证暴露、硬编码在 _CHARACTER_ALIAS_CLUSTERS 里的异体簇（如张小侯）。
+    无匹配时返回原名、空 aliases。未配置项目级 alias 表时由此兜底。
     """
     for cluster, canonical in _CHARACTER_ALIAS_CLUSTERS:
         if name in cluster:
             aliases = sorted(cluster - {canonical})
             return canonical, aliases
     return name, []
+
+
+def normalize_character_name_with_aliases(
+    name: str, alias_map: dict[str, str] | None = None,
+) -> tuple[str, list[str]]:
+    """归一人物名（优先用项目级 alias_map，未命中回退静态簇）。
+
+    alias_map 形态：{异体名: 规范名}（由 service 层从 character_alias_clusters 表展开）。
+    命中返回 (规范名, [该簇内除规范名外的全部异体])，便于合并到 profile.aliases。
+    未命中 alias_map 时回退 normalize_character_name_static，保证旧行为不破。
+    """
+    if alias_map and name in alias_map:
+        canonical = alias_map[name]
+        if canonical != name:
+            # 收集该规范名下的全部异体（alias_map 中所有指向 canonical 的 key）
+            variants = sorted({k for k, v in alias_map.items() if v == canonical and k != canonical})
+            return canonical, variants
+        # name 本身就是规范名：返回，并把同簇异体一起带回（便于 aliases 合并）
+        variants = sorted({k for k, v in alias_map.items() if v == canonical and k != canonical})
+        return canonical, variants
+    return normalize_character_name_static(name)
+
+
+def normalize_character_name(name: str) -> tuple[str, list[str]]:
+    """[deprecated] 归一人物名，仅走静态簇。
+
+    保留旧签名以兼容无 db 的旧调用点。新代码应优先用
+    normalize_character_name_with_aliases(name, alias_map)，由 service 层注入 DB alias。
+    """
+    return normalize_character_name_static(name)
 
 
 # ── 身份/状态描述归一（用于判断是否"实质变化"） ─────────────

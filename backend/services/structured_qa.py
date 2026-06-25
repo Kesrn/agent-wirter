@@ -110,15 +110,16 @@ def _extract_character_name(question: str) -> str | None:
     return None
 
 
-def _character_name_variants(name: str) -> list[str]:
+def _character_name_variants(name: str, alias_map: dict[str, str] | None = None) -> list[str]:
     """Generate a few lightweight variants for common name typos.
 
-    复用 merge 层的 normalize_character_name，保证 QA 查询口径与正式表一致：
-    若 name 属于已知异体簇，返回 规范名 + 全部异体；否则做最小侯/候、去小变体。
+    复用 merge 层归一，保证 QA 查询口径与正式表一致：
+    若 name 属于已知异体簇（优先项目级 alias_map，回退静态簇），返回 规范名 + 全部异体；
+    否则做最小侯/候、去小变体。
     """
-    from services.extraction_normalization import normalize_character_name
+    from services.extraction_normalization import normalize_character_name_with_aliases
 
-    canonical, cluster_aliases = normalize_character_name(name)
+    canonical, cluster_aliases = normalize_character_name_with_aliases(name, alias_map)
     bases = [canonical] + [a for a in cluster_aliases if a != canonical]
     if not cluster_aliases:
         # 无已知簇时保留原有的轻量变体逻辑（侯/候、去小）
@@ -188,7 +189,10 @@ async def _answer_character_ability(
     yes_no_match = re.search(r"会([\u4e00-\u9fff]{1,8})吗", question)
     queried_ability = yes_no_match.group(1) if yes_no_match else None
 
-    variants = _character_name_variants(character)
+    # 加载项目级 alias_map，让 QA 查询口径与 merge 一致（慕白→穆白）
+    from services.extraction_service import _load_alias_map
+    alias_map = await _load_alias_map(db, pid)
+    variants = _character_name_variants(character, alias_map)
     result = await db.execute(
         select(AbilityProfile)
         .where(AbilityProfile.project_id == pid)

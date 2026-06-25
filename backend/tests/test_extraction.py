@@ -385,6 +385,68 @@ def test_normalize_character_name_merges_zhang_xiaohou_variants():
     assert aliases == []
 
 
+def test_normalize_with_aliases_overrides_static():
+    """项目级 alias_map 优先于静态簇。"""
+    from services.extraction_normalization import normalize_character_name_with_aliases
+
+    alias_map = {"慕白": "穆白", "心夏": "叶心夏", "穆白": "穆白", "叶心夏": "叶心夏"}
+    # 慕白 -> 穆白（DB 配置），返回规范名 + 同簇异体
+    canonical, aliases = normalize_character_name_with_aliases("慕白", alias_map)
+    assert canonical == "穆白", f"慕白应归一到穆白，实际 {canonical}"
+    assert "慕白" in aliases
+    # 规范名本身查也返回，且带回同簇异体
+    canonical2, aliases2 = normalize_character_name_with_aliases("穆白", alias_map)
+    assert canonical2 == "穆白"
+    assert "慕白" in aliases2
+
+
+def test_normalize_with_aliases_falls_back_to_static_when_empty():
+    """alias_map 为空/None 时回退静态簇（张小侯），旧行为不破。"""
+    from services.extraction_normalization import normalize_character_name_with_aliases
+
+    canonical, aliases = normalize_character_name_with_aliases("张候", None)
+    assert canonical == "张小侯"
+    assert "张候" in aliases
+    canonical2, _ = normalize_character_name_with_aliases("张候", {})
+    assert canonical2 == "张小侯"
+
+
+def test_db_alias_merges_variants_into_single_profile():
+    """[RED] 配置 DB alias（穆白←慕白）后，merge 两人物归到同一 CharacterProfile。"""
+    import uuid as _uuid
+    PID = "00000000-0000-0000-0000-0000000000c1"
+    SID = "00000000-0000-0000-0000-0000000000c2"
+
+    async def _run():
+        async with test_session_factory() as session:
+            from models.structured_knowledge import CharacterAliasCluster, CharacterProfile
+            # 先建 alias 簇：穆白(规范) ← 慕白
+            session.add(CharacterAliasCluster(
+                project_id=PID, canonical_name="穆白", aliases=["慕白"], source="manual",
+            ))
+            await session.flush()
+
+            # merge 两次：一次穆白、一次慕白，应归到同一 profile
+            await _seed_character_extraction(
+                session, PID, SID, 3, "穆白", identity="穆家少爷",
+                importance=4, evidence="穆白是穆家少爷",
+            )
+            await _seed_character_extraction(
+                session, PID, SID, 7, "慕白", identity="穆家少爷",
+                importance=2, evidence="慕白瞥了一眼",
+            )
+            await session.commit()
+
+            from sqlalchemy import select
+            profiles = (await session.execute(
+                select(CharacterProfile).where(CharacterProfile.project_id == PID)
+            )).scalars().all()
+            assert len(profiles) == 1, f"穆白/慕白应归一到1条profile，实际{len(profiles)}: {[p.name for p in profiles]}"
+            assert profiles[0].name == "穆白"
+            assert "慕白" in (profiles[0].aliases or [])
+    asyncio.run(_run())
+
+
 def test_normalize_world_rule_category_collapses_synonyms():
     """world_rule category 同义归一到白名单。"""
     from services.extraction_normalization import normalize_world_rule_category
@@ -2620,4 +2682,145 @@ def test_character_appearances_api():
             nos = [it["chapter_no"] for it in result["items"]]
             assert nos == [1, 3], f"章节顺序应升序, 实际{nos}"
             assert result["items"][0]["evidence_text"] == "第1章出场"
+    asyncio.run(_run())
+
+
+# ── 人物别名归一簇 CRUD + 候选探测 + QA alias ─────────────
+
+
+def test_alias_crud_and_project_isolation():
+    """alias 簇 list/create/update/delete + project 隔离。"""
+    pid, headers = _create_project()
+    pid2, h2 = _create_project("另一个项目")
+
+    # create
+    resp = client.post(
+        f"/api/projects/{pid}/knowledge/aliases",
+        json={"canonical_name": "穆白", "aliases": ["慕白"], "note": "测试"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    c = resp.json()
+    assert c["canonical_name"] == "穆白"
+    assert "慕白" in c["aliases"]
+    cid = c["id"]
+
+    # 409 重复 canonical
+    resp2 = client.post(
+        f"/api/projects/{pid}/knowledge/aliases",
+        json={"canonical_name": "穆白", "aliases": ["别的"]},
+        headers=headers,
+    )
+    assert resp2.status_code == 409
+
+    # alias 冲突：同一个异体名不能属于两个簇
+    resp_alias_conflict = client.post(
+        f"/api/projects/{pid}/knowledge/aliases",
+        json={"canonical_name": "叶心夏", "aliases": ["慕白"]},
+        headers=headers,
+    )
+    assert resp_alias_conflict.status_code == 409
+
+    # list
+    lst = client.get(f"/api/projects/{pid}/knowledge/aliases", headers=headers).json()
+    assert len(lst) == 1 and lst[0]["id"] == cid
+
+    # project 隔离：项目2 查不到项目1的 alias（项目2 是空 alias）
+    lst2 = client.get(f"/api/projects/{pid2}/knowledge/aliases", headers=h2).json()
+    assert lst2 == [], f"项目2 不应看到项目1的alias，实际 {lst2}"
+
+    # update
+    upd = client.put(
+        f"/api/projects/{pid}/knowledge/aliases/{cid}",
+        json={"aliases": ["慕白", "木白"], "note": "改过"},
+        headers=headers,
+    )
+    assert upd.status_code == 200
+    assert "木白" in upd.json()["aliases"]
+
+    # update 冲突：不能把别的簇 canonical/alias 塞进来
+    second = client.post(
+        f"/api/projects/{pid}/knowledge/aliases",
+        json={"canonical_name": "叶心夏", "aliases": ["心夏"]},
+        headers=headers,
+    )
+    assert second.status_code == 200
+    upd_conflict = client.put(
+        f"/api/projects/{pid}/knowledge/aliases/{cid}",
+        json={"aliases": ["慕白", "叶心夏"]},
+        headers=headers,
+    )
+    assert upd_conflict.status_code == 409
+
+    # delete
+    d = client.delete(f"/api/projects/{pid}/knowledge/aliases/{cid}", headers=headers)
+    assert d.status_code == 204
+    lst3 = client.get(f"/api/projects/{pid}/knowledge/aliases", headers=headers).json()
+    assert all(item["id"] != cid for item in lst3)
+
+
+def test_candidate_detection_finds_substring_and_does_not_persist():
+    """候选探测能发现 叶心夏/心夏 子串对，且不自动写库。"""
+    import uuid as _uuid
+    PID = str(_uuid.uuid4())
+    SID = str(_uuid.uuid4())
+
+    async def _run():
+        async with test_session_factory() as session:
+            # 两个 profile：叶心夏、心夏（子串关系）
+            from models.structured_knowledge import CharacterProfile, CharacterAliasCluster
+            session.add(CharacterProfile(
+                project_id=PID, source_id=SID, name="叶心夏", aliases=[],
+                canon_level="original", origin="llm_extracted",
+            ))
+            session.add(CharacterProfile(
+                project_id=PID, source_id=SID, name="心夏", aliases=[],
+                canon_level="original", origin="llm_extracted",
+            ))
+            await session.commit()
+
+            from services.alias_service import detect_alias_candidates
+            cands = await detect_alias_candidates(session, PID)
+            # 应至少有一个候选，canonical=叶心夏, aliases=[心夏], reason=substring
+            found = [c for c in cands if c["canonical_name"] == "叶心夏" and "心夏" in c["aliases"]]
+            assert found, f"应发现 叶心夏/心夏 子串候选，实际 {cands}"
+            assert found[0]["reason"] == "substring"
+            assert found[0]["already_configured"] is False
+
+            # 不自动写库
+            clusters = (await session.execute(
+                select(CharacterAliasCluster).where(CharacterAliasCluster.project_id == PID)
+            )).scalars().all()
+            assert clusters == [], "候选探测不应自动写 alias 簇表"
+
+    asyncio.run(_run())
+
+
+def test_qa_uses_db_alias_map():
+    """配 慕白→穆白 后，问'慕白有什么系'能查到穆白的 ability_profile。"""
+    import uuid as _uuid
+    PID = str(_uuid.uuid4())
+    SID = str(_uuid.uuid4())
+
+    async def _run():
+        async with test_session_factory() as session:
+            from models.structured_knowledge import CharacterAliasCluster, AbilityProfile
+            # alias 簇
+            session.add(CharacterAliasCluster(
+                project_id=PID, canonical_name="穆白", aliases=["慕白"], source="manual",
+            ))
+            # 穆白 的能力（canonical 名入库）
+            session.add(AbilityProfile(
+                project_id=PID, source_id=SID, character_name="穆白",
+                ability_type="magic_element", ability_name="冰系", status="new",
+                first_seen_chapter=5, canon_level="original", origin="llm_extracted",
+                source_priority=60, confidence=0.9, evidence=["穆白释放冰系"],
+            ))
+            await session.commit()
+
+            from services.structured_qa import answer_structured_question
+            result = await answer_structured_question(session, PID, "慕白有什么系别？")
+            # 应通过 alias 归一查到穆白的冰系
+            assert "冰系" in result["answer"], f"问慕白应查到穆白的冰系，实际: {result['answer']!r}"
+            assert result["citations"], "应有 citations"
     asyncio.run(_run())

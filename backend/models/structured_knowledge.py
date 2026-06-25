@@ -154,3 +154,27 @@ class WorldRule(UUIDMixin, TimestampMixin, Base):
     source_priority: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
     evidence: Mapped[list | None] = mapped_column(JSONValue(), nullable=True, default=list)
+
+
+class CharacterAliasCluster(UUIDMixin, TimestampMixin, Base):
+    """项目级人物别名归一簇。
+
+    一个簇记录一个规范名 + 它的全部异体写法。
+    merge / QA 阶段据本项目簇把异体名归一到 canonical_name，避免同人被拆成多档。
+    候选探测只给建议，必须人工确认后才入此表——不自动合并。
+    UNIQUE(project_id, canonical_name) 防止同项目重复规范名。
+    """
+
+    __tablename__ = "character_alias_clusters"
+    __table_args__ = (
+        UniqueConstraint("project_id", "canonical_name",
+                         name="uq_character_alias_project_canonical"),
+    )
+
+    project_id: Mapped[str] = mapped_column(GUID(), nullable=False, index=True)
+    canonical_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    aliases: Mapped[list] = mapped_column(JSONValue(), nullable=True, default=list)
+    # manual=人工确认；detected=候选探测建议但已人工确认；imported=外部导入
+    source: Mapped[str] = mapped_column(String(50), nullable=False, default="manual")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)

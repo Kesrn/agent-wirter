@@ -5178,6 +5178,119 @@ async def structured_qa(
     return result
 
 
+# ── 人物别名归一簇 CRUD + 候选探测 ────────────────────────
+
+@router.get("/projects/{project_id}/knowledge/aliases")
+async def list_alias_clusters(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """列出项目级人物别名归一簇。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    from services.alias_service import list_alias_clusters
+    return await list_alias_clusters(db, uid)
+
+
+@router.post("/projects/{project_id}/knowledge/aliases")
+async def create_alias_cluster(
+    project_id: str,
+    req: dict,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """新建人物别名归一簇（canonical_name + aliases[]）。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    from services.alias_service import create_alias_cluster, AliasClusterConflictError
+    from sqlalchemy.exc import IntegrityError
+    try:
+        cluster = await create_alias_cluster(
+            db, uid,
+            canonical_name=req.get("canonical_name", "").strip(),
+            aliases=req.get("aliases", []) or [],
+            source=req.get("source", "manual"),
+            confidence=float(req.get("confidence", 1.0)),
+            note=req.get("note"),
+        )
+        await db.commit()
+        return cluster
+    except AliasClusterConflictError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="该 canonical_name 已存在 alias 簇")
+
+
+@router.put("/projects/{project_id}/knowledge/aliases/{cluster_id}")
+async def update_alias_cluster(
+    project_id: str,
+    cluster_id: str,
+    req: dict,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """更新别名簇的 aliases/note/confidence。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    from services.alias_service import update_alias_cluster, AliasClusterConflictError
+    try:
+        cluster = await update_alias_cluster(
+            db, uid, cluster_id,
+            aliases=req.get("aliases"),
+            note=req.get("note"),
+            confidence=float(req["confidence"]) if req.get("confidence") is not None else None,
+        )
+    except AliasClusterConflictError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not cluster:
+        raise HTTPException(status_code=404, detail="alias 簇不存在")
+    await db.commit()
+    return cluster
+
+
+@router.delete("/projects/{project_id}/knowledge/aliases/{cluster_id}", status_code=204)
+async def delete_alias_cluster(
+    project_id: str,
+    cluster_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """删除别名簇。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    from services.alias_service import delete_alias_cluster
+    deleted = await delete_alias_cluster(db, uid, cluster_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="alias 簇不存在")
+    await db.commit()
+
+
+@router.get("/projects/{project_id}/knowledge/aliases/candidates")
+async def detect_alias_candidates(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """只读候选探测：输出疑似同人候选簇，不自动写库，需人工确认。
+
+    规则：名字互为子串 + aliases 字段交叉。保守、误报少。
+    """
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    from services.alias_service import detect_alias_candidates
+    return await detect_alias_candidates(db, uid)
+
+
 @router.post("/projects/{project_id}/knowledge/search")
 async def search_knowledge(
     project_id: str,
