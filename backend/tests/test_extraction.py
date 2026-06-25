@@ -2824,3 +2824,372 @@ def test_qa_uses_db_alias_map():
             assert "冰系" in result["answer"], f"问慕白应查到穆白的冰系，实际: {result['answer']!r}"
             assert result["citations"], "应有 citations"
     asyncio.run(_run())
+
+
+# ── 人物 alias 历史回填 dry-run + apply ───────────────────
+
+
+def _seed_alias_backfill_fixture(session, pid, sid):
+    """构造历史脏数据：穆白(规范) + 慕白(异体) 在多张表里分开。
+
+    返回 (穆白profile_id, 慕白profile_id)。
+    """
+    import uuid as _uuid
+    from models.structured_knowledge import (
+        CharacterProfile, AbilityProfile, EventTimeline, CharacterAppearance,
+        CharacterAliasCluster,
+    )
+
+    # alias 簇：穆白 <- 慕白
+    session.add(CharacterAliasCluster(
+        project_id=pid, canonical_name="穆白", aliases=["慕白"], source="manual",
+    ))
+
+    # 穆白（规范）profile + 出场 + 能力
+    mubai = CharacterProfile(
+        project_id=pid, source_id=sid, name="穆白", aliases=["穆家少爷"],
+        identity_desc="穆家少爷", status_desc="活跃",
+        canon_level="original", origin="llm_extracted",
+        evidence=["穆白是穆家少爷"], first_seen_chapter=3, last_seen_chapter=18,
+        appearance_count=2,
+    )
+    session.add(mubai)
+    session.add(AbilityProfile(
+        project_id=pid, source_id=sid, character_name="穆白",
+        ability_type="magic_element", ability_name="冰系", status="new",
+        first_seen_chapter=5, canon_level="original", origin="llm_extracted",
+        source_priority=60, confidence=0.9, evidence=["穆白释放冰系"],
+    ))
+    session.add(CharacterAppearance(
+        project_id=pid, source_id=sid, character_id=None,
+        character_name="穆白", canonical_name="穆白", chapter_no=3,
+        chapter_title="第3章", evidence_text="穆白出场", importance=4, confidence=0.9,
+        origin="llm_extracted", canon_level="original",
+    ))
+    session.add(CharacterAppearance(
+        project_id=pid, source_id=sid, character_id=None,
+        character_name="穆白", canonical_name="穆白", chapter_no=18,
+        chapter_title="第18章", evidence_text="穆白再次出场", importance=3, confidence=0.8,
+        origin="llm_extracted", canon_level="original",
+    ))
+
+    # 慕白（异体）profile + 出场 + 能力（ cultivation 冰系星子把控，穆白无 → 不撞 UNIQUE）
+    mubai_alt = CharacterProfile(
+        project_id=pid, source_id=sid, name="慕白", aliases=[],
+        identity_desc="尖子生", status_desc="",
+        canon_level="original", origin="llm_extracted",
+        evidence=["慕白瞥了一眼"], first_seen_chapter=1, last_seen_chapter=10,
+        appearance_count=1,
+    )
+    session.add(mubai_alt)
+    session.add(AbilityProfile(
+        project_id=pid, source_id=sid, character_name="慕白",
+        ability_type="cultivation_level", ability_name="冰系星子把控", status="used",
+        first_seen_chapter=9, canon_level="original", origin="llm_extracted",
+        source_priority=60, confidence=0.8, evidence=["慕白把控4颗星子"],
+    ))
+    # 慕白出场：ch9（穆白没在ch9出场，不撞 appearance UNIQUE）
+    session.add(CharacterAppearance(
+        project_id=pid, source_id=sid, character_id=None,
+        character_name="慕白", canonical_name="慕白", chapter_no=9,
+        chapter_title="第9章", evidence_text="慕白出场", importance=2, confidence=0.8,
+        origin="llm_extracted", canon_level="original",
+    ))
+    # event 含 慕白
+    session.add(EventTimeline(
+        project_id=pid, source_id=sid, chapter_no=9,
+        event_title="慕白威胁莫凡", event_desc="慕白瞥了一眼莫凡",
+        characters=["慕白", "莫凡"], importance=3, confidence=0.7,
+        canon_level="original", origin="llm_extracted", source_priority=60,
+        evidence=["慕白威胁莫凡"],
+    ))
+    return mubai, mubai_alt
+
+
+def test_backfill_preview_does_not_modify_db():
+    """dry-run 返回影响行数，不改库。"""
+    import uuid as _uuid
+    PID = str(_uuid.uuid4()); SID = str(_uuid.uuid4())
+
+    async def _run():
+        async with test_session_factory() as session:
+            from sqlalchemy import select, func
+            from models.structured_knowledge import (
+                CharacterProfile, AbilityProfile, CharacterAppearance, EventTimeline,
+            )
+            _seed_alias_backfill_fixture(session, PID, SID)
+            await session.commit()
+
+            # 记录回填前计数
+            before = {
+                "profile": (await session.execute(select(func.count(CharacterProfile.id)).where(CharacterProfile.project_id == PID))).scalar(),
+                "ability": (await session.execute(select(func.count(AbilityProfile.id)).where(AbilityProfile.project_id == PID))).scalar(),
+                "appearance": (await session.execute(select(func.count(CharacterAppearance.id)).where(CharacterAppearance.project_id == PID))).scalar(),
+                "event": (await session.execute(select(func.count(EventTimeline.id)).where(EventTimeline.project_id == PID))).scalar(),
+            }
+
+            from services.alias_backfill import backfill_preview
+            result = await backfill_preview(session, PID)
+
+            after = {
+                "profile": (await session.execute(select(func.count(CharacterProfile.id)).where(CharacterProfile.project_id == PID))).scalar(),
+                "ability": (await session.execute(select(func.count(AbilityProfile.id)).where(AbilityProfile.project_id == PID))).scalar(),
+                "appearance": (await session.execute(select(func.count(CharacterAppearance.id)).where(CharacterAppearance.project_id == PID))).scalar(),
+                "event": (await session.execute(select(func.count(EventTimeline.id)).where(EventTimeline.project_id == PID))).scalar(),
+            }
+            assert before == after, f"dry-run 不应改库，before={before} after={after}"
+            # 应报告影响
+            assert len(result["clusters"]) == 1
+            imp = result["clusters"][0]["impact"]
+            assert imp["character_profile"]["source"] == 1
+            assert imp["ability_profile"]["source"] == 1
+            assert imp["character_appearance"]["source"] == 1
+            assert imp["event_timeline"]["source"] == 1
+    asyncio.run(_run())
+
+
+def test_backfill_merges_into_single_profile():
+    """apply 后穆白/慕白合并：profile 只剩穆白，aliases 含慕白。"""
+    import uuid as _uuid
+    PID = str(_uuid.uuid4()); SID = str(_uuid.uuid4())
+
+    async def _run():
+        async with test_session_factory() as session:
+            from sqlalchemy import select
+            from models.structured_knowledge import CharacterProfile
+            _seed_alias_backfill_fixture(session, PID, SID)
+            await session.commit()
+
+            from services.alias_backfill import apply_backfill
+            result = await apply_backfill(session, PID)
+            await session.commit()
+
+            profiles = (await session.execute(
+                select(CharacterProfile).where(CharacterProfile.project_id == PID)
+            )).scalars().all()
+            assert len(profiles) == 1, f"应只剩1条profile，实际{len(profiles)}: {[p.name for p in profiles]}"
+            assert profiles[0].name == "穆白"
+            assert "慕白" in (profiles[0].aliases or [])
+            # 合并 first_seen 取更早（慕白 ch1）
+            assert profiles[0].first_seen_chapter == 1
+            # last_seen 取更晚（穆白 ch18）
+            assert profiles[0].last_seen_chapter == 18
+            # identity 源非空且目标非空：不覆盖（穆白已有"穆家少爷"）
+            assert profiles[0].identity_desc == "穆家少爷"
+    asyncio.run(_run())
+
+
+def test_backfill_ability_no_conflict_moves_character_name():
+    """ability 无 UNIQUE 冲突：直接改 character_name。"""
+    import uuid as _uuid
+    PID = str(_uuid.uuid4()); SID = str(_uuid.uuid4())
+
+    async def _run():
+        async with test_session_factory() as session:
+            from sqlalchemy import select
+            from models.structured_knowledge import AbilityProfile
+            _seed_alias_backfill_fixture(session, PID, SID)
+            await session.commit()
+
+            from services.alias_backfill import apply_backfill
+            await apply_backfill(session, PID)
+            await session.commit()
+
+            # 慕白的冰系星子把控应归到穆白名下
+            abilities = (await session.execute(
+                select(AbilityProfile).where(AbilityProfile.project_id == PID)
+            )).scalars().all()
+            assert all(a.character_name == "穆白" for a in abilities), \
+                f"所有能力应归到穆白，实际 {[a.character_name for a in abilities]}"
+            types = {(a.ability_type, a.ability_name) for a in abilities}
+            assert ("cultivation_level", "冰系星子把控") in types
+    asyncio.run(_run())
+
+
+def test_backfill_ability_conflict_merges_and_dedup():
+    """ability 撞 UNIQUE：合并 evidence、first_seen 取早、删源行。"""
+    import uuid as _uuid
+    PID = str(_uuid.uuid4()); SID = str(_uuid.uuid4())
+
+    async def _run():
+        async with test_session_factory() as session:
+            from sqlalchemy import select
+            from models.structured_knowledge import (
+                CharacterProfile, AbilityProfile, CharacterAliasCluster,
+            )
+            session.add(CharacterAliasCluster(
+                project_id=PID, canonical_name="甲", aliases=["乙"], source="manual"))
+            # 甲 + 乙 都有 (magic_element, 火系) → 撞 UNIQUE
+            session.add(CharacterProfile(
+                project_id=PID, source_id=SID, name="甲", aliases=[],
+                canon_level="original", origin="llm_extracted",
+                evidence=["甲"], first_seen_chapter=10, last_seen_chapter=10, appearance_count=0))
+            session.add(AbilityProfile(
+                project_id=PID, source_id=SID, character_name="甲",
+                ability_type="magic_element", ability_name="火系", status="new",
+                first_seen_chapter=10, canon_level="original", origin="llm_extracted",
+                source_priority=60, confidence=0.9, evidence=["甲觉醒火系"]))
+            session.add(CharacterProfile(
+                project_id=PID, source_id=SID, name="乙", aliases=[],
+                canon_level="original", origin="llm_extracted",
+                evidence=["乙"], first_seen_chapter=5, last_seen_chapter=5, appearance_count=0))
+            session.add(AbilityProfile(
+                project_id=PID, source_id=SID, character_name="乙",
+                ability_type="magic_element", ability_name="火系", status="used",
+                first_seen_chapter=5, canon_level="original", origin="llm_extracted",
+                source_priority=60, confidence=0.7, evidence=["乙释放火系"]))
+            await session.commit()
+
+            from services.alias_backfill import apply_backfill
+            await apply_backfill(session, PID)
+            await session.commit()
+
+            abilities = (await session.execute(
+                select(AbilityProfile).where(AbilityProfile.project_id == PID)
+            )).scalars().all()
+            # 撞 UNIQUE 后应合并成1条（甲名下）
+            fire = [a for a in abilities if a.ability_name == "火系"]
+            assert len(fire) == 1, f"冲突应合并为1条，实际{len(fire)}"
+            assert fire[0].character_name == "甲"
+            # first_seen 取更早（乙 ch5）
+            assert fire[0].first_seen_chapter == 5
+            # evidence 合并去重
+            assert "甲觉醒火系" in (fire[0].evidence or [])
+            assert "乙释放火系" in (fire[0].evidence or [])
+            # confidence 取高
+            assert fire[0].confidence == 0.9
+    asyncio.run(_run())
+
+
+def test_backfill_appearance_conflict_merges_and_sets_character_id():
+    """appearance 同章撞 UNIQUE：合并强度/证据，并补规范 profile 的 character_id。"""
+    import uuid as _uuid
+    PID = str(_uuid.uuid4()); SID = str(_uuid.uuid4())
+
+    async def _run():
+        async with test_session_factory() as session:
+            from sqlalchemy import select
+            from models.structured_knowledge import (
+                CharacterProfile, CharacterAppearance, CharacterAliasCluster,
+            )
+            session.add(CharacterAliasCluster(
+                project_id=PID, canonical_name="甲", aliases=["乙"], source="manual"))
+            canonical = CharacterProfile(
+                project_id=PID, source_id=SID, name="甲", aliases=[],
+                canon_level="original", origin="llm_extracted",
+                evidence=["甲"], first_seen_chapter=1, last_seen_chapter=1,
+                appearance_count=1,
+            )
+            alias = CharacterProfile(
+                project_id=PID, source_id=SID, name="乙", aliases=[],
+                canon_level="original", origin="llm_extracted",
+                evidence=["乙"], first_seen_chapter=1, last_seen_chapter=1,
+                appearance_count=1,
+            )
+            session.add_all([canonical, alias])
+            await session.flush()
+            session.add(CharacterAppearance(
+                project_id=PID, source_id=SID, character_id=None,
+                character_name="甲", canonical_name="甲", chapter_no=1,
+                chapter_title="第1章", evidence_text="", importance=1, confidence=0.5,
+                origin="llm_extracted", canon_level="original",
+            ))
+            session.add(CharacterAppearance(
+                project_id=PID, source_id=SID, character_id=str(alias.id),
+                character_name="乙", canonical_name="乙", chapter_no=1,
+                chapter_title="第1章", evidence_text="乙在同章出场", importance=4, confidence=0.9,
+                origin="llm_extracted", canon_level="original",
+            ))
+            await session.commit()
+
+            from services.alias_backfill import apply_backfill
+            await apply_backfill(session, PID)
+            await session.commit()
+
+            appearances = (await session.execute(
+                select(CharacterAppearance).where(CharacterAppearance.project_id == PID)
+            )).scalars().all()
+            assert len(appearances) == 1
+            app = appearances[0]
+            assert app.canonical_name == "甲"
+            assert str(app.character_id) == str(canonical.id)
+            assert app.evidence_text == "乙在同章出场"
+            assert app.importance == 4
+            assert app.confidence == 0.9
+    asyncio.run(_run())
+
+
+def test_backfill_updates_event_characters():
+    """event.characters 数组里异体名替换为规范名并去重。"""
+    import uuid as _uuid
+    PID = str(_uuid.uuid4()); SID = str(_uuid.uuid4())
+
+    async def _run():
+        async with test_session_factory() as session:
+            from sqlalchemy import select
+            from models.structured_knowledge import EventTimeline
+            _seed_alias_backfill_fixture(session, PID, SID)
+            await session.commit()
+
+            from services.alias_backfill import apply_backfill
+            await apply_backfill(session, PID)
+            await session.commit()
+
+            events = (await session.execute(
+                select(EventTimeline).where(EventTimeline.project_id == PID)
+            )).scalars().all()
+            assert events, "应有 event"
+            for e in events:
+                chars = e.characters or []
+                assert "慕白" not in chars, f"event 不应再有慕白，实际 {chars}"
+                assert "穆白" in chars, f"event 应含穆白，实际 {chars}"
+                # 去重
+                assert len(chars) == len(set(chars)), f"应去重，实际 {chars}"
+    asyncio.run(_run())
+
+
+def test_backfill_idempotent():
+    """对已回填的簇再 apply，无变化无报错。"""
+    import uuid as _uuid
+    PID = str(_uuid.uuid4()); SID = str(_uuid.uuid4())
+
+    async def _run():
+        async with test_session_factory() as session:
+            from sqlalchemy import select, func
+            from models.structured_knowledge import CharacterProfile
+            _seed_alias_backfill_fixture(session, PID, SID)
+            await session.commit()
+
+            from services.alias_backfill import apply_backfill
+            r1 = await apply_backfill(session, PID)
+            await session.commit()
+            cnt1 = (await session.execute(select(func.count(CharacterProfile.id)).where(CharacterProfile.project_id == PID))).scalar()
+
+            r2 = await apply_backfill(session, PID)
+            await session.commit()
+            cnt2 = (await session.execute(select(func.count(CharacterProfile.id)).where(CharacterProfile.project_id == PID))).scalar()
+
+            assert cnt1 == cnt2, f"二次回填不应改变行数，{cnt1} -> {cnt2}"
+    asyncio.run(_run())
+
+
+def test_qa_after_backfill_covers_merged_abilities():
+    """回填后问穆白能力，能覆盖原慕白的 冰系星子把控。"""
+    import uuid as _uuid
+    PID = str(_uuid.uuid4()); SID = str(_uuid.uuid4())
+
+    async def _run():
+        async with test_session_factory() as session:
+            _seed_alias_backfill_fixture(session, PID, SID)
+            await session.commit()
+
+            from services.alias_backfill import apply_backfill
+            await apply_backfill(session, PID)
+            await session.commit()
+
+            from services.structured_qa import answer_structured_question
+            result = await answer_structured_question(session, PID, "穆白有什么系别？")
+            # 穆白有冰系(magic_element)，回填后又多了冰系星子把控(cultivation)
+            # 问"系别"主要查 magic_element → 应答冰系
+            assert "冰系" in result["answer"], f"问穆白应答冰系，实际: {result['answer']!r}"
+    asyncio.run(_run())

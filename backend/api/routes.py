@@ -5275,6 +5275,46 @@ async def delete_alias_cluster(
     await db.commit()
 
 
+@router.post("/projects/{project_id}/knowledge/aliases/backfill-preview")
+async def backfill_alias_preview(
+    project_id: str,
+    req: dict | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """dry-run：预览回填将影响的行数，不改库。
+
+    body: {"cluster_id": "..."} 可选（不传=该 project 全部簇）。
+    """
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    from services.alias_backfill import backfill_preview
+    cluster_id = (req or {}).get("cluster_id")
+    return await backfill_preview(db, uid, cluster_id=cluster_id)
+
+
+@router.post("/projects/{project_id}/knowledge/aliases/backfill")
+async def backfill_alias_apply(
+    project_id: str,
+    req: dict | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """回填：把已配置 alias 簇的历史脏数据合并到规范名，改 4 张正式表。
+
+    body: {"cluster_id": "..."} 可选（不传=该 project 全部簇）。
+    不可逆——建议先调 backfill-preview 确认影响范围。
+    不动原文/staging/chunks/facts。
+    """
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    from services.alias_backfill import apply_backfill
+    cluster_id = (req or {}).get("cluster_id")
+    stats = await apply_backfill(db, uid, cluster_id=cluster_id)
+    await db.commit()
+    return {"status": "backfilled", **stats}
+
+
 @router.get("/projects/{project_id}/knowledge/aliases/candidates")
 async def detect_alias_candidates(
     project_id: str,
