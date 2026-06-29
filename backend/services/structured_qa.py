@@ -23,8 +23,26 @@ from models.structured_knowledge import (
     CharacterProfile, AbilityProfile, EventTimeline, WorldRule,
 )
 from services.magic_systems import canonical_magic_system_name
+from services.evidence_helpers import evidence_text, evidence_kind, normalize_evidence_item
 
 logger = logging.getLogger(__name__)
+
+
+def _evidence_citation_fields(record) -> dict:
+    """从结构化记录抽取 evidence citation 的定位字段（兼容 str/dict evidence）。
+
+    旧 str evidence 默认 summary；新 dict evidence 取其 kind/offset/chapter。
+    """
+    ev = (record.evidence[0] if record.evidence else None)
+    norm = normalize_evidence_item(ev) if ev is not None else normalize_evidence_item("")
+    return {
+        "snippet": evidence_text(norm)[:300],
+        "evidence_kind": evidence_kind(norm),
+        "chapter_id": norm.get("chapter_id"),
+        "start_offset": norm.get("start_offset"),
+        "end_offset": norm.get("end_offset"),
+        "offset_scope": norm.get("offset_scope"),
+    }
 
 
 def _like_escape(value: str) -> str:
@@ -216,10 +234,9 @@ async def _answer_character_ability(
             citations = [{
                 "source_kind": "structured_fact",
                 "source_id": str(best.source_id) if best.source_id else None,
-                "chunk_id": None,
+                **_evidence_citation_fields(best),
                 "chapter_no": best.first_seen_chapter,
                 "title": f"{best.character_name} - {best.ability_name}",
-                "snippet": (best.evidence[0] if best.evidence else "")[:300],
                 "evidence_type": "character_ability_fact",
                 "matched_query": f"{character} -> {queried_ability}",
                 "score": best.confidence,
@@ -328,10 +345,9 @@ async def _answer_character_ability(
         {
             "source_kind": "structured_fact",
             "source_id": str(a.source_id) if a.source_id else None,
-            "chunk_id": None,
+            **_evidence_citation_fields(a),
             "chapter_no": a.first_seen_chapter,
             "title": f"{a.character_name} - {display_name}",
-            "snippet": (a.evidence[0] if a.evidence else "")[:300],
             "evidence_type": "character_ability_fact",
             "matched_query": f"{a.character_name} -> {display_name}",
             "score": a.confidence,
@@ -435,10 +451,9 @@ async def _answer_event_query(
         {
             "source_kind": "structured_fact",
             "source_id": str(e.source_id) if e.source_id else None,
-            "chunk_id": None,
+            **_evidence_citation_fields(e),
             "chapter_no": e.chapter_no,
             "title": e.event_title,
-            "snippet": (e.evidence[0] if e.evidence else "")[:300],
             "evidence_type": "event_timeline_fact",
             "matched_query": e.event_title,
             "score": e.confidence,
@@ -496,10 +511,9 @@ async def _answer_world_rule(
         {
             "source_kind": "structured_fact",
             "source_id": str(r.source_id) if r.source_id else None,
-            "chunk_id": None,
+            **_evidence_citation_fields(r),
             "chapter_no": r.chapter_no,
             "title": r.category,
-            "snippet": (r.evidence[0] if r.evidence else "")[:300],
             "evidence_type": "world_rule_fact",
             "matched_query": r.category,
             "score": r.confidence,

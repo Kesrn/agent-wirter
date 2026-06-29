@@ -532,9 +532,11 @@ def test_ability_merge_normalizes_name_before_dedup():
             assert abilities[0].first_seen_chapter == 14
             # confidence 取更高
             assert abilities[0].confidence == 0.9
-            # evidence 合并去重
-            assert "看到了雷系初阶技能雷印" in (abilities[0].evidence or [])
-            assert "使用了两次雷印" in (abilities[0].evidence or [])
+            # evidence 合并去重（dict 形态，按 text 检查）
+            from services.evidence_helpers import evidence_text
+            ev_texts = [evidence_text(e) for e in (abilities[0].evidence or [])]
+            assert "看到了雷系初阶技能雷印" in ev_texts
+            assert "使用了两次雷印" in ev_texts
     asyncio.run(_run())
 
 
@@ -2695,7 +2697,8 @@ def test_character_profile_evidence_keeps_substantive_identity_change():
             )
             assert profile.identity_desc == "火系觉醒法师"
             assert profile.status_desc == "觉醒火系"
-            assert "普通学生" in ev_list[0]
+            from services.evidence_helpers import evidence_text
+            assert "普通学生" in evidence_text(ev_list[0])
     asyncio.run(_run())
 
 
@@ -3324,3 +3327,96 @@ def test_qa_after_backfill_covers_merged_abilities():
             # 问"系别"主要查 magic_element → 应答冰系
             assert "冰系" in result["answer"], f"问穆白应答冰系，实际: {result['answer']!r}"
     asyncio.run(_run())
+
+
+# ── evidence dict 升级 helper 测试 ───────────────────────
+
+
+class _FakeChapter:
+    """测试用 chapter 替身。"""
+    def __init__(self, cid, chapter_no, content):
+        self.id = cid
+        self.chapter_no = chapter_no
+        self.content = content
+
+
+def test_make_evidence_ref_exact_quote_when_substring_match():
+    """完整 evidence 能 substring 命中章节正文 → exact_quote + offset。"""
+    from services.evidence_helpers import make_evidence_ref
+    ch = _FakeChapter("ch-1", 3, "莫凡回到家后坐在床边。然后他开始冥修。")
+    ref = make_evidence_ref("莫凡回到家后坐在床边。", chapter=ch, source_id="s-1", confidence=0.9)
+    assert ref["kind"] == "exact_quote"
+    assert ref["offset_scope"] == "chapter_exact"
+    assert ref["chapter_id"] == "ch-1"
+    assert ref["chapter_no"] == 3
+    assert ref["source_id"] == "s-1"
+    assert ref["start_offset"] == 0
+    assert ref["end_offset"] == len("莫凡回到家后坐在床边。")
+    assert ref["confidence"] == 0.9
+
+
+def test_make_evidence_ref_summary_when_no_substring():
+    """evidence 是压缩摘要（省略号），不能 substring 命中 → summary。"""
+    from services.evidence_helpers import make_evidence_ref
+    ch = _FakeChapter("ch-1", 3, "莫凡回到家后坐在床边。然后他开始冥修。")
+    ref = make_evidence_ref("莫凡回到家……最多三年，等自己魔法大乘", chapter=ch, source_id="s-1")
+    assert ref["kind"] == "summary"
+    assert ref["offset_scope"] is None
+    assert ref["start_offset"] is None
+    assert ref["end_offset"] is None
+    # 但 chapter 定位仍填
+    assert ref["chapter_id"] == "ch-1"
+    assert ref["chapter_no"] == 3
+
+
+def test_make_evidence_ref_no_chapter():
+    """无 chapter 对象 → summary，定位全空。"""
+    from services.evidence_helpers import make_evidence_ref
+    ref = make_evidence_ref("任意文本", chapter=None, source_id="s-1")
+    assert ref["kind"] == "summary"
+    assert ref["chapter_id"] is None
+    assert ref["chapter_no"] is None
+
+
+def test_normalize_evidence_item_str_to_dict():
+    """旧 str evidence → dict，默认 summary。"""
+    from services.evidence_helpers import normalize_evidence_item
+    d = normalize_evidence_item("莫凡觉醒火系", source_id="s-1", chapter_no=7, confidence=0.9)
+    assert d["text"] == "莫凡觉醒火系"
+    assert d["kind"] == "summary"
+    assert d["source_id"] == "s-1"
+    assert d["chapter_no"] == 7
+    assert d["confidence"] == 0.9
+
+
+def test_normalize_evidence_item_dict_passthrough():
+    """dict evidence 补全缺失字段。"""
+    from services.evidence_helpers import normalize_evidence_item
+    d = normalize_evidence_item({"text": "x", "kind": "exact_quote"}, source_id="s-1")
+    assert d["text"] == "x"
+    assert d["kind"] == "exact_quote"
+    assert d["source_id"] == "s-1"
+    assert d["chapter_no"] is None  # 补全
+
+
+def test_evidence_items_equal_by_text():
+    """按 text 去重，兼容 str/dict。"""
+    from services.evidence_helpers import evidence_items_equal
+    assert evidence_items_equal("abc", {"text": "abc", "kind": "summary"})
+    assert not evidence_items_equal("abc", "abd")
+    assert not evidence_items_equal({"text": "abc"}, {"text": "abd"})
+
+
+def test_make_manual_note():
+    from services.evidence_helpers import make_manual_note
+    d = make_manual_note("手动补充", source_id="s-1")
+    assert d["kind"] == "manual_note"
+    assert d["text"] == "手动补充"
+    assert d["confidence"] == 1.0
+
+
+def test_evidence_text_compat():
+    from services.evidence_helpers import evidence_text
+    assert evidence_text("abc") == "abc"
+    assert evidence_text({"text": "abc"}) == "abc"
+    assert evidence_text(None) == ""

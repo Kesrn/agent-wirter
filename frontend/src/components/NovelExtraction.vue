@@ -506,6 +506,18 @@ function abilityTypeLabel(t: string) {
 function priorityLabel(p: string) {
   return { high: '高', medium: '中', low: '低' }[p] ?? p
 }
+function evidenceKindLabel(k: string) {
+  const m: Record<string, string> = {
+    exact_quote: '原文引用', summary: '摘要证据', manual_note: '手动备注', inferred: '推断',
+  }
+  return m[k] ?? k
+}
+function evidenceText(ev: any) {
+  if (ev == null) return ''
+  if (typeof ev === 'string') return ev
+  if (typeof ev === 'object') return ev.text ?? ''
+  return String(ev)
+}
 </script>
 
 <template>
@@ -652,7 +664,7 @@ function priorityLabel(p: string) {
               <span v-if="c.last_seen_chapter">最近：第{{ c.last_seen_chapter }}章</span>
               <span>出场：{{ c.appearance_count }}次</span>
             </div>
-            <div v-if="c.evidence?.length" class="item-evidence">关键证据：{{ c.evidence[0] }}</div>
+            <div v-if="c.evidence?.length" class="item-evidence">关键证据：{{ evidenceText(c.evidence[0]) }}</div>
           </div>
         </template>
 
@@ -671,7 +683,7 @@ function priorityLabel(p: string) {
             <div v-if="a.level_desc" class="item-field">等级：{{ a.level_desc }}</div>
             <div v-if="a.status" class="item-field">状态：{{ a.status }}</div>
             <div v-if="a.chapter_no" class="item-field">首次出现：第{{ a.chapter_no }}章</div>
-            <div v-if="a.evidence?.length" class="item-evidence">证据：{{ a.evidence[0] }}</div>
+            <div v-if="a.evidence?.length" class="item-evidence">证据：{{ evidenceText(a.evidence[0]) }}</div>
           </div>
         </template>
 
@@ -689,7 +701,7 @@ function priorityLabel(p: string) {
             </div>
             <div v-if="e.event_desc" class="item-field">{{ e.event_desc }}</div>
             <div v-if="e.characters?.length" class="item-field">人物：{{ e.characters.join('、') }}</div>
-            <div v-if="e.evidence?.length" class="item-evidence">证据：{{ e.evidence[0] }}</div>
+            <div v-if="e.evidence?.length" class="item-evidence">证据：{{ evidenceText(e.evidence[0]) }}</div>
           </div>
         </template>
 
@@ -705,7 +717,7 @@ function priorityLabel(p: string) {
               </span>
             </div>
             <div class="item-field">{{ w.rule_text }}</div>
-            <div v-if="w.evidence?.length" class="item-evidence">证据：{{ w.evidence[0] }}</div>
+            <div v-if="w.evidence?.length" class="item-evidence">证据：{{ evidenceText(w.evidence[0]) }}</div>
           </div>
         </template>
       </div>
@@ -734,6 +746,7 @@ function priorityLabel(p: string) {
           <div class="citations-title">引用（{{ qaCitations.length }}）：</div>
           <div v-for="(c, i) in qaCitations" :key="i" class="citation-item">
             <span class="citation-table">{{ c.table || '事实' }}</span>
+            <span v-if="c.evidence_kind" class="citation-kind" :class="c.evidence_kind">{{ evidenceKindLabel(c.evidence_kind) }}</span>
             <span v-if="c.chapter_no" class="citation-chapter">第{{ c.chapter_no }}章</span>
             <span class="citation-snippet">{{ c.snippet }}</span>
           </div>
@@ -868,6 +881,11 @@ function priorityLabel(p: string) {
 .citations-title { font-size: 12px; color: var(--text-soft); margin-bottom: 4px; }
 .citation-item { font-size: 11px; padding: 3px 0; border-bottom: 1px dashed var(--border); display: flex; gap: 6px; }
 .citation-table { color: #3b82f6; flex-shrink: 0; }
+.citation-kind { font-size: 10px; padding: 1px 5px; border-radius: 3px; flex-shrink: 0; }
+.citation-kind.exact_quote { background: #2d8a4e; color: #fff; }
+.citation-kind.summary { background: #d9a300; color: #fff; }
+.citation-kind.manual_note { background: #8b5cf6; color: #fff; }
+.citation-kind.inferred { background: #6b7280; color: #fff; }
 .citation-chapter { color: var(--text-soft); flex-shrink: 0; }
 .citation-snippet { color: var(--text-soft); }
 .btn-add { margin-left: auto; padding: 4px 10px; font-size: 12px; border: 1px dashed var(--border); border-radius: 4px; background: none; cursor: pointer; color: #3b82f6; }

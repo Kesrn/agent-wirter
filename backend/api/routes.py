@@ -4832,7 +4832,8 @@ async def create_structured_record(
     # manual_note 追加为 evidence，保留来源
     manual_note = body.get("manual_note")
     if manual_note:
-        record.evidence = [f"[手动备注] {manual_note}"]
+        from services.evidence_helpers import make_manual_note
+        record.evidence = [make_manual_note(manual_note)]
 
     for field, value in body.items():
         if field in allowed and value is not None:
@@ -4893,8 +4894,12 @@ async def update_structured_record(
     # 追加 manual_note 到 evidence，不丢弃原 evidence
     manual_note = body.get("manual_note")
     if manual_note:
+        from services.evidence_helpers import make_manual_note
         existing = list(record.evidence or [])
-        existing.append(f"[手动备注] {manual_note}")
+        existing.append(make_manual_note(
+            manual_note,
+            source_id=str(record.source_id) if getattr(record, "source_id", None) else None,
+        ))
         record.evidence = existing
 
     await db.commit()

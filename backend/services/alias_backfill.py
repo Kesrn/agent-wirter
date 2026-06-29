@@ -19,6 +19,7 @@ from models.structured_knowledge import (
     EventTimeline, CharacterAppearance,
 )
 from services.extraction_service import _append_limited_evidence
+from services.evidence_helpers import evidence_items_equal as _ev_eq
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +204,8 @@ async def _backfill_ability(db, pid, alias, canonical, stats):
                 tgt.first_seen_chapter = min(
                     x for x in (tgt.first_seen_chapter, a.first_seen_chapter) if x is not None)
             for ev in (a.evidence or []):
-                if ev not in (tgt.evidence or []):
+                # 兼容 str/dict evidence，按 text 去重
+                if not any(_ev_eq(it, ev) for it in (tgt.evidence or [])):
                     tgt.evidence = (tgt.evidence or []) + [ev]
             tgt.confidence = max(tgt.confidence, a.confidence)
             if _STATUS_PRIORITY.get(a.status or "", 0) > _STATUS_PRIORITY.get(tgt.status or "", 0):

@@ -2185,7 +2185,13 @@ def test_create_manual_character_profile():
     assert data["origin"] == "manual"
     assert data["canon_level"] == "manual"
     assert data["source_priority"] == 100
-    assert "[手动备注] 手动补充" in (data["evidence"] or [])
+    # evidence 现在是 dict 形态，手动备注标 manual_note
+    ev_list = data["evidence"] or []
+    assert any(
+        (e.get("kind") if isinstance(e, dict) else None) == "manual_note"
+        and "手动补充" in (e.get("text", "") if isinstance(e, dict) else str(e))
+        for e in ev_list
+    ), f"应有 manual_note evidence，实际: {ev_list}"
 
     # 确认能查到
     listing = client.get(f"/api/projects/{pid}/knowledge/structured/characters", headers=headers)
@@ -2364,10 +2370,16 @@ def test_update_preserves_evidence_or_adds_manual_note():
     )
     assert patch_resp.status_code == 200, patch_resp.text
     evidence = patch_resp.json()["evidence"]
+    from services.evidence_helpers import evidence_text
     # 原 evidence 保留
-    assert any("莫凡觉醒火系" in e for e in evidence), f"原evidence丢失: {evidence}"
+    assert any("莫凡觉醒火系" in evidence_text(e) for e in evidence), f"原evidence丢失: {evidence}"
     # manual_note 追加
-    assert any("手动备注" in e for e in evidence), f"manual_note未追加: {evidence}"
+    assert any(
+        isinstance(e, dict)
+        and e.get("kind") == "manual_note"
+        and "确认是初阶" in evidence_text(e)
+        for e in evidence
+    ), f"manual_note未追加: {evidence}"
     # 升级为 manual
     assert patch_resp.json()["origin"] == "manual"
     assert patch_resp.json()["source_priority"] == 100

@@ -38,6 +38,7 @@ from services.extraction_normalization import (
     normalize_character_name_with_aliases,
     normalize_world_rule_category,
 )
+from services.evidence_helpers import make_evidence_ref, evidence_items_equal, evidence_text
 
 logger = logging.getLogger(__name__)
 
@@ -805,7 +806,7 @@ async def _merge_extraction(
             char = char.model_copy(update={"name": canonical_name, "aliases": merged_aliases})
         elif alias_variants and merged_aliases != (char.aliases or []):
             char = char.model_copy(update={"aliases": merged_aliases})
-        await _merge_character(db, pid, sid, chapter_no, chapter.chapter_title, char, canon_level, origin, source_priority, alias_map=alias_map)
+        await _merge_character(db, pid, sid, chapter_no, chapter.chapter_title, char, canon_level, origin, source_priority, alias_map=alias_map, chapter=chapter)
 
     # 2. ability_profile（evidence 绑定校验 + 人物名归一；能力名归一在 _merge_ability 内部）
     for ability in extraction.abilities:
@@ -816,7 +817,7 @@ async def _merge_extraction(
         canonical_name, _ = normalize_character_name_with_aliases(ability.character, alias_map)
         if canonical_name != ability.character:
             ability = ability.model_copy(update={"character": canonical_name})
-        await _merge_ability(db, pid, sid, chapter_no, ability, canon_level, origin, source_priority)
+        await _merge_ability(db, pid, sid, chapter_no, ability, canon_level, origin, source_priority, chapter=chapter)
 
     # 3. event_timeline（MVP 不去重，直接新增；人物名归一）
     for event in extraction.events:
@@ -841,7 +842,7 @@ async def _merge_extraction(
             importance=event.importance,
             canon_level=canon_level, origin=origin,
             source_priority=source_priority, confidence=event.confidence,
-            evidence=[event.evidence],
+            evidence=[make_evidence_ref(event.evidence, chapter=chapter, source_id=sid, confidence=event.confidence)],
         ))
 
     # 4. world_rule（category 归一 + 查重键 project_id + category + rule_text）
@@ -849,19 +850,25 @@ async def _merge_extraction(
         normalized_category = normalize_world_rule_category(rule.category, rule.rule_text)
         if normalized_category != rule.category:
             rule = rule.model_copy(update={"category": normalized_category})
-        await _merge_world_rule(db, pid, sid, chapter_no, rule, canon_level, origin, source_priority)
+        await _merge_world_rule(db, pid, sid, chapter_no, rule, canon_level, origin, source_priority, chapter=chapter)
 
 
 MAX_CHARACTER_PROFILE_EVIDENCE = 20
 
 
-def _append_limited_evidence(existing: list | None, new_item: str | None,
+def _append_limited_evidence(existing: list | None, new_item,
                                max_items: int = MAX_CHARACTER_PROFILE_EVIDENCE) -> list:
-    """追加 evidence 但限制上限：保留前 10 + 最近 10 条关键证据。"""
-    if not new_item:
+    """追加 evidence 但限制上限：保留前 10 + 最近 10 条关键证据。
+
+    去重按 text（兼容 str/dict）：同一段文本即使 chapter/offset 不同也算重复。
+    new_item 可以是 str（旧）或 dict（新）。
+    """
+    from services.evidence_helpers import evidence_items_equal
+    if new_item is None:
         return list(existing or [])
     items = list(existing or [])
-    if new_item in items:
+    # 按 text 去重（兼容 str/dict）
+    if any(evidence_items_equal(it, new_item) for it in items):
         return items
     items.append(new_item)
     if len(items) > max_items:
@@ -892,6 +899,7 @@ async def _merge_character(
     db: AsyncSession, pid: str, sid: str, chapter_no: int,
     chapter_title: str | None, char, canon_level: str, origin: str, priority: int,
     alias_map: dict[str, str] | None = None,
+    chapter: ProjectSourceChapter | None = None,
 ) -> None:
     """合并人物：一人一档 + 章节出场记录。
 
@@ -946,7 +954,7 @@ async def _merge_character(
             status_desc=char.status or None,
             canon_level=canon_level, origin=origin,
             source_priority=priority, confidence=char.confidence,
-            evidence=[char.evidence] if char.evidence else [],
+            evidence=[make_evidence_ref(char.evidence, chapter=chapter, source_id=sid, confidence=char.confidence)] if char.evidence else [],
             first_seen_chapter=chapter_no,
             last_seen_chapter=chapter_no,
             appearance_count=0,
@@ -977,7 +985,8 @@ async def _merge_character(
         # （高兴/活/仅提及）本质多变，会膨胀 evidence。实质状态变化
         # （如未觉醒→觉醒）伴随 importance>=4 章节，已被 is_important 覆盖。
         if (is_important or has_identity_change) and char.evidence:
-            existing.evidence = _append_limited_evidence(existing.evidence, char.evidence)
+            _ev_ref = make_evidence_ref(char.evidence, chapter=chapter, source_id=sid, confidence=char.confidence)
+            existing.evidence = _append_limited_evidence(existing.evidence, _ev_ref)
         if new_higher:
             existing.canon_level = canon_level
             existing.origin = origin
@@ -1033,6 +1042,7 @@ async def _merge_character(
 async def _merge_ability(
     db: AsyncSession, pid: str, sid: str, chapter_no: int,
     ability, canon_level: str, origin: str, priority: int,
+    chapter: ProjectSourceChapter | None = None,
 ) -> None:
     """合并能力：UNIQUE(project_id, character_name, ability_type, ability_name)。
     存在则 first_seen 取更早、evidence 追加、status 按优先级更新、confidence 取较高。
@@ -1063,7 +1073,7 @@ async def _merge_ability(
             first_seen_chapter=chapter_no,
             canon_level=canon_level, origin=origin,
             source_priority=priority, confidence=ability.confidence,
-            evidence=[ability.evidence],
+            evidence=[make_evidence_ref(ability.evidence, chapter=chapter, source_id=sid, confidence=ability.confidence)],
         ))
     else:
         # 优先级判断：低优先级来源不覆盖高优先级已有字段
@@ -1083,9 +1093,11 @@ async def _merge_ability(
             elif same_or_higher:
                 if status_priority.get(ability.status.value, 0) > status_priority.get(existing.status, 0):
                     existing.status = ability.status.value
-        # evidence 追加去重
-        if ability.evidence and ability.evidence not in (existing.evidence or []):
-            existing.evidence = (existing.evidence or []) + [ability.evidence]
+        # evidence 追加去重（按 text，兼容 str/dict）
+        if ability.evidence:
+            _ev_ref = make_evidence_ref(ability.evidence, chapter=chapter, source_id=sid, confidence=ability.confidence)
+            if not any(evidence_items_equal(it, _ev_ref) for it in (existing.evidence or [])):
+                existing.evidence = (existing.evidence or []) + [_ev_ref]
         # 更新来源元数据（若新优先级更高）
         if new_higher:
             existing.canon_level = canon_level
@@ -1098,6 +1110,7 @@ async def _merge_ability(
 async def _merge_world_rule(
     db: AsyncSession, pid: str, sid: str, chapter_no: int,
     rule, canon_level: str, origin: str, priority: int,
+    chapter: ProjectSourceChapter | None = None,
 ) -> None:
     """合并世界规则：UNIQUE(project_id, category, rule_text)。
     完全匹配则追加 evidence，否则新增。
@@ -1116,11 +1129,13 @@ async def _merge_world_rule(
             priority=rule.priority.value,
             canon_level=canon_level, origin=origin,
             source_priority=priority, confidence=rule.confidence,
-            evidence=[rule.evidence],
+            evidence=[make_evidence_ref(rule.evidence, chapter=chapter, source_id=sid, confidence=rule.confidence)],
         ))
     else:
-        if rule.evidence and rule.evidence not in (existing.evidence or []):
-            existing.evidence = (existing.evidence or []) + [rule.evidence]
+        if rule.evidence:
+            _ev_ref = make_evidence_ref(rule.evidence, chapter=chapter, source_id=sid, confidence=rule.confidence)
+            if not any(evidence_items_equal(it, _ev_ref) for it in (existing.evidence or [])):
+                existing.evidence = (existing.evidence or []) + [_ev_ref]
 
 
 # ── Job 状态查询 ─────────────────────────────────────────
