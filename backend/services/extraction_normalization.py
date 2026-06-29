@@ -207,3 +207,52 @@ def normalize_world_rule_category(category: str, rule_text: str = "") -> str:
                 return target
 
     return "其他"
+
+
+# ── 能力名归一（保守，只去括号注释） ─────────────────────
+
+
+def normalize_ability_name(name: str) -> str:
+    """归一能力名：只做保守清理，不做跨名/跨 type 合并。
+
+    规则：
+      - 去首尾空格
+      - 去末尾括号注释：`雷印（雷系初阶技能）` → `雷印`（中英文括号都支持）
+      - 不处理 `·` 后缀：`火滋·快速释放` 保持不变（是不同能力/熟练度变体）
+      - 不跨 ability_type：调用方保证按 type 分组查重
+
+    例：
+      雷印（雷系初阶技能） → 雷印
+      雷印(雷系初阶技能) → 雷印
+      火滋·快速释放 → 火滋·快速释放
+      冰系 → 冰系
+    """
+    if not name:
+        return ""
+    s = name.strip()
+    # 反复去末尾括号注释（防止 "雷印（初阶）（雷系）" 这种嵌套/连续）
+    while True:
+        new_s = _strip_one_trailing_parenthetical(s).strip()
+        if new_s == s:
+            break
+        s = new_s
+    return s
+
+
+def _strip_one_trailing_parenthetical(text: str) -> str:
+    """Strip one balanced trailing parenthetical note, preserving the base name."""
+    if not text or text[-1] not in "）)":
+        return text
+
+    depth = 0
+    for idx in range(len(text) - 1, -1, -1):
+        ch = text[idx]
+        if ch in "）)":
+            depth += 1
+        elif ch in "（(":
+            depth -= 1
+            if depth == 0:
+                if idx == 0:
+                    return text
+                return text[:idx]
+    return text

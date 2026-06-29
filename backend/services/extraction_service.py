@@ -807,7 +807,7 @@ async def _merge_extraction(
             char = char.model_copy(update={"aliases": merged_aliases})
         await _merge_character(db, pid, sid, chapter_no, chapter.chapter_title, char, canon_level, origin, source_priority, alias_map=alias_map)
 
-    # 2. ability_profile（evidence 绑定校验 + 人物名归一）
+    # 2. ability_profile（evidence 绑定校验 + 人物名归一；能力名归一在 _merge_ability 内部）
     for ability in extraction.abilities:
         if not is_ability_bound_to_character(ability.character, ability.ability_name, ability.evidence):
             logger.debug("drop unbound ability: %s -> %s (evidence lacks binding)",
@@ -1036,13 +1036,18 @@ async def _merge_ability(
 ) -> None:
     """合并能力：UNIQUE(project_id, character_name, ability_type, ability_name)。
     存在则 first_seen 取更早、evidence 追加、status 按优先级更新、confidence 取较高。
+
+    ability_name 先经 normalize_ability_name 归一（去括号注释），保证
+    `雷印（雷系初阶技能）` 与 `雷印` 命中同一行。
     """
+    from services.extraction_normalization import normalize_ability_name as _norm_ability_name
+    norm_name = _norm_ability_name(ability.ability_name)
     result = await db.execute(
         select(AbilityProfile)
         .where(AbilityProfile.project_id == pid)
         .where(AbilityProfile.character_name == ability.character)
         .where(AbilityProfile.ability_type == ability.ability_type.value)
-        .where(AbilityProfile.ability_name == ability.ability_name)
+        .where(AbilityProfile.ability_name == norm_name)
     )
     existing = result.scalar_one_or_none()
     status_priority = {"new": 5, "upgraded": 4, "used": 3, "mentioned": 2, "lost": 1, "unknown": 0}
@@ -1052,7 +1057,7 @@ async def _merge_ability(
             project_id=pid, source_id=sid,
             character_name=ability.character,
             ability_type=ability.ability_type.value,
-            ability_name=ability.ability_name,
+            ability_name=norm_name,
             level_desc=ability.level or None,
             status=ability.status.value,
             first_seen_chapter=chapter_no,

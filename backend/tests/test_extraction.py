@@ -464,6 +464,137 @@ def test_normalize_world_rule_category_collapses_synonyms():
     assert normalize_world_rule_category("未知奇怪分类") == "其他"
 
 
+def test_normalize_ability_name_strips_trailing_paren_note():
+    """能力名归一：去末尾括号注释，中英文括号都支持。"""
+    from services.extraction_normalization import normalize_ability_name
+
+    # 去末尾括号注释
+    assert normalize_ability_name("雷印（雷系初阶技能）") == "雷印"
+    assert normalize_ability_name("雷印(雷系初阶技能)") == "雷印"
+    assert normalize_ability_name("火滋（火系初阶技能）") == "火滋"
+    # 无括号不变
+    assert normalize_ability_name("雷印") == "雷印"
+    assert normalize_ability_name("冰系") == "冰系"
+    # · 后缀不处理（不同能力/熟练度变体）
+    assert normalize_ability_name("火滋·快速释放") == "火滋·快速释放"
+    # 去首尾空格
+    assert normalize_ability_name("  雷印  ") == "雷印"
+    # 连续/嵌套括号也清理
+    assert normalize_ability_name("雷印（初阶）（雷系）") == "雷印"
+    assert normalize_ability_name("雷印（初阶（雷系））") == "雷印"
+    # 空字符串
+    assert normalize_ability_name("") == ""
+
+
+def test_ability_merge_normalizes_name_before_dedup():
+    """同人同类、能力名仅括号注释不同的，merge 后合并为 1 条。
+
+    雷印（雷系初阶技能）和 雷印 应归一后命中同一 ability_profile 行。
+    """
+    import uuid as _uuid
+    PID = str(_uuid.uuid4())
+    SID = str(_uuid.uuid4())
+
+    async def _run():
+        async with test_session_factory() as session:
+            from services.extraction_service import _merge_ability
+            from services.extraction_schema import AbilityItem, AbilityType, AbilityStatus
+
+            # 第一次：雷印（雷系初阶技能），ch14
+            a1 = AbilityItem(
+                character="莫凡", ability_type=AbilityType.spell,
+                ability_name="雷印（雷系初阶技能）", status=AbilityStatus.used,
+                importance=4, confidence=0.8, evidence="看到了雷系初阶技能雷印",
+            )
+            await _merge_ability(session, PID, SID, 14, a1, "original", "llm_extracted", 60)
+            await session.flush()
+
+            # 第二次：雷印（无括号），ch15 —— 应归一后命中同一行
+            a2 = AbilityItem(
+                character="莫凡", ability_type=AbilityType.spell,
+                ability_name="雷印", status=AbilityStatus.used,
+                importance=4, confidence=0.9, evidence="使用了两次雷印",
+            )
+            await _merge_ability(session, PID, SID, 15, a2, "original", "llm_extracted", 60)
+            await session.commit()
+
+            from sqlalchemy import select
+            from models.structured_knowledge import AbilityProfile
+            abilities = (await session.execute(
+                select(AbilityProfile).where(AbilityProfile.project_id == PID)
+                .where(AbilityProfile.character_name == "莫凡")
+                .where(AbilityProfile.ability_type == "spell")
+            )).scalars().all()
+            # 应合并成 1 条，ability_name 归一为"雷印"
+            assert len(abilities) == 1, f"应合并为1条，实际{len(abilities)}: {[a.ability_name for a in abilities]}"
+            assert abilities[0].ability_name == "雷印"
+            # first_seen 取更早（ch14）
+            assert abilities[0].first_seen_chapter == 14
+            # confidence 取更高
+            assert abilities[0].confidence == 0.9
+            # evidence 合并去重
+            assert "看到了雷系初阶技能雷印" in (abilities[0].evidence or [])
+            assert "使用了两次雷印" in (abilities[0].evidence or [])
+    asyncio.run(_run())
+
+
+def test_ability_does_not_merge_dot_suffix_or_cross_type():
+    """·后缀变体不合并；跨 ability_type 即使名字相近也不合并。"""
+    import uuid as _uuid
+    PID = str(_uuid.uuid4())
+    SID = str(_uuid.uuid4())
+
+    async def _run():
+        async with test_session_factory() as session:
+            from services.extraction_service import _merge_ability
+            from services.extraction_schema import AbilityItem, AbilityType, AbilityStatus
+
+            # 火滋(spell) + 火滋·快速释放(skill) —— 不同 type，不合并
+            await _merge_ability(session, PID, SID, 29,
+                AbilityItem(character="莫凡", ability_type=AbilityType.spell,
+                            ability_name="火滋", status=AbilityStatus.used,
+                            importance=4, confidence=0.9, evidence="完成火滋释放"),
+                "original", "llm_extracted", 60)
+            await _merge_ability(session, PID, SID, 40,
+                AbilityItem(character="莫凡", ability_type=AbilityType.skill,
+                            ability_name="火滋·快速释放", status=AbilityStatus.upgraded,
+                            importance=4, confidence=0.8, evidence="释放火滋更快速"),
+                "original", "llm_extracted", 60)
+            # 同名但不同 type 也不合并：spell 雷印 + skill 雷印 应保留两条
+            await _merge_ability(session, PID, SID, 41,
+                AbilityItem(character="莫凡", ability_type=AbilityType.spell,
+                            ability_name="雷印（雷系初阶技能）", status=AbilityStatus.used,
+                            importance=4, confidence=0.8, evidence="释放雷印"),
+                "original", "llm_extracted", 60)
+            await _merge_ability(session, PID, SID, 42,
+                AbilityItem(character="莫凡", ability_type=AbilityType.skill,
+                            ability_name="雷印", status=AbilityStatus.upgraded,
+                            importance=4, confidence=0.7, evidence="雷印熟练度提升"),
+                "original", "llm_extracted", 60)
+            await session.commit()
+
+            from sqlalchemy import select
+            from models.structured_knowledge import AbilityProfile
+            abilities = (await session.execute(
+                select(AbilityProfile).where(AbilityProfile.project_id == PID)
+                .where(AbilityProfile.character_name == "莫凡")
+                .where(AbilityProfile.ability_name.like("火滋%"))
+            )).scalars().all()
+            # spell 火滋 + skill 火滋·快速释放 = 2 条，不合并
+            assert len(abilities) == 2, f"不同type不应合并，实际{len(abilities)}"
+            names = sorted(a.ability_name for a in abilities)
+            assert "火滋" in names and "火滋·快速释放" in names
+
+            thunder = (await session.execute(
+                select(AbilityProfile).where(AbilityProfile.project_id == PID)
+                .where(AbilityProfile.character_name == "莫凡")
+                .where(AbilityProfile.ability_name == "雷印")
+            )).scalars().all()
+            thunder_types = sorted(a.ability_type for a in thunder)
+            assert thunder_types == ["skill", "spell"], f"同名跨type不应合并，实际 {thunder_types}"
+    asyncio.run(_run())
+
+
 def test_missing_evidence_validation_failed():
     """LLM 返回合法 JSON 但缺 evidence 时校验失败，不得 merge。"""
     # 构造缺 evidence 的人物数据
