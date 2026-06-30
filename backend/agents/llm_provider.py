@@ -6,7 +6,6 @@
 """
 
 import asyncio
-import logging
 from abc import ABC, abstractmethod
 from typing import AsyncIterator
 import json
@@ -14,8 +13,6 @@ import re
 
 from config.settings import settings
 from observability.langfuse import current_langfuse_metadata, get_langfuse_async_openai_class
-
-logger = logging.getLogger(__name__)
 
 
 class LLMProvider(ABC):

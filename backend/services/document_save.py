@@ -6,15 +6,12 @@
 """
 
 import re
-import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.document import Document
 from services.content_sanitizer import sanitize_chapter_content
 from services.document_version_service import create_document_version
-
-logger = logging.getLogger(__name__)
 
 
 def _count_non_space_chars(text: str) -> int:

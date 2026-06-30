@@ -49,10 +49,11 @@ def main() -> None:
 
     import uvicorn
     from main import app
+    from config.settings import settings
 
     host = os.getenv("AI_CREATIVE_BACKEND_HOST", "127.0.0.1")
     port = int(os.getenv("AI_CREATIVE_BACKEND_PORT", "8765"))
-    uvicorn.run(app, host=host, port=port, log_level="info", access_log=False)
+    uvicorn.run(app, host=host, port=port, log_level=settings.LOG_LEVEL.lower(), access_log=False)
 
 
 if __name__ == "__main__":

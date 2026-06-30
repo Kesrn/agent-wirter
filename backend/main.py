@@ -9,13 +9,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from config.settings import settings
+from config.logging_config import setup_logging
 from db.session import init_db
 from api.routes import router
 from api.auth import router as auth_router
 from api.llm_settings import router as llm_settings_router
 from observability.langfuse import log_langfuse_startup_status
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s - %(message)s")
+setup_logging(
+    log_level=settings.LOG_LEVEL,
+    log_file=settings.LOG_FILE or "",
+    max_bytes=settings.LOG_MAX_BYTES,
+    backup_count=settings.LOG_BACKUP_COUNT,
+    sql_echo=settings.SQL_ECHO,
+)
 logger = logging.getLogger(__name__)
 
 

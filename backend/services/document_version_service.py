@@ -3,15 +3,12 @@
 与 version_service.py 对称，但操作 DocumentVersion 模型。
 """
 
-import logging
 import re
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.document_version import DocumentVersion
-
-logger = logging.getLogger(__name__)
 
 VALID_SOURCES = frozenset({
     "manual",
