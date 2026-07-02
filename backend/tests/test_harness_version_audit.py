@@ -185,3 +185,22 @@ def test_chapter_version_response_has_audit_fields():
     assert "run_id" in fields
     assert "parent_version_id" in fields
     assert "rollback_from_version_id" in fields
+
+
+def test_version_list_endpoint_returns_audit_fields():
+    """ChapterVersionListItemResponse 能 Model_validate 一个带 run_id 的 dict。"""
+    from schemas.api import ChapterVersionListItemResponse
+    import uuid as _uuid
+    from datetime import datetime, timezone
+    item = ChapterVersionListItemResponse.model_validate({
+        "id": str(_uuid.uuid4()),
+        "chapter_id": str(_uuid.uuid4()),
+        "word_count": 100,
+        "version_number": 1,
+        "source": "manual",
+        "run_id": str(_uuid.uuid4()),
+        "parent_version_id": None,
+        "rollback_from_version_id": None,
+        "created_at": datetime.now(timezone.utc),
+    })
+    assert item.run_id is not None

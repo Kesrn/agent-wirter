@@ -3869,6 +3869,9 @@ async def list_chapter_versions(
             ChapterVersion.word_count,
             ChapterVersion.version_number,
             ChapterVersion.source,
+            ChapterVersion.run_id,
+            ChapterVersion.parent_version_id,
+            ChapterVersion.rollback_from_version_id,
             ChapterVersion.created_at,
         )
         .where(ChapterVersion.chapter_id == chapter.id)
@@ -3881,7 +3884,10 @@ async def list_chapter_versions(
             word_count=row[2],
             version_number=row[3],
             source=row[4],
-            created_at=row[5],
+            run_id=row[5],
+            parent_version_id=row[6],
+            rollback_from_version_id=row[7],
+            created_at=row[8],
         )
         for row in result.all()
     ]
