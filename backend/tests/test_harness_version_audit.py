@@ -265,3 +265,64 @@ async def test_approve_sets_run_id_on_version_and_accepted_version_id_on_record(
     # 验证
     assert str(record.accepted_version_id) == str(version.id)
     assert record.status == "applied"
+
+
+# ==================== Chapter rollback: 创建新版本（不覆盖） ====================
+
+@pytest.mark.asyncio
+async def test_chapter_rollback_creates_new_version(async_db):
+    """rollback 用旧版本内容创建新版本（source=rollback），不覆盖旧版本。
+
+    此测试通过 service 层直接验证 rollback 逻辑（routes 层只是薄封装）。
+    """
+    import uuid
+    from models.project import Project
+    from services.chapter_save import save_chapter_content
+    from sqlalchemy import select
+
+    pid = uuid.uuid4()
+    project = Project(id=pid, title="回滚测试", mode="novel")
+    async_db.add(project)
+    await async_db.flush()
+
+    chapter = Chapter(
+        id=uuid.uuid4(), project_id=pid, title="章",
+        sequence_number=1, content="", status="draft",
+    )
+    async_db.add(chapter)
+    await async_db.flush()
+
+    # 创建 v1, v2, v3
+    await save_chapter_content(async_db, chapter, "第一版内容", source="manual")
+    await save_chapter_content(async_db, chapter, "第二版内容", source="manual")
+    await save_chapter_content(async_db, chapter, "第三版内容", source="manual")
+    await async_db.commit()
+
+    # 回滚到 v1：用 v1 的内容创建一个新版本
+    versions = (await async_db.execute(
+        select(ChapterVersion)
+        .where(ChapterVersion.chapter_id == chapter.id)
+        .order_by(ChapterVersion.version_number)
+    )).scalars().all()
+    v1 = versions[0]
+    assert v1.version_number == 1
+
+    # 模拟 rollback：用 v1 的内容创建新版本
+    await save_chapter_content(
+        async_db, chapter, v1.content or "", source="rollback",
+        rollback_from_version_id=str(v1.id),
+    )
+    await async_db.commit()
+
+    # 验证：现在有 4 个版本，最新的是 v4（rollback）
+    versions_after = (await async_db.execute(
+        select(ChapterVersion)
+        .where(ChapterVersion.chapter_id == chapter.id)
+        .order_by(ChapterVersion.version_number.desc())
+    )).scalars().all()
+    assert len(versions_after) == 4
+    latest = versions_after[0]
+    assert latest.version_number == 4
+    assert latest.source == "rollback"
+    assert str(latest.rollback_from_version_id) == str(v1.id)
+    assert latest.content == "第一版内容"

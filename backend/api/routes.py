@@ -3948,6 +3948,45 @@ async def get_chapter_version(
     return version
 
 
+@router.post("/projects/{project_id}/chapters/{sequence_number}/versions/{version_id}/restore", response_model=ChapterResponse)
+async def restore_chapter_version(
+    project_id: str,
+    sequence_number: int,
+    version_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """回滚章节到指定版本。
+
+    与文档 restore 一致：不覆盖旧版本，而是用旧版本内容创建一个新版本（source=rollback），
+    并在 rollback_from_version_id 记录回滚来源。
+    """
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    ch_result = await db.execute(
+        select(Chapter).where(Chapter.project_id == uid, Chapter.sequence_number == sequence_number)
+    )
+    chapter = ch_result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    vid = _to_uuid(version_id)
+    result = await db.execute(
+        select(ChapterVersion).where(ChapterVersion.id == vid, ChapterVersion.chapter_id == chapter.id)
+    )
+    version = result.scalar_one_or_none()
+    if not version:
+        raise HTTPException(status_code=404, detail="版本不存在")
+
+    await save_chapter_content(
+        db, chapter, version.content or "", source="rollback",
+        rollback_from_version_id=str(version.id),
+    )
+    await db.commit()
+    await db.refresh(chapter)
+    return chapter
+
+
 @router.post("/projects/{project_id}/chapters/{sequence_number}/versions/diff", response_model=ChapterVersionDiffResponse)
 async def diff_chapter_versions(
     project_id: str,
