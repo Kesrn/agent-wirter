@@ -128,3 +128,69 @@ def test_guardrail_has_blocking_issues():
     }
     assert has_blocking_issues(with_high) is True
     assert has_blocking_issues(without_high) is False
+
+
+# ==================== ConsistencyAgent node 产出 dict ====================
+
+@pytest.mark.asyncio
+async def test_consistency_checker_node_returns_dict():
+    """consistency_checker_node 应返回 dict 类型的 consistency_report（不再是 str）。"""
+    from agents.workflow import consistency_checker_node
+
+    class MockLLM:
+        async def generate(self, system_prompt, user_prompt, temperature=0.7, max_tokens=4096):
+            return '{"issues": [{"type": "character", "description": "角色矛盾", "severity": "high"}], "summary": "发现1个问题", "overall_severity": "high"}'
+
+    state = {
+        "context": "角色A是冷酷杀手",
+        "draft": "角色A笑着拥抱了所有人",
+        "consistency_prompt": "",
+        "llm_config": None,
+        "skill_packs": [],
+    }
+
+    import agents.workflow as wf
+    original = wf.get_llm_provider
+    wf.get_llm_provider = lambda config: MockLLM()
+    try:
+        result = await consistency_checker_node(state)
+    finally:
+        wf.get_llm_provider = original
+
+    assert "consistency_report" in result
+    report = result["consistency_report"]
+    assert isinstance(report, dict), f"consistency_report should be dict, got {type(report)}"
+    assert report["parse_error"] is False
+    assert report["overall_severity"] == "high"
+    assert len(report["issues"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_consistency_checker_node_parse_failure_returns_dict():
+    """LLM 返回纯文本时，consistency_report 仍应是 dict（parse_error=True）。"""
+    from agents.workflow import consistency_checker_node
+
+    class MockLLM:
+        async def generate(self, system_prompt, user_prompt, temperature=0.7, max_tokens=4096):
+            return "文本与设定基本一致，未发现矛盾。"
+
+    state = {
+        "context": "设定",
+        "draft": "草稿",
+        "consistency_prompt": "",
+        "llm_config": None,
+        "skill_packs": [],
+    }
+
+    import agents.workflow as wf
+    original = wf.get_llm_provider
+    wf.get_llm_provider = lambda config: MockLLM()
+    try:
+        result = await consistency_checker_node(state)
+    finally:
+        wf.get_llm_provider = original
+
+    report = result["consistency_report"]
+    assert isinstance(report, dict)
+    assert report["parse_error"] is True
+    assert len(report["issues"]) == 0

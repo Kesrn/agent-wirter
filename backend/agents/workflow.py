@@ -41,7 +41,7 @@ class CreativeState(TypedDict):
     draft: str  # 当前草稿
     original_text: str  # 原始文本（增强模式用）
     critiques: Annotated[list[str], lambda a, b: a + b]  # 审校意见累积
-    consistency_report: str  # 一致性检查报告
+    consistency_report: dict  # 结构化一致性检查结果（GuardrailResult dict）
     edited_draft: str  # 编辑后草稿
     revision_count: int  # 修订次数
     writer_prompt: str  # 从 Expert 配置读取，fallback 到默认值
@@ -93,7 +93,12 @@ DEFAULT_WRITER_PROMPT = """你是一位才华横溢的创意写作大师。你�
 
 在严格遵守以上约束的前提下，发挥创意写出精彩的文学内容。"""
 DEFAULT_CRITIC_PROMPT = "你是一位严苛的文学审校大师。对文本进行深度审校，输出结构化评价。"
-DEFAULT_CONSISTENCY_PROMPT = "你是一位世界观一致性检查专家。检查文本是否与已知设定矛盾。"
+DEFAULT_CONSISTENCY_PROMPT = (
+    "你是一位世界观一致性检查专家。检查文本是否与已知设定矛盾。"
+    "检查维度：角色性格/行为一致性、世界观设定一致性、剧情逻辑一致性、时间线一致性。"
+    '输出严格JSON：{"issues": [{"type": "character|worldbuilding|plot|timeline|other", "description": "具体矛盾描述", "severity": "info|low|medium|high"}], "summary": "整体结论", "overall_severity": "info|low|medium|high"}'
+    "如果没有发现问题，issues 为空数组。只输出JSON，不要输出其他内容。"
+)
 
 
 def _is_revision_state(state: CreativeState) -> bool:
@@ -423,7 +428,9 @@ async def critic_node(state: CreativeState) -> dict:
 
 
 async def consistency_checker_node(state: CreativeState) -> dict:
-    """一致性检查：与世界观/角色/前文对照"""
+    """一致性检查：与世界观/角色/前文对照，输出结构化 GuardrailResult"""
+    from agents.guardrail import parse_guardrail_result
+
     llm = get_llm_provider(state.get("llm_config"))
     llm = _maybe_wrap_llm(llm, state, agent_name="consistency_checker", include_context=True)
     pack, pack_summary = _build_workflow_skill_pack(
@@ -433,8 +440,9 @@ async def consistency_checker_node(state: CreativeState) -> dict:
     )
     system_prompt = build_expert_system_prompt("consistency_checker", state.get("consistency_prompt") or DEFAULT_CONSISTENCY_PROMPT, pack)
     user_prompt = f"## 上下文/设定\n{state.get('context', '')}\n\n## 待检查文本\n{state.get('draft', '')}\n\n请检查一致性："
-    result = await llm.generate(system_prompt, user_prompt, temperature=0.2, max_tokens=2048)
-    update = {"consistency_report": result}
+    raw_result = await llm.generate(system_prompt, user_prompt, temperature=0.2, max_tokens=2048)
+    guardrail_result = parse_guardrail_result(raw_result)
+    update = {"consistency_report": guardrail_result}
     if pack.has_content or pack.warnings:
         update["skill_packs"] = [pack_summary]
     return update
