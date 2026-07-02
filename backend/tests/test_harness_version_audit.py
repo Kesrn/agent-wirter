@@ -126,3 +126,42 @@ async def test_prune_spare_referenced_version(async_db, chapter_id_fixture):
         select(ChapterVersion).where(ChapterVersion.id == versions[2].id)
     )
     assert result.scalar_one_or_none() is not None, "被 generation_record 引用的版本不应被 prune 删除"
+
+
+@pytest.mark.asyncio
+async def test_save_chapter_content_forwards_run_id(async_db, chapter_id_fixture):
+    """save_chapter_content 应将 run_id 转发给 create_version。"""
+    from services.chapter_save import save_chapter_content
+
+    # 先创建一个 chapter（需要 project FK，这里直接构造最小 Chapter）
+    import uuid
+    from models.project import Project
+    project = Project(id=uuid.uuid4(), title="测试项目", mode="novel")
+    async_db.add(project)
+    await async_db.flush()
+
+    chapter = Chapter(
+        id=chapter_id_fixture,
+        project_id=project.id,
+        title="测试章",
+        sequence_number=1,
+        content="",
+        status="draft",
+    )
+    async_db.add(chapter)
+    await async_db.flush()
+
+    await save_chapter_content(
+        async_db, chapter, "新内容", source="ai_approve",
+        run_id="44444444-4444-4444-4444-444444444444",
+    )
+
+    # 检查创建的 version 是否带 run_id
+    from sqlalchemy import select
+    result = await async_db.execute(
+        select(ChapterVersion).where(ChapterVersion.chapter_id == chapter_id_fixture)
+    )
+    version = result.scalar_one_or_none()
+    assert version is not None
+    assert str(version.run_id) == "44444444-4444-4444-4444-444444444444"
+    assert version.source == "ai_approve"

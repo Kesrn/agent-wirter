@@ -9,6 +9,7 @@
 """
 
 import re
+import uuid
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +32,10 @@ async def save_chapter_content(
     raw_content: str,
     source: str = "manual",
     set_status: str | None = None,
+    *,
+    run_id: str | uuid.UUID | None = None,
+    parent_version_id: str | uuid.UUID | None = None,
+    rollback_from_version_id: str | uuid.UUID | None = None,
 ) -> Chapter:
     """保存章节正文内容（统一入口）
 
@@ -40,6 +45,9 @@ async def save_chapter_content(
         raw_content: 原始内容（未经清洗）
         source: 版本来源 ("manual" | "ai_approve" | "ai_enhance" | "ai_continue")
         set_status: 若非 None，将 chapter.status 设为此值
+        run_id: 关联的 AI Run ID（可选，写入 ChapterVersion.run_id）
+        parent_version_id: 父版本 ID（可选，写入 ChapterVersion.parent_version_id）
+        rollback_from_version_id: 回滚来源版本 ID（可选，写入 ChapterVersion.rollback_from_version_id）
 
     Returns:
         已更新但尚未提交的 Chapter 对象。
@@ -54,6 +62,10 @@ async def save_chapter_content(
         chapter.status = set_status
 
     if content_changed and clean_content:
-        await create_version(db, chapter.id, clean_content, source=source)
+        await create_version(
+            db, chapter.id, clean_content, source=source,
+            run_id=run_id, parent_version_id=parent_version_id,
+            rollback_from_version_id=rollback_from_version_id,
+        )
 
     return chapter
