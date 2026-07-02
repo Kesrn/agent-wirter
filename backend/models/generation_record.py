@@ -32,3 +32,4 @@ class GenerationRecord(UUIDMixin, TimestampMixin, Base):
     review_results: Mapped[dict | None] = mapped_column(JSONValue(), nullable=True)
     request_params: Mapped[dict | None] = mapped_column(JSONValue(), nullable=True)
     langfuse_trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    run_id: Mapped[str | None] = mapped_column(GUID(), nullable=True, index=True)

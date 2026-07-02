@@ -26,6 +26,11 @@ from .structured_knowledge import (
 )
 from .knowledge_qa_session import KnowledgeQaSession
 from .knowledge_qa_message import KnowledgeQaMessage
+from .harness_enums import RunStatus, RunStepStatus, InterruptStatus, InterruptDecision
+from .ai_run import AiRun
+from .ai_run_step import AiRunStep
+from .llm_call_log import LlmCallLog
+from .human_interrupt import HumanInterrupt
 
 __all__ = [
     "Base", "UUIDMixin", "TimestampMixin", "Project", "Chapter", "Document",
@@ -38,4 +43,6 @@ __all__ = [
     "CharacterProfile", "CharacterAppearance", "AbilityProfile", "EventTimeline", "WorldRule",
     "CharacterAliasCluster",
     "KnowledgeQaSession", "KnowledgeQaMessage",
+    "RunStatus", "RunStepStatus", "InterruptStatus", "InterruptDecision",
+    "AiRun", "AiRunStep", "LlmCallLog", "HumanInterrupt",
 ]

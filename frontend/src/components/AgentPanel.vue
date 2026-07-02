@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { useChapterStore, useDocumentStore, useExpertStore, useUiStore, useOutlineStore, useCharacterStore, useWorldEntryStore, useHiddenThreadStore, useGenerationHistoryStore, friendlyError } from '../stores'
 import type { WorkflowStep, SSEEnvelope, GenerateMode, ProjectMode, ArticleGenerateParams, WritingUnit } from '../api/types'
-import type { AgentStartPayload, AgentOutputPayload, AgentDonePayload, ProgressPayload, ErrorPayload, WriterOutputPayload, CriticOutputPayload, ConsistencyCheckPayload, EnhanceDirectionsPayload, TurnSuggestionsPayload, RevisionSuggestionsPayload, SkillPackPayload, ArticleReviewPayload, GenerationRecordPayload } from '../api/types'
+import type { AgentStartPayload, AgentOutputPayload, AgentDonePayload, ProgressPayload, ErrorPayload, WriterOutputPayload, CriticOutputPayload, ConsistencyCheckPayload, EnhanceDirectionsPayload, TurnSuggestionsPayload, RevisionSuggestionsPayload, SkillPackPayload, ArticleReviewPayload, GenerationRecordPayload, RunCreatedPayload } from '../api/types'
 import { api } from '../api/client'
 import ApprovalModal from './ApprovalModal.vue'
 import AgentWorkflow from './AgentWorkflow.vue'
@@ -65,6 +65,7 @@ const maxRevisions = ref(3)
 const pendingMode = ref<GenerateMode>('full_pipeline')
 const showArticleParams = ref(false)
 const latestGenerationRecordId = ref<string | null>(null)
+const latestRunId = ref<string | null>(null)
 
 // ─── Chapter context stats ───
 interface ChapterContextStats {
@@ -338,6 +339,7 @@ async function closePausedWorkflow(threadId: string) {
 function handleGenerate() {
   pendingMode.value = 'full_pipeline'
   latestGenerationRecordId.value = null
+  latestRunId.value = null
   if (isNovel.value) {
     showContextPicker.value = true
   } else {
@@ -382,6 +384,7 @@ function handleQuickAction(key: string) {
   if (!action) return
   pendingMode.value = action.mode
   latestGenerationRecordId.value = null
+  latestRunId.value = null
   if (!isNovel.value) {
     showArticleParams.value = true
     return
@@ -557,6 +560,7 @@ async function runGenerateStream(
 
   currentAbort = new AbortController()
   latestGenerationRecordId.value = null
+  latestRunId.value = null
 
   try {
     await api.generateStream(
@@ -721,6 +725,11 @@ function handleSSEEvent(envelope: SSEEnvelope) {
       latestGenerationRecordId.value = payload.id
       generationHistoryStore.upsertCandidate(pid.value, payload.id)
       refreshGenerationHistory()
+      break
+    }
+    case 'run_created': {
+      const payload = data as unknown as RunCreatedPayload
+      latestRunId.value = payload.run_id
       break
     }
     case 'done': {

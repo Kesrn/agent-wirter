@@ -19,6 +19,7 @@ import {
   type ApiChapterVersion, type ChapterVersionDiffRequest, type ChapterVersionDiffResponse,
   type DocumentVersionDiffRequest, type DocumentVersionDiffResponse,
   type ApiGenerationRecordListItem, type ApiGenerationRecord,
+  type ApiRunListItem, type ApiRun, type ApiRunStep,
   type GenerationRecordUpdatePayload, type GenerationRecordDiffRequest, type GenerationRecordDiffResponse,
   type ChapterReviewNote, type ChapterReviewNoteCreatePayload, type ChapterReviewNoteUpdatePayload,
   type ApiEvaluationDataset, type ApiEvaluationCase, type ApiEvaluationRun,
@@ -723,6 +724,13 @@ export const api = {
     request<ApiGenerationRecordListItem[]>(`/projects/${projectId}/documents/${documentId}/generations`),
   getGenerationRecord: (projectId: string, generationId: string) =>
     request<ApiGenerationRecord>(`/projects/${projectId}/generations/${generationId}`),
+  // ==================== AI Runs ====================
+  getRun: (runId: string) =>
+    request<ApiRun>(`/ai-runs/${runId}`),
+  getRunSteps: (runId: string) =>
+    request<ApiRunStep[]>(`/ai-runs/${runId}/steps`),
+  listProjectRuns: (projectId: string, limit?: number) =>
+    request<ApiRunListItem[]>(`/projects/${projectId}/ai-runs${limit ? `?limit=${limit}` : ''}`),
   updateGenerationRecord: (projectId: string, generationId: string, data: GenerationRecordUpdatePayload) =>
     request<ApiGenerationRecord>(`/projects/${projectId}/generations/${generationId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   diffGenerationRecord: (projectId: string, generationId: string, data: GenerationRecordDiffRequest) =>

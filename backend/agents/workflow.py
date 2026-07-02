@@ -17,6 +17,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from agents.llm_provider import get_llm_provider, LLMProvider
+from harness.llm_call_logger import LoggedLLMProvider
 from rag.context_loader import ContextLoader
 from skills.runner import build_expert_skill_pack, build_expert_system_prompt
 from services.skill_pack_planner import SkillPackPlan, plan_workflow_skill_pack
@@ -56,6 +57,30 @@ class CreativeState(TypedDict):
     selected_direction: str  # 用户选择的剧情走向（从 DirectionPicker 传入）
     user_note: str  # 用户补充要求
     skill_packs: Annotated[list[dict], lambda a, b: a + b]  # 已注入的专家 skill pack 摘要
+    # ── Harness 注入（可选，generate 路径写入，节点读取用于 LLM call log）──
+    harness_run_id: str  # AiRun.id
+    harness_step_id: str  # 当前 AiRunStep.id（routes 在 on_chain_start 后注入）
+
+
+def _maybe_wrap_llm(llm, state, *, agent_name: str, include_context: bool = False):
+    """若 state 注入了 harness_run_id，把 llm 包成 LoggedLLMProvider；否则原样返回。"""
+    run_id = state.get("harness_run_id")
+    if not run_id:
+        return llm
+    llm_config = state.get("llm_config")
+    provider_name = llm_config.get("provider") if isinstance(llm_config, dict) else None
+    context_snapshot = None
+    if include_context:
+        ctx = state.get("context", "")
+        context_snapshot = {"context_len": len(ctx)} if ctx else None
+    return LoggedLLMProvider(
+        llm,
+        run_id=run_id,
+        step_id=state.get("harness_step_id"),
+        agent_name=agent_name,
+        provider_name=provider_name,
+        context_snapshot=context_snapshot,
+    )
 
 
 # --- 默认 system_prompt（硬编码 fallback） ---
@@ -168,6 +193,7 @@ def _make_expert_node(
     """为动态专家创建节点函数"""
     async def expert_node(state: CreativeState) -> dict:
         llm = get_llm_provider(state.get("llm_config"))
+        llm = _maybe_wrap_llm(llm, state, agent_name=f"expert_{expert_id[:8]}", include_context=role_type in ("writer", "researcher", "custom"))
         pack, pack_summary = _build_workflow_skill_pack(
             state,
             node_name=expert_id,
@@ -371,6 +397,7 @@ async def context_loader_node(state: CreativeState) -> dict:
 async def writer_node(state: CreativeState) -> dict:
     """创意大师：初次生成章节；修订时改写当前候选稿而不是续写。"""
     llm = get_llm_provider(state.get("llm_config"))
+    llm = _maybe_wrap_llm(llm, state, agent_name="writer", include_context=True)
     pack, pack_summary = _build_workflow_skill_pack(state, node_name="writer", role_type="writer")
     system_prompt = build_expert_system_prompt("writer", state.get("writer_prompt") or DEFAULT_WRITER_PROMPT, pack)
     user_prompt = _build_writer_user_prompt(state)
@@ -384,6 +411,7 @@ async def writer_node(state: CreativeState) -> dict:
 async def critic_node(state: CreativeState) -> dict:
     """残酷大师：结构化审校"""
     llm = get_llm_provider(state.get("llm_config"))
+    llm = _maybe_wrap_llm(llm, state, agent_name="critic")
     pack, pack_summary = _build_workflow_skill_pack(state, node_name="critic", role_type="critic")
     system_prompt = build_expert_system_prompt("critic", state.get("critic_prompt") or DEFAULT_CRITIC_PROMPT, pack)
     user_prompt = f"## 待审校文本\n{state.get('draft', '')}\n\n请审校："
@@ -397,6 +425,7 @@ async def critic_node(state: CreativeState) -> dict:
 async def consistency_checker_node(state: CreativeState) -> dict:
     """一致性检查：与世界观/角色/前文对照"""
     llm = get_llm_provider(state.get("llm_config"))
+    llm = _maybe_wrap_llm(llm, state, agent_name="consistency_checker", include_context=True)
     pack, pack_summary = _build_workflow_skill_pack(
         state,
         node_name="consistency_checker",

@@ -724,7 +724,7 @@ export interface ArticleGenerateParams {
 // ─── SSE types ───
 
 /** SSE event types emitted by the backend generate/test endpoints */
-export type SSEEventType = 'progress' | 'agent_start' | 'agent_output' | 'agent_done' | 'writer_output' | 'content_output' | 'editor_output' | 'critic_output' | 'consistency_check' | 'enhance_directions' | 'turn_suggestions' | 'content_suggestions' | 'article_review' | 'revision_suggestions' | 'skill_pack' | 'generation_record' | 'done' | 'error'
+export type SSEEventType = 'progress' | 'agent_start' | 'agent_output' | 'agent_done' | 'writer_output' | 'content_output' | 'editor_output' | 'critic_output' | 'consistency_check' | 'enhance_directions' | 'turn_suggestions' | 'content_suggestions' | 'article_review' | 'revision_suggestions' | 'skill_pack' | 'generation_record' | 'done' | 'error' | 'run_created' | 'run_status' | 'run_step'
 
 /** SSE envelope parsed from the backend stream */
 export interface SSEEnvelope {
@@ -916,6 +916,50 @@ export interface ApiGenerationRecord extends ApiGenerationRecordListItem {
   review_results: Record<string, unknown> | null
   request_params: Record<string, unknown> | null
   updated_at: string
+}
+
+// ==================== AI Run ====================
+
+export interface ApiRunListItem {
+  id: string
+  run_type: string
+  mode: string
+  status: string
+  current_step: string | null
+  generation_record_id: string | null
+  started_at: string | null
+  finished_at: string | null
+  created_at: string
+}
+
+export interface ApiRun extends ApiRunListItem {
+  project_id: string
+  chapter_id: string | null
+  document_id: string | null
+  user_goal: string | null
+  thread_id: string | null
+  token_usage: Record<string, unknown> | null
+  cost_usage: Record<string, unknown> | null
+  error_message: string | null
+  updated_at: string
+}
+
+export interface ApiRunStep {
+  id: string
+  run_id: string
+  step_order: number
+  step_name: string
+  agent_name: string | null
+  status: string
+  error_message: string | null
+  started_at: string | null
+  ended_at: string | null
+  llm_call_count: number
+}
+
+export interface RunCreatedPayload {
+  run_id: string
+  status: string
 }
 
 export interface GenerationRecord {

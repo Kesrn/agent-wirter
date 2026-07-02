@@ -21,6 +21,7 @@ from models.expert import Expert
 from models.chapter import Chapter
 from models.chapter_version import ChapterVersion
 from models.chapter_review_note import ChapterReviewNote
+from models.ai_run import AiRun
 from models.document import Document
 from models.document_version import DocumentVersion
 from models.generation_record import GenerationRecord
@@ -66,12 +67,21 @@ from schemas.api import (
     KnowledgeQaSessionResponse, KnowledgeQaSessionUpdateRequest, KnowledgeQaMessageResponse,
     KnowledgeSearchRequest, KnowledgeAskRequest,
     EvaluationRunCreate, EvaluationRunResponse, EvaluationResultResponse,
+    AiRunResponse, AiRunListItemResponse, AiRunStepResponse,
+    HumanDecisionRequest, HumanDecisionResponse,
     AuthUser,
 )
 from agents.safety import validate_expert_safety
 from agents.expert_templates import BUILTIN_EXPERTS
 from agents.llm_provider import LLMConfigError, get_llm_provider
 from agents.workflow import get_creative_app, CreativeState
+from harness.run_manager import (
+    create_run, mark_running, mark_waiting_human, mark_completed, mark_failed, mark_cancelled,
+)
+from harness.step_logger import start_step, finish_step, fail_step
+from harness.human_interrupt_service import (
+    create_interrupt, resolve_interrupt, get_interrupt_by_run, get_interrupt_by_thread, check_interrupt_resolved
+)
 from skills.runner import ExpertSkillResult, build_expert_skill_pack, build_expert_system_prompt
 from api.auth import get_current_user
 from api.llm_deps import get_user_llm_config
@@ -2487,6 +2497,7 @@ async def generate_chapter(
                 expert_id: str | uuid.UUID | None = None,
                 review_results: dict | None = None,
                 skill_packs: list[dict] | None = None,
+                run_id: str | None = None,
             ) -> str | None:
                 nonlocal generation_record_saved
                 if generation_record_saved:
@@ -2504,6 +2515,7 @@ async def generate_chapter(
                         review_results=review_results,
                         skill_packs=skill_packs,
                         langfuse_trace_id=current_langfuse_trace_id(),
+                        run_id=run_id,
                     )
                     if not record:
                         return None
@@ -3112,6 +3124,29 @@ async def generate_chapter(
             app = get_creative_app(enabled_experts=enabled_experts)
             thread_id = f"{uid}:{target_chapter_id or target_document_id or 'no-chapter'}:{uuid.uuid4().hex[:8]}"
 
+            # ── Harness: 创建 AI Run ──
+            run_type = {
+                "full_pipeline": "CHAPTER_DRAFT",
+                "continue": "CHAPTER_CONTINUE",
+                "enhance": "CHAPTER_REWRITE",
+                "summarize": "SUMMARY_GENERATION",
+            }.get(req.mode, "CHAPTER_DRAFT")
+            ai_run = await create_run(
+                db,
+                project_id=uid,
+                chapter_id=target_chapter_id,
+                document_id=target_document_id,
+                run_type=run_type,
+                mode=req.mode,
+                user_goal=req.user_note,
+                model_config_snapshot=llm_config_dict,
+            )
+            await db.flush()
+            run_id_str = str(ai_run.id)
+            yield f"event: run_created\ndata: {json.dumps({'run_id': run_id_str, 'status': 'CREATED'}, ensure_ascii=False)}\n\n"
+            await mark_running(db, ai_run)
+            yield f"event: run_status\ndata: {json.dumps({'run_id': run_id_str, 'status': 'RUNNING'}, ensure_ascii=False)}\n\n"
+
             # 从启用的专家中提取各角色的 system_prompt
             writer_prompt = ""
             critic_prompt = ""
@@ -3149,6 +3184,9 @@ async def generate_chapter(
                 "selected_direction": req.selected_direction or "",
                 "user_note": req.user_note or "",
                 "skill_packs": [],
+                # ── Harness 注入：节点内 LLM call log 用（不传 db，避免 msgpack 序列化失败）──
+                "harness_run_id": run_id_str,
+                "harness_step_id": None,
             }
 
             config = {"configurable": {"thread_id": thread_id}}
@@ -3168,10 +3206,26 @@ async def generate_chapter(
             seen_skill_pack_keys: set[tuple[str, str]] = set()
             current_stream_node = None  # 追踪当前正在流式输出的节点
 
+            # ── Harness: step 追踪 ──
+            STEP_NODE_MAP = {
+                "context_loader": ("build_context", 1),
+                "writer": ("generate_draft", 2),
+                "critic": ("critique", 3),
+                "consistency_checker": ("consistency_check", 3),
+                "human_review": ("human_review", 4),
+            }
+            active_steps: dict[str, object] = {}  # node_name -> AiRunStep
+            revision_round = 0
+
             # 逐节点流式执行
             async for event in app.astream_events(initial_state, config=config, version="v2"):
                 # 客户端取消时立即停止，不继续跑后续节点
                 if await _check_cancelled():
+                    try:
+                        await mark_cancelled(db, ai_run)
+                        await db.commit()
+                    except Exception:
+                        logger.warning("harness mark_cancelled 失败", exc_info=True)
                     return
                 kind = event.get("event")
 
@@ -3183,6 +3237,30 @@ async def generate_chapter(
                         yield f"event: agent_start\ndata: {json.dumps({'agent': node_name, 'step': 'running'}, ensure_ascii=False)}\n\n"
                         if node_name in STREAM_NODES:
                             current_stream_node = node_name
+                    # ── Harness: step start ──
+                    # 跳过已激活的 node：LangGraph 的 astream_events 会对同一节点
+                    # 触发多次 on_chain_start（链 + 节点），避免重复 INSERT step。
+                    if node_name in STEP_NODE_MAP and node_name not in active_steps:
+                        step_name, step_order = STEP_NODE_MAP[node_name]
+                        try:
+                            step = await start_step(
+                                db,
+                                run_id=ai_run.id,
+                                step_order=step_order,
+                                step_name=step_name,
+                                agent_name=node_name,
+                                revision_round=revision_round,
+                            )
+                            active_steps[node_name] = step
+                            ai_run.current_step = step_name
+                            # commit 而非仅 flush：节点可能用独立 session 操作同一 DB，
+                            # 未 commit 的行在 finish_step 的 UPDATE 时不可见（StaleDataError）。
+                            await db.commit()
+                            # step_id 关联由 LoggedLLMProvider._resolve_running_step_id 查询完成，
+                            # 不再通过 aupdate_state 注入（并行/动态节点下有竞态）。
+                            yield f"event: run_step\ndata: {json.dumps({'run_id': run_id_str, 'step_name': step_name, 'status': 'RUNNING'}, ensure_ascii=False)}\n\n"
+                        except Exception:
+                            logger.warning("harness start_step 失败 node=%s", node_name, exc_info=True)
 
                 elif kind == "on_chain_end":
                     node_name = event.get("name", "")
@@ -3191,6 +3269,24 @@ async def generate_chapter(
                         yield f"event: agent_done\ndata: {json.dumps({'agent': node_name, 'step': 'success'}, ensure_ascii=False)}\n\n"
                         if node_name in STREAM_NODES:
                             current_stream_node = None
+                    # ── Harness: step finish ──
+                    if node_name in STEP_NODE_MAP and node_name in active_steps:
+                        step = active_steps.pop(node_name)
+                        try:
+                            output_snapshot: dict = {}
+                            if isinstance(output, dict):
+                                if node_name == "writer":
+                                    output_snapshot = {"content_hash": str(hash(output.get("draft", "")))[:128]}
+                                elif node_name == "context_loader":
+                                    output_snapshot = {"context_len": len(output.get("context", ""))}
+                                elif node_name == "critic":
+                                    output_snapshot = {"critique_count": len(output.get("critiques", []))}
+                                elif node_name == "consistency_checker":
+                                    output_snapshot = {"report_len": len(output.get("consistency_report", ""))}
+                            await finish_step(db, step, output=output_snapshot)
+                            yield f"event: run_step\ndata: {json.dumps({'run_id': run_id_str, 'step_name': STEP_NODE_MAP[node_name][0], 'status': 'SUCCESS'}, ensure_ascii=False)}\n\n"
+                        except Exception:
+                            logger.warning("harness finish_step 失败 node=%s", node_name, exc_info=True)
 
                     for pack in _new_skill_packs(output, seen_skill_pack_keys):
                         workflow_skill_packs.append(pack)
@@ -3215,8 +3311,24 @@ async def generate_chapter(
                         yield f"event: consistency_check\ndata: {json.dumps({'report': report}, ensure_ascii=False)}\n\n"
 
                     elif node_name == "human_review":
-                        record_id = await _save_generation_history(writer_content, skill_packs=workflow_skill_packs)
+                        record_id = await _save_generation_history(writer_content, skill_packs=workflow_skill_packs, run_id=run_id_str)
                         yield _generation_record_event(record_id)
+                        await mark_waiting_human(db, ai_run, step_name="human_review", thread_id=thread_id)
+
+                        # ── Harness E: 创建 human_interrupt 记录 ──
+                        interrupt = await create_interrupt(
+                            db,
+                            run=ai_run,
+                            thread_id=thread_id,
+                            step_name="human_review",
+                            payload={
+                                "generation_record_id": record_id,
+                                "content_hash": hash(writer_content) if writer_content else None,
+                            },
+                        )
+
+                        await db.commit()
+                        yield f"event: run_status\ndata: {json.dumps({'run_id': run_id_str, 'status': 'WAITING_HUMAN'}, ensure_ascii=False)}\n\n"
                         yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
                         return
 
@@ -3244,22 +3356,207 @@ async def generate_chapter(
             workflow_state = await app.aget_state(config)
             next_nodes = workflow_state.next if workflow_state else []
             if "human_review" in next_nodes:
-                record_id = await _save_generation_history(writer_content, skill_packs=workflow_skill_packs)
+                record_id = await _save_generation_history(writer_content, skill_packs=workflow_skill_packs, run_id=run_id_str)
                 yield _generation_record_event(record_id)
+                await mark_waiting_human(db, ai_run, step_name="human_review", thread_id=thread_id)
+
+                # ── Harness E: 创建 human_interrupt 记录 ──
+                interrupt = await create_interrupt(
+                    db,
+                    run=ai_run,
+                    thread_id=thread_id,
+                    step_name="human_review",
+                    payload={
+                        "generation_record_id": record_id,
+                        "content_hash": hash(writer_content) if writer_content else None,
+                    },
+                )
+
+                await db.commit()
+                yield f"event: run_status\ndata: {json.dumps({'run_id': run_id_str, 'status': 'WAITING_HUMAN'}, ensure_ascii=False)}\n\n"
                 yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
                 return
 
-            record_id = await _save_generation_history(writer_content, skill_packs=workflow_skill_packs)
+            record_id = await _save_generation_history(writer_content, skill_packs=workflow_skill_packs, run_id=run_id_str)
             yield _generation_record_event(record_id)
+            await mark_completed(db, ai_run)
+            await db.commit()
+            yield f"event: run_status\ndata: {json.dumps({'run_id': run_id_str, 'status': 'COMPLETED'}, ensure_ascii=False)}\n\n"
             yield f"event: done\ndata: {json.dumps({'message': '生成完成'}, ensure_ascii=False)}\n\n"
 
         except Exception as e:
             logger.exception("生成失败")
+            try:
+                await mark_failed(db, ai_run, error_message=str(e))
+                await db.commit()
+            except Exception:
+                logger.warning("harness mark_failed 失败", exc_info=True)
             yield f"event: error\ndata: {json.dumps({'message': f'生成失败: {str(e)}'}, ensure_ascii=False)}\n\n"
         finally:
             finish_langfuse_context(langfuse_context)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ==================== AI Runs ====================
+
+@router.get("/ai-runs/{run_id}", response_model=AiRunResponse)
+async def get_ai_run(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """查询单个 AI Run 详情。校验 run 的 project 属于当前用户。"""
+    rid = _to_uuid(run_id)
+    result = await db.execute(select(AiRun).where(AiRun.id == rid))
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run 不存在")
+    await _verify_project_owner(run.project_id, user.id, db)
+    return AiRunResponse.model_validate(run)
+
+
+@router.get("/ai-runs/{run_id}/steps", response_model=list[AiRunStepResponse])
+async def get_ai_run_steps(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """查询 Run 的步骤列表，按 step_order 升序。含每步 llm_call_count。
+    排序稳定：step_order 相同时用 started_at（nulls last），再兜底 created_at。"""
+    from models.ai_run_step import AiRunStep
+    from models.llm_call_log import LlmCallLog
+    from sqlalchemy import func
+
+    rid = _to_uuid(run_id)
+    run_result = await db.execute(select(AiRun).where(AiRun.id == rid))
+    run = run_result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run 不存在")
+    await _verify_project_owner(run.project_id, user.id, db)
+
+    result = await db.execute(
+        select(
+            AiRunStep,
+            func.count(LlmCallLog.id).label("llm_call_count"),
+        )
+        .outerjoin(LlmCallLog, LlmCallLog.step_id == AiRunStep.id)
+        .where(AiRunStep.run_id == rid)
+        .group_by(AiRunStep.id)
+        .order_by(
+            AiRunStep.step_order,
+            AiRunStep.started_at.nulls_last(),
+            AiRunStep.created_at,
+        )
+    )
+    return [
+        AiRunStepResponse(
+            id=row.AiRunStep.id,
+            run_id=row.AiRunStep.run_id,
+            step_order=row.AiRunStep.step_order,
+            step_name=row.AiRunStep.step_name,
+            agent_name=row.AiRunStep.agent_name,
+            status=row.AiRunStep.status,
+            error_message=row.AiRunStep.error_message,
+            started_at=row.AiRunStep.started_at,
+            ended_at=row.AiRunStep.ended_at,
+            llm_call_count=row.llm_call_count,
+        )
+        for row in result.all()
+    ]
+
+
+@router.get("/projects/{project_id}/ai-runs", response_model=list[AiRunListItemResponse])
+async def list_project_ai_runs(
+    project_id: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """查询项目的 AI Run 列表，按 created_at 降序。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    result = await db.execute(
+        select(AiRun)
+        .where(AiRun.project_id == uid)
+        .order_by(AiRun.created_at.desc())
+        .limit(limit)
+    )
+    return [AiRunListItemResponse.model_validate(run) for run in result.scalars().all()]
+
+
+@router.post("/ai-runs/{run_id}/human-decisions", response_model=HumanDecisionResponse)
+async def create_human_decision(
+    run_id: str,
+    request: HumanDecisionRequest,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """为 AI Run 提交人工审核决策。
+
+    新的 human-decisions API，支持幂等性保护。
+    使用 run_id 而不是 thread_id 作为主要标识。
+
+    Args:
+        run_id: AI Run ID
+        request: 决策请求（decision + feedback）
+        db: 数据库会话
+        user: 当前用户
+
+    Returns:
+        决策响应，包含 run_id、interrupt_id、status、message
+    """
+    from models.harness_enums import InterruptDecision
+
+    rid = _to_uuid(run_id)
+    run_result = await db.execute(select(AiRun).where(AiRun.id == rid))
+    run = run_result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run 不存在")
+    await _verify_project_owner(run.project_id, user.id, db)
+
+    # 查找最新的 interrupt
+    interrupt = await get_interrupt_by_run(db, str(run.id))
+    if not interrupt:
+        raise HTTPException(status_code=404, detail="未找到对应的 human interrupt")
+
+    # 幂等性检查：如果已解析，直接返回
+    if interrupt.resolved:
+        return HumanDecisionResponse(
+            run_id=str(run.id),
+            interrupt_id=str(interrupt.id),
+            status="already_resolved",
+            message=f"该 interrupt 已于 {interrupt.resolved_at} 解析为 {interrupt.decision}",
+        )
+
+    # 解析 interrupt
+    decision_enum = InterruptDecision(request.decision)
+    await resolve_interrupt(db, interrupt, decision=decision_enum, feedback=request.feedback)
+
+    # 根据决策更新 run 状态
+    if decision_enum == InterruptDecision.APPROVE:
+        await mark_completed(db, run)
+        message = "已批准，run 标记为 COMPLETED"
+    elif decision_enum == InterruptDecision.REJECT:
+        await mark_failed(db, run, error_message="用户拒绝")
+        message = "已拒绝，run 标记为 FAILED"
+    elif decision_enum == InterruptDecision.EDIT:
+        # EDIT 保持 WAITING_HUMAN 状态，等待编辑后再次提交
+        message = "已记录编辑决策，等待用户修改后继续"
+    elif decision_enum == InterruptDecision.REGENERATE:
+        # REGENERATE 将触发重新生成（需要调用 resume API）
+        message = "已记录重新生成决策，需要调用 resume API 继续"
+    else:
+        message = "决策已记录"
+
+    await db.commit()
+
+    return HumanDecisionResponse(
+        run_id=str(run.id),
+        interrupt_id=str(interrupt.id),
+        status="resolved",
+        message=message,
+    )
 
 
 # ==================== 工作流恢复（HITL） ====================
@@ -3321,6 +3618,19 @@ async def resume_chapter_generation(
                 yield f"event: error\ndata: {json.dumps({'message': '工作流状态不存在或已过期'}, ensure_ascii=False)}\n\n"
                 return
 
+            # ── Harness: 按 thread_id 反查 run_id（resume 路径关联 run）──
+            _resume_run = (
+                await db.execute(select(AiRun).where(AiRun.thread_id == thread_id))
+            ).scalar_one_or_none()
+            _resume_run_id = str(_resume_run.id) if _resume_run else None
+
+            # ── Harness E: 幂等性检查 - 防止重复 approve ──
+            if _resume_run and action == "approve":
+                interrupt = await get_interrupt_by_thread(db, thread_id)
+                if interrupt and interrupt.resolved:
+                    yield f"event: error\ndata: {json.dumps({'message': f'该任务已于 {interrupt.resolved_at} 处理为 {interrupt.decision}，不可重复操作'}, ensure_ascii=False)}\n\n"
+                    return
+
             async def _save_resume_generation_history(content: str, values: dict) -> str | None:
                 target_content_id = values.get("chapter_id", "")
                 if not content.strip() or not target_content_id:
@@ -3336,6 +3646,7 @@ async def resume_chapter_generation(
                         content=content,
                         skill_packs=values.get("skill_packs") or None,
                         langfuse_trace_id=current_langfuse_trace_id(),
+                        run_id=_resume_run_id,
                     )
                     if not record:
                         return None
@@ -3483,6 +3794,15 @@ async def resume_chapter_generation(
 
             # approve: 恢复执行到结束
             await app.aupdate_state(config, {}, as_node="human_review")
+
+            # ── Harness E: approve 时解析 interrupt ──
+            if _resume_run:
+                from models.harness_enums import InterruptDecision
+                interrupt = await get_interrupt_by_thread(db, thread_id)
+                if interrupt and not interrupt.resolved:
+                    await resolve_interrupt(db, interrupt, decision=InterruptDecision.APPROVE, feedback=feedback)
+                    await db.commit()
+
             current_values = state.values
             # 优先使用 edited_draft（经编辑润色），若无则使用 draft（原始创作）
             raw_content = current_values.get("edited_draft", "") or current_values.get("draft", "")

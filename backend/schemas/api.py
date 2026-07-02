@@ -940,3 +940,74 @@ class KnowledgeAskResponse(BaseModel):
     conversation_summary_updated: bool = False
     query_plan: dict | None = None
     retrieval_stats: dict | None = None
+
+
+# ==================== AI Run ====================
+
+class AiRunResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    chapter_id: uuid.UUID | None = None
+    document_id: uuid.UUID | None = None
+    generation_record_id: uuid.UUID | None = None
+    run_type: str
+    mode: str
+    status: str
+    current_step: str | None = None
+    user_goal: str | None = None
+    thread_id: str | None = None
+    token_usage: dict | None = None
+    cost_usage: dict | None = None
+    error_message: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AiRunListItemResponse(BaseModel):
+    id: uuid.UUID
+    run_type: str
+    mode: str
+    status: str
+    current_step: str | None = None
+    generation_record_id: uuid.UUID | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AiRunStepResponse(BaseModel):
+    """step 摘要——不含 input/output 等大字段，避免 API 响应变重。"""
+    id: uuid.UUID
+    run_id: uuid.UUID
+    step_order: int
+    step_name: str
+    agent_name: str | None = None
+    status: str
+    error_message: str | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    llm_call_count: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+# ==================== Human Interrupt ====================
+
+class HumanDecisionRequest(BaseModel):
+    """人工审核决策请求"""
+    decision: str = Field(..., pattern=r"^(APPROVE|REJECT|EDIT|REGENERATE)$")
+    feedback: str | None = None
+
+
+class HumanDecisionResponse(BaseModel):
+    """人工审核决策响应"""
+    run_id: str
+    interrupt_id: str
+    status: str
+    message: str
