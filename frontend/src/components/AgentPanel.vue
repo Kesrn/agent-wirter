@@ -672,8 +672,20 @@ function handleSSEEvent(envelope: SSEEnvelope) {
     }
     case 'consistency_check': {
       const payload = data as unknown as ConsistencyCheckPayload
-      if (payload.report) expertStore.appendOutput(pid.value, `\n[一致性检查]\n${payload.report}\n`)
-      if (payload.report) saveReviewNoteFromStream('consistency_check', payload.report, 'info')
+      const gr = payload.guardrail_result
+      // 结构化渲染：如果有 issues，按 severity 排列
+      if (gr && !gr.parse_error && gr.issues && gr.issues.length) {
+        const severityLabel: Record<string, string> = { high: '严重', medium: '中等', low: '轻微', info: '提示' }
+        const lines = gr.issues.map(i => `  • [${severityLabel[i.severity ?? 'info'] ?? '提示'}] ${i.type ?? '未知'}: ${i.description ?? ''}`)
+        const header = gr.summary ? `[一致性检查] ${gr.summary}（${severityLabel[gr.overall_severity ?? 'info'] ?? '提示'}）` : '[一致性检查]'
+        expertStore.appendOutput(pid.value, `\n${header}\n${lines.join('\n')}\n`)
+        // severity 映射：high → critical, medium → warning, low/info → info
+        const maxSeverity = gr.overall_severity === 'high' ? 'critical' : (gr.overall_severity === 'medium' ? 'warning' : 'info')
+        saveReviewNoteFromStream('consistency_check', payload.report || gr.summary || '一致性检查完成', maxSeverity)
+      } else if (payload.report) {
+        expertStore.appendOutput(pid.value, `\n[一致性检查]\n${payload.report}\n`)
+        saveReviewNoteFromStream('consistency_check', payload.report, 'info')
+      }
       expertStore.updateStepStatus(pid.value, 'consistency', 'success')
       break
     }

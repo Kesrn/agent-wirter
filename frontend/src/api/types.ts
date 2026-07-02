@@ -778,8 +778,23 @@ export interface CriticOutputPayload {
 }
 
 /** Payload for consistency_check SSE event (full_pipeline mode) */
+export interface GuardrailIssue {
+  type?: string
+  description?: string
+  severity?: 'info' | 'low' | 'medium' | 'high' | string
+}
+
+export interface GuardrailResult {
+  issues?: GuardrailIssue[]
+  summary?: string
+  overall_severity?: 'info' | 'low' | 'medium' | 'high' | string
+  parse_error?: boolean
+  raw?: string
+}
+
 export interface ConsistencyCheckPayload {
   report?: string
+  guardrail_result?: GuardrailResult
 }
 
 /** Payload for enhance_directions SSE event */
