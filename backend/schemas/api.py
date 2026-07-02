@@ -700,6 +700,29 @@ class EvaluationDatasetUpdate(BaseModel):
     status: str | None = Field(default=None, pattern=r"^(active|archived)$")
 
 
+# --- 写作记忆 staging ---
+
+class WritingMemoryStagingResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    run_id: uuid.UUID | None = None
+    chapter_id: uuid.UUID | None = None
+    chapter_version_id: uuid.UUID | None = None
+    chapter_sequence_number: int | None = None
+    memory_type: str
+    title: str
+    payload: dict = Field(default_factory=dict)
+    evidence: str | None = None
+    status: str
+    confirmed_target_type: str | None = None
+    confirmed_target_id: uuid.UUID | None = None
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class EvaluationDatasetResponse(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID

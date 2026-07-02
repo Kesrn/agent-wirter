@@ -120,3 +120,177 @@ async def test_writing_memory_staging_columns_exist(async_db):
         assert name in cols, f"writing_memory_staging 缺列 {name}"
     # payload 不应是 nullable（有 default）
     assert cols["payload"].nullable is False or cols["payload"].default is not None
+
+
+# ==================== API 测试 ====================
+# 复用 smoke test 的 SQLite 引擎 + TestClient
+
+import asyncio
+import json
+import tests.test_smoke as smoke
+from db.session import get_db, set_engine
+from main import app
+
+_test_engine = smoke.test_engine
+_test_session_factory = smoke.test_session_factory
+client = smoke.client
+
+
+@pytest.fixture(autouse=True)
+def _ensure_db():
+    set_engine(_test_engine)
+    asyncio.run(_ensure_tables_fn())
+    yield
+
+
+async def _ensure_tables_fn():
+    async with _test_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
+_cached_auth: dict[str, str] = {}
+
+
+def _auth_headers(username="msuser", password="mspass"):
+    if username in _cached_auth:
+        return {"Authorization": f"Bearer {_cached_auth[username]}"}
+    client.post("/api/auth/register", json={"username": username, "password": password})
+    resp = client.post("/api/auth/login", json={"username": username, "password": password})
+    token = resp.json()["access_token"]
+    _cached_auth[username] = token
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _create_project_and_staging(headers, memory_type="CHARACTER"):
+    """建项目 + 直接写一条 staging 记录，返回 (project_id, staging_id)。"""
+    proj = client.post("/api/projects", json={"title": "staging test", "mode": "novel"}, headers=headers).json()
+    pid = proj["id"]
+
+    # 通过 DB 直接插入 staging 记录
+    async def _insert():
+        from models.writing_memory_staging import WritingMemoryStaging
+        from models.harness_enums import MemoryStagingStatus, MemoryType
+        async with _test_session_factory() as s:
+            item = WritingMemoryStaging(
+                project_id=pid,
+                memory_type=MemoryType(memory_type),
+                title="测试记忆",
+                payload={"name": "角色X"},
+                evidence="证据文本",
+                status=MemoryStagingStatus.GENERATED,
+                chapter_sequence_number=1,
+            )
+            s.add(item)
+            await s.commit()
+            await s.refresh(item)
+            return str(item.id)
+
+    staging_id = asyncio.new_event_loop().run_until_complete(_insert())
+    return pid, staging_id
+
+
+def test_list_memory_staging_by_project():
+    headers = _auth_headers("mslist", "mslistpass")
+    pid, sid = _create_project_and_staging(headers)
+
+    resp = client.get(f"/api/projects/{pid}/memory-staging", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["id"] == sid
+    assert data[0]["status"] == "GENERATED"
+    assert data[0]["memory_type"] == "CHARACTER"
+
+
+def test_list_memory_staging_status_filter():
+    headers = _auth_headers("msfilter", "msfilterpass")
+    pid, sid = _create_project_and_staging(headers)
+
+    # confirm 一条
+    client.post(f"/api/projects/{pid}/memory-staging/{sid}/confirm", headers=headers)
+
+    # 查 GENERATED → 空
+    resp = client.get(f"/api/projects/{pid}/memory-staging?status=GENERATED", headers=headers)
+    assert resp.status_code == 200
+    assert len(resp.json()) == 0
+
+    # 查 CONFIRMED → 1 条
+    resp = client.get(f"/api/projects/{pid}/memory-staging?status=CONFIRMED", headers=headers)
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+
+
+def test_confirm_staging_happy_path():
+    headers = _auth_headers("msconfirm", "msconfirmpass")
+    pid, sid = _create_project_and_staging(headers)
+
+    resp = client.post(f"/api/projects/{pid}/memory-staging/{sid}/confirm", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "CONFIRMED"
+    assert data["reviewed_at"] is not None
+    assert data["reviewed_by"] is not None
+
+
+def test_confirm_staging_idempotent():
+    headers = _auth_headers("msidem", "msidempass")
+    pid, sid = _create_project_and_staging(headers)
+
+    r1 = client.post(f"/api/projects/{pid}/memory-staging/{sid}/confirm", headers=headers)
+    assert r1.status_code == 200
+    r2 = client.post(f"/api/projects/{pid}/memory-staging/{sid}/confirm", headers=headers)
+    assert r2.status_code == 200
+    assert r2.json()["status"] == "CONFIRMED"
+
+
+def test_reject_staging_idempotent():
+    headers = _auth_headers("msrej", "msrejpass")
+    pid, sid = _create_project_and_staging(headers)
+
+    r1 = client.post(f"/api/projects/{pid}/memory-staging/{sid}/reject", headers=headers)
+    assert r1.status_code == 200
+    r2 = client.post(f"/api/projects/{pid}/memory-staging/{sid}/reject", headers=headers)
+    assert r2.status_code == 200
+    assert r2.json()["status"] == "REJECTED"
+
+
+def test_cross_state_409():
+    """CONFIRMED → REJECT 返回 409；REJECTED → CONFIRM 返回 409。"""
+    headers = _auth_headers("ms409", "ms409pass")
+
+    # CONFIRMED → REJECT
+    pid1, sid1 = _create_project_and_staging(headers, "CHARACTER")
+    client.post(f"/api/projects/{pid1}/memory-staging/{sid1}/confirm", headers=headers)
+    resp = client.post(f"/api/projects/{pid1}/memory-staging/{sid1}/reject", headers=headers)
+    assert resp.status_code == 409
+
+    # REJECTED → CONFIRM
+    pid2, sid2 = _create_project_and_staging(headers, "WORLD_RULE")
+    client.post(f"/api/projects/{pid2}/memory-staging/{sid2}/reject", headers=headers)
+    resp = client.post(f"/api/projects/{pid2}/memory-staging/{sid2}/confirm", headers=headers)
+    assert resp.status_code == 409
+
+
+def test_staging_not_found():
+    headers = _auth_headers("ms404", "ms404pass")
+    proj = client.post("/api/projects", json={"title": "404 test", "mode": "novel"}, headers=headers).json()
+    pid = proj["id"]
+    fake_id = "00000000-0000-0000-0000-000000000000"
+    resp = client.post(f"/api/projects/{pid}/memory-staging/{fake_id}/confirm", headers=headers)
+    assert resp.status_code == 404
+
+
+def test_staging_cross_project_isolation():
+    """用户 A 的 staging 对用户 B 不可见。"""
+    headers_a = _auth_headers("msisoA", "msisoApass")
+    headers_b = _auth_headers("msisoB", "msisoBpass")
+
+    pid_a, sid_a = _create_project_and_staging(headers_a)
+
+    # B 看不到 A 的 staging
+    resp = client.get(f"/api/projects/{pid_a}/memory-staging", headers=headers_b)
+    assert resp.status_code == 404
+
+    # B 不能 confirm A 的 staging
+    resp = client.post(f"/api/projects/{pid_a}/memory-staging/{sid_a}/confirm", headers=headers_b)
+    assert resp.status_code == 404

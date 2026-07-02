@@ -6,7 +6,7 @@ import os
 import re
 import shutil
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse, Response
@@ -37,6 +37,7 @@ from models.project_source_chunk import ProjectSourceChunk
 from models.project_knowledge_fact import ProjectKnowledgeFact
 from models.knowledge_qa_session import KnowledgeQaSession
 from models.knowledge_qa_message import KnowledgeQaMessage
+from models.writing_memory_staging import WritingMemoryStaging
 from models.structured_knowledge import (
     CharacterProfile, AbilityProfile, EventTimeline, WorldRule, CharacterAppearance,
 )
@@ -69,6 +70,7 @@ from schemas.api import (
     EvaluationRunCreate, EvaluationRunResponse, EvaluationResultResponse,
     AiRunResponse, AiRunListItemResponse, AiRunStepResponse,
     HumanDecisionRequest, HumanDecisionResponse,
+    WritingMemoryStagingResponse,
     AuthUser,
 )
 from agents.safety import validate_expert_safety
@@ -3413,6 +3415,101 @@ async def generate_chapter(
             finish_langfuse_context(langfuse_context)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ==================== 写作记忆 staging ====================
+
+@router.get("/projects/{project_id}/memory-staging", response_model=list[WritingMemoryStagingResponse])
+async def list_memory_staging(
+    project_id: str,
+    status: str | None = Query(default=None, pattern=r"^(GENERATED|CONFIRMED|REJECTED)$"),
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """列出项目的写作记忆 staging 记录，可选按 status 过滤。"""
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    query = select(WritingMemoryStaging).where(WritingMemoryStaging.project_id == uid)
+    if status:
+        query = query.where(WritingMemoryStaging.status == status)
+    query = query.order_by(WritingMemoryStaging.created_at.desc())
+    result = await db.execute(query)
+    return [WritingMemoryStagingResponse.model_validate(item) for item in result.scalars().all()]
+
+
+async def _transition_staging_status(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    staging_id: str,
+    target_status: str,
+    user: AuthUser,
+) -> WritingMemoryStaging:
+    """通用状态转换：confirm → CONFIRMED, reject → REJECTED。
+
+    跨状态规则：
+    - GENERATED → CONFIRMED/REJECTED  OK
+    - 同状态 → 幂等返回
+    - CONFIRMED → REJECTED 或 REJECTED → CONFIRMED → 409
+    """
+    await _verify_project_owner(project_id, user.id, db)
+    sid = _to_uuid(staging_id)
+    result = await db.execute(
+        select(WritingMemoryStaging).where(
+            WritingMemoryStaging.id == sid,
+            WritingMemoryStaging.project_id == project_id,
+        )
+    )
+    staging = result.scalar_one_or_none()
+    if not staging:
+        raise HTTPException(status_code=404, detail="记忆记录不存在")
+
+    if staging.status == target_status:
+        # 幂等
+        return staging
+
+    # 跨状态冲突检查
+    if staging.status in ("CONFIRMED", "REJECTED") and target_status != staging.status:
+        raise HTTPException(
+            status_code=409,
+            detail=f"记忆记录当前状态为 {staging.status}，不可转为 {target_status}",
+        )
+
+    staging.status = target_status
+    staging.reviewed_at = datetime.now(timezone.utc)
+    staging.reviewed_by = user.id
+    return staging
+
+
+@router.post("/projects/{project_id}/memory-staging/{staging_id}/confirm", response_model=WritingMemoryStagingResponse)
+async def confirm_memory_staging(
+    project_id: str,
+    staging_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """确认写作记忆 staging（H1 只改状态，H3 才写正式表）。"""
+    staging = await _transition_staging_status(
+        db, _to_uuid(project_id), staging_id, "CONFIRMED", user
+    )
+    await db.commit()
+    await db.refresh(staging)
+    return WritingMemoryStagingResponse.model_validate(staging)
+
+
+@router.post("/projects/{project_id}/memory-staging/{staging_id}/reject", response_model=WritingMemoryStagingResponse)
+async def reject_memory_staging(
+    project_id: str,
+    staging_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """拒绝写作记忆 staging。"""
+    staging = await _transition_staging_status(
+        db, _to_uuid(project_id), staging_id, "REJECTED", user
+    )
+    await db.commit()
+    await db.refresh(staging)
+    return WritingMemoryStagingResponse.model_validate(staging)
 
 
 # ==================== AI Runs ====================
