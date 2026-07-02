@@ -342,3 +342,92 @@ def test_parse_facts_missing_fields():
     assert facts[0]["title"] == "事件A"
     assert facts[0]["payload"] == {}  # 默认
     assert facts[0]["evidence"] is None  # 默认
+
+
+# ==================== H2: staging service 测试 ====================
+
+@pytest.mark.asyncio
+async def test_create_staging_from_extraction_writes_rows(async_db):
+    """create_staging_from_extraction 应写入 staging 记录，字段正确。"""
+    from services.memory_staging_service import create_staging_from_extraction
+
+    facts = [
+        {"memory_type": "CHARACTER", "title": "角色A", "payload": {"name": "角色A"}, "evidence": "证据A"},
+        {"memory_type": "WORLD_RULE", "title": "魔法体系", "payload": {"content": "火克木"}, "evidence": "证据B"},
+    ]
+    created = await create_staging_from_extraction(
+        async_db,
+        project_id="11111111-1111-1111-1111-111111111111",
+        chapter_id="22222222-2222-2222-2222-222222222222",
+        chapter_version_id="33333333-3333-3333-3333-333333333333",
+        chapter_sequence_number=3,
+        run_id="44444444-4444-4444-4444-444444444444",
+        facts=facts,
+    )
+    await async_db.flush()
+
+    assert len(created) == 2
+    assert created[0].memory_type == "CHARACTER"
+    assert created[0].title == "角色A"
+    assert created[0].payload["name"] == "角色A"
+    assert created[0].evidence == "证据A"
+    assert created[0].status == "GENERATED"
+    assert created[0].chapter_sequence_number == 3
+    assert created[0].idempotency_key is not None
+    assert created[1].memory_type == "WORLD_RULE"
+
+
+@pytest.mark.asyncio
+async def test_create_staging_idempotent_same_chapter_version(async_db):
+    """同一 chapter_version_id 已存在任何 staging 记录时 skip（不限 status）。"""
+    from services.memory_staging_service import create_staging_from_extraction
+    from models.writing_memory_staging import WritingMemoryStaging
+    from models.harness_enums import MemoryStagingStatus, MemoryType
+
+    # 预插入一条 CONFIRMED 记录
+    existing = WritingMemoryStaging(
+        project_id="55555555-5555-5555-5555-555555555555",
+        chapter_version_id="66666666-6666-6666-6666-666666666666",
+        memory_type=MemoryType.CHARACTER,
+        title="已有记忆",
+        payload={},
+        status=MemoryStagingStatus.CONFIRMED,
+    )
+    async_db.add(existing)
+    await async_db.flush()
+
+    # 再次抽取同一 version → 应 skip
+    facts = [{"memory_type": "CHARACTER", "title": "新角色", "payload": {}, "evidence": None}]
+    created = await create_staging_from_extraction(
+        async_db,
+        project_id="55555555-5555-5555-5555-555555555555",
+        chapter_id=None,
+        chapter_version_id="66666666-6666-6666-6666-666666666666",
+        chapter_sequence_number=1,
+        run_id=None,
+        facts=facts,
+    )
+    assert created == []  # skip
+
+
+@pytest.mark.asyncio
+async def test_create_staging_idempotency_key_format(async_db):
+    """idempotency_key 格式应为 {chapter_version_id}:{index}。"""
+    from services.memory_staging_service import create_staging_from_extraction
+
+    facts = [
+        {"memory_type": "CHARACTER", "title": "A", "payload": {}, "evidence": None},
+        {"memory_type": "EVENT", "title": "B", "payload": {}, "evidence": None},
+    ]
+    created = await create_staging_from_extraction(
+        async_db,
+        project_id="77777777-7777-7777-7777-777777777777",
+        chapter_id=None,
+        chapter_version_id="88888888-8888-8888-8888-888888888888",
+        chapter_sequence_number=1,
+        run_id=None,
+        facts=facts,
+    )
+    await async_db.flush()
+    assert created[0].idempotency_key == "88888888-8888-8888-8888-888888888888:0"
+    assert created[1].idempotency_key == "88888888-8888-8888-8888-888888888888:1"

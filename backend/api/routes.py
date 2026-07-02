@@ -1,5 +1,6 @@
 """API 路由"""
 
+import asyncio
 import json
 import logging
 import os
@@ -110,6 +111,7 @@ from services.generation_record_service import (
     update_generation_record_status,
 )
 from services.evaluation import default_rubric, normalize_expected_properties, normalize_rubric, run_evaluation_case
+from services.memory_staging_service import run_fact_extraction
 from observability.langfuse import activate_langfuse_context, current_langfuse_trace_id, finish_langfuse_context
 from config.settings import settings
 
@@ -3973,6 +3975,27 @@ async def resume_chapter_generation(
                                             accepted_version_id=str(_ver.id),
                                         )
                                         await db.commit()
+                            # ── Phase H2: 后台抽取写作记忆 ──
+                            # SQLite :memory: 测试环境跳过（独立 session 看不到内存表）；
+                            # 生产用 Postgres 不受影响
+                            from db.session import get_engine as _get_engine_for_guard
+                            _is_sqlite = _get_engine_for_guard().dialect.name == "sqlite"
+                            if _resume_run_id and not _is_sqlite:
+                                _accepted_vid = (
+                                    str(_gr.accepted_version_id) if _gr and _gr.accepted_version_id
+                                    else (str(_ver.id) if _ver else None)
+                                )
+                                if _accepted_vid:
+                                    asyncio.create_task(run_fact_extraction(
+                                        project_id=str(uid),
+                                        chapter_id=str(chapter.id),
+                                        chapter_version_id=_accepted_vid,
+                                        chapter_sequence_number=chapter.sequence_number,
+                                        run_id=_resume_run_id,
+                                        content=raw_content,
+                                        context=current_values.get("context", ""),
+                                        llm_config=current_values.get("llm_config"),
+                                    ))
                 except Exception:
                     logger.exception("落库失败")
                     yield f"event: error\ndata: {json.dumps({'message': '保存失败'}, ensure_ascii=False)}\n\n"
