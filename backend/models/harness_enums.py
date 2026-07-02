@@ -38,3 +38,17 @@ class InterruptDecision(str, Enum):
     REJECT = "REJECT"
     EDIT = "EDIT"
     REGENERATE = "REGENERATE"
+
+
+class MemoryStagingStatus(str, Enum):
+    GENERATED = "GENERATED"
+    CONFIRMED = "CONFIRMED"
+    REJECTED = "REJECTED"
+
+
+class MemoryType(str, Enum):
+    CHARACTER = "CHARACTER"
+    WORLD_RULE = "WORLD_RULE"
+    PLOT_FACT = "PLOT_FACT"
+    EVENT = "EVENT"
+    FORESHADOWING = "FORESHADOWING"
