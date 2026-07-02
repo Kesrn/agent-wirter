@@ -89,6 +89,7 @@ from api.rate_limiter import agent_limiter
 from rag.embedding_service import generate_embedding, _update_embedding_bg
 from services.diff_service import compute_diff
 from services.chapter_save import save_chapter_content
+from agents.guardrail import guardrail_to_text as _guardrail_to_text
 from services.document_save import save_document_content
 from services.skill_pack_planner import SkillPackPlan, plan_direct_skill_pack
 from services.txt_import import decode_txt_bytes, split_txt_into_chapters, build_import_meta
@@ -3282,7 +3283,9 @@ async def generate_chapter(
                                 elif node_name == "critic":
                                     output_snapshot = {"critique_count": len(output.get("critiques", []))}
                                 elif node_name == "consistency_checker":
-                                    output_snapshot = {"report_len": len(output.get("consistency_report", ""))}
+                                    _gr = output.get("consistency_report", {})
+                                    _issues = _gr.get("issues", []) if isinstance(_gr, dict) else []
+                                    output_snapshot = {"issue_count": len(_issues), "overall_severity": _gr.get("overall_severity", "info") if isinstance(_gr, dict) else "info"}
                             await finish_step(db, step, output=output_snapshot)
                             yield f"event: run_step\ndata: {json.dumps({'run_id': run_id_str, 'step_name': STEP_NODE_MAP[node_name][0], 'status': 'SUCCESS'}, ensure_ascii=False)}\n\n"
                         except Exception:
@@ -3307,8 +3310,11 @@ async def generate_chapter(
                         yield f"event: critic_output\ndata: {json.dumps({'critiques': critiques}, ensure_ascii=False)}\n\n"
 
                     elif node_name == "consistency_checker":
-                        report = output.get("consistency_report", "") if isinstance(output, dict) else ""
-                        yield f"event: consistency_check\ndata: {json.dumps({'report': report}, ensure_ascii=False)}\n\n"
+                        guardrail = output.get("consistency_report", {}) if isinstance(output, dict) else {}
+                        if not isinstance(guardrail, dict):
+                            guardrail = {}
+                        report_text = _guardrail_to_text(guardrail)
+                        yield f"event: consistency_check\ndata: {json.dumps({'report': report_text, 'guardrail_result': guardrail}, ensure_ascii=False)}\n\n"
 
                     elif node_name == "human_review":
                         record_id = await _save_generation_history(writer_content, skill_packs=workflow_skill_packs, run_id=run_id_str)
@@ -3691,7 +3697,7 @@ async def resume_chapter_generation(
                     (
                         f"## 当前候选稿\n{candidate}\n\n"
                         f"## 已有审校意见\n{chr(10).join(current_values.get('critiques', [])) or '无'}\n\n"
-                        f"## 一致性检查\n{current_values.get('consistency_report', '') or '无'}"
+                        f"## 一致性检查\n{_guardrail_to_text(current_values.get('consistency_report', {})) or '无'}"
                     ),
                     temperature=0.3,
                     max_tokens=1024,
@@ -3757,8 +3763,11 @@ async def resume_chapter_generation(
                             critiques = output.get("critiques", []) if isinstance(output, dict) else []
                             yield f"event: critic_output\ndata: {json.dumps({'critiques': critiques}, ensure_ascii=False)}\n\n"
                         elif node_name == "consistency_checker":
-                            report = output.get("consistency_report", "") if isinstance(output, dict) else ""
-                            yield f"event: consistency_check\ndata: {json.dumps({'report': report}, ensure_ascii=False)}\n\n"
+                            guardrail = output.get("consistency_report", {}) if isinstance(output, dict) else {}
+                            if not isinstance(guardrail, dict):
+                                guardrail = {}
+                            report_text = _guardrail_to_text(guardrail)
+                            yield f"event: consistency_check\ndata: {json.dumps({'report': report_text, 'guardrail_result': guardrail}, ensure_ascii=False)}\n\n"
                         elif node_name == "editor":
                             edited = output.get("edited_draft", "") if isinstance(output, dict) else ""
                             if edited:

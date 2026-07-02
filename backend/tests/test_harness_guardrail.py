@@ -194,3 +194,24 @@ async def test_consistency_checker_node_parse_failure_returns_dict():
     assert isinstance(report, dict)
     assert report["parse_error"] is True
     assert len(report["issues"]) == 0
+
+
+# ==================== SSE payload 兼容性 ====================
+
+def test_consistency_check_sse_payload_has_both_fields():
+    """consistency_check SSE payload 应同时包含 report（文本）和 guardrail_result（结构化）。"""
+    from agents.guardrail import parse_guardrail_result, guardrail_to_text
+
+    raw = '{"issues": [{"type": "plot", "description": "剧情断裂", "severity": "high"}], "summary": "1个高优问题", "overall_severity": "high"}'
+    guardrail = parse_guardrail_result(raw)
+    report_text = guardrail_to_text(guardrail)
+
+    import json
+    payload = {"report": report_text, "guardrail_result": guardrail}
+    serialized = json.dumps(payload, ensure_ascii=False)
+    deserialized = json.loads(serialized)
+
+    assert "report" in deserialized
+    assert "guardrail_result" in deserialized
+    assert deserialized["guardrail_result"]["overall_severity"] == "high"
+    assert "剧情断裂" in deserialized["report"]
