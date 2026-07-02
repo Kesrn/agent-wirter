@@ -3826,8 +3826,36 @@ async def resume_chapter_generation(
                         )
                         chapter = ch_result.scalar_one_or_none()
                         if chapter:
-                            await save_chapter_content(db, chapter, raw_content, source="ai_approve", set_status="draft")
+                            await save_chapter_content(
+                                db, chapter, raw_content, source="ai_approve",
+                                set_status="draft", run_id=_resume_run_id,
+                            )
                             await db.commit()
+                            # ── Phase F: 联动 GenerationRecord.accepted_version_id ──
+                            if _resume_run_id:
+                                _gr = (
+                                    await db.execute(
+                                        select(GenerationRecord).where(
+                                            GenerationRecord.run_id == _to_uuid(_resume_run_id)
+                                        )
+                                    )
+                                ).scalar_one_or_none()
+                                if _gr:
+                                    # 查刚创建的版本（最新）
+                                    _ver = (
+                                        await db.execute(
+                                            select(ChapterVersion)
+                                            .where(ChapterVersion.chapter_id == chapter.id)
+                                            .order_by(ChapterVersion.version_number.desc())
+                                            .limit(1)
+                                        )
+                                    ).scalar_one_or_none()
+                                    if _ver:
+                                        await update_generation_record_status(
+                                            db, _gr, "applied",
+                                            accepted_version_id=str(_ver.id),
+                                        )
+                                        await db.commit()
                 except Exception:
                     logger.exception("落库失败")
                     yield f"event: error\ndata: {json.dumps({'message': '保存失败'}, ensure_ascii=False)}\n\n"

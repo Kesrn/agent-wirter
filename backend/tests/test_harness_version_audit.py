@@ -204,3 +204,64 @@ def test_version_list_endpoint_returns_audit_fields():
         "created_at": datetime.now(timezone.utc),
     })
     assert item.run_id is not None
+
+
+# ==================== Approve flow: run_id + accepted_version_id 联动 ====================
+
+@pytest.mark.asyncio
+async def test_approve_sets_run_id_on_version_and_accepted_version_id_on_record(async_db):
+    """resume approve 路径应：1) 在 ChapterVersion 写 run_id；2) 在 GenerationRecord 写 accepted_version_id。
+
+    此测试通过直接调用 service 层模拟 approve 行为，验证联动逻辑。
+    """
+    import uuid
+    from models.project import Project
+    from models.generation_record import GenerationRecord
+    from services.chapter_save import save_chapter_content
+    from services.generation_record_service import update_generation_record_status
+    from sqlalchemy import select
+
+    pid = uuid.uuid4()
+    project = Project(id=pid, title="审计联动测试", mode="novel")
+    async_db.add(project)
+    await async_db.flush()
+
+    chapter = Chapter(
+        id=uuid.uuid4(), project_id=pid, title="章",
+        sequence_number=1, content="", status="draft",
+    )
+    async_db.add(chapter)
+
+    # 模拟 generation record（candidate 状态）
+    record = GenerationRecord(
+        id=uuid.uuid4(), project_id=pid, chapter_id=chapter.id,
+        content="候选稿", word_count=3, mode="full_pipeline",
+        status="candidate", run_id="55555555-5555-5555-5555-555555555555",
+    )
+    async_db.add(record)
+    await async_db.flush()
+
+    # 模拟 approve 路径的 save_chapter_content
+    run_id_str = "55555555-5555-5555-5555-555555555555"
+    await save_chapter_content(
+        async_db, chapter, "最终内容", source="ai_approve",
+        set_status="draft", run_id=run_id_str,
+    )
+
+    # 查 version 是否带 run_id
+    result = await async_db.execute(
+        select(ChapterVersion).where(ChapterVersion.chapter_id == chapter.id)
+    )
+    version = result.scalar_one_or_none()
+    assert version is not None
+    assert str(version.run_id) == run_id_str
+
+    # 模拟 accepted_version_id 联动
+    await update_generation_record_status(
+        async_db, record, "applied", accepted_version_id=str(version.id),
+    )
+    await async_db.commit()
+
+    # 验证
+    assert str(record.accepted_version_id) == str(version.id)
+    assert record.status == "applied"
