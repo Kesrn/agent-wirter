@@ -294,3 +294,51 @@ def test_staging_cross_project_isolation():
     # B 不能 confirm A 的 staging
     resp = client.post(f"/api/projects/{pid_a}/memory-staging/{sid_a}/confirm", headers=headers_b)
     assert resp.status_code == 404
+
+
+# ==================== H2: FactExtractionAgent parse 测试 ====================
+
+def test_parse_facts_valid_json():
+    """完整 JSON 应解析为 memories 列表。"""
+    from agents.fact_extraction import parse_facts
+
+    raw = '{"memories": [{"memory_type": "CHARACTER", "title": "角色A", "payload": {"name": "角色A", "role_type": "protagonist"}, "evidence": "角色A出手击杀"}]}'
+    facts = parse_facts(raw)
+    assert len(facts) == 1
+    assert facts[0]["memory_type"] == "CHARACTER"
+    assert facts[0]["title"] == "角色A"
+    assert facts[0]["payload"]["name"] == "角色A"
+    assert facts[0]["evidence"] == "角色A出手击杀"
+
+
+def test_parse_facts_json_in_prose():
+    """JSON 嵌在散文中应通过 regex 提取。"""
+    from agents.fact_extraction import parse_facts
+
+    raw = '以下是抽取结果：\n{"memories": [{"memory_type": "WORLD_RULE", "title": "魔法体系A", "payload": {"content": "火系克制木系"}, "evidence": "原文提到火克木"}]}\n以上。'
+    facts = parse_facts(raw)
+    assert len(facts) == 1
+    assert facts[0]["memory_type"] == "WORLD_RULE"
+    assert facts[0]["title"] == "魔法体系A"
+
+
+def test_parse_facts_parse_failure():
+    """纯文本（非 JSON）应容错返回空列表。"""
+    from agents.fact_extraction import parse_facts
+
+    raw = "本章未发现需要记录的新设定。"
+    facts = parse_facts(raw)
+    assert facts == []
+
+
+def test_parse_facts_missing_fields():
+    """JSON 缺字段时应填默认值。"""
+    from agents.fact_extraction import parse_facts
+
+    raw = '{"memories": [{"title": "事件A"}]}'
+    facts = parse_facts(raw)
+    assert len(facts) == 1
+    assert facts[0]["memory_type"] == "PLOT_FACT"  # 默认
+    assert facts[0]["title"] == "事件A"
+    assert facts[0]["payload"] == {}  # 默认
+    assert facts[0]["evidence"] is None  # 默认
