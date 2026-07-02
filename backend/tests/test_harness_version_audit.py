@@ -165,3 +165,23 @@ async def test_save_chapter_content_forwards_run_id(async_db, chapter_id_fixture
     assert version is not None
     assert str(version.run_id) == "44444444-4444-4444-4444-444444444444"
     assert version.source == "ai_approve"
+
+
+# ==================== Schema audit fields ====================
+
+def test_chapter_version_list_item_response_has_audit_fields():
+    """ChapterVersionListItemResponse 应包含 run_id / parent_version_id / rollback_from_version_id。"""
+    from schemas.api import ChapterVersionListItemResponse
+    fields = set(ChapterVersionListItemResponse.model_fields.keys())
+    assert "run_id" in fields
+    assert "parent_version_id" in fields
+    assert "rollback_from_version_id" in fields
+
+
+def test_chapter_version_response_has_audit_fields():
+    """ChapterVersionResponse 应包含 run_id / parent_version_id / rollback_from_version_id。"""
+    from schemas.api import ChapterVersionResponse
+    fields = set(ChapterVersionResponse.model_fields.keys())
+    assert "run_id" in fields
+    assert "parent_version_id" in fields
+    assert "rollback_from_version_id" in fields

@@ -535,6 +535,9 @@ class ChapterVersionListItemResponse(BaseModel):
     word_count: int
     version_number: int
     source: str
+    run_id: uuid.UUID | None = None
+    parent_version_id: uuid.UUID | None = None
+    rollback_from_version_id: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -547,6 +550,9 @@ class ChapterVersionResponse(BaseModel):
     word_count: int
     version_number: int
     source: str
+    run_id: uuid.UUID | None = None
+    parent_version_id: uuid.UUID | None = None
+    rollback_from_version_id: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
