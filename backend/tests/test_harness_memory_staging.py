@@ -431,3 +431,273 @@ async def test_create_staging_idempotency_key_format(async_db):
     await async_db.flush()
     assert created[0].idempotency_key == "88888888-8888-8888-8888-888888888888:0"
     assert created[1].idempotency_key == "88888888-8888-8888-8888-888888888888:1"
+
+
+# ==================== H3a: confirm 写入正式表 ====================
+
+@pytest.mark.asyncio
+async def test_confirm_staging_character_writes_character(async_db):
+    """confirm CHARACTER → Character upsert (find-or-create by project_id + name)。"""
+    import uuid
+    from models.project import Project
+    from models.writing_memory_staging import WritingMemoryStaging
+    from models.harness_enums import MemoryStagingStatus, MemoryType
+    from services.memory_staging_service import confirm_staging_item
+
+    pid = uuid.uuid4()
+    async_db.add(Project(id=pid, title="H3a角色测试", mode="novel"))
+    await async_db.flush()
+
+    staging = WritingMemoryStaging(
+        project_id=pid,
+        memory_type=MemoryType.CHARACTER,
+        title="角色A",
+        payload={"name": "角色A", "role_type": "protagonist", "profile": "冷酷杀手", "faction": "暗影"},
+        evidence="证据",
+        status=MemoryStagingStatus.GENERATED,
+        chapter_sequence_number=1,
+    )
+    async_db.add(staging)
+    await async_db.flush()
+
+    target_type, target_id = await confirm_staging_item(async_db, staging, background_tasks=None)
+    await async_db.flush()
+
+    assert target_type == "Character"
+    assert target_id is not None
+
+    from models.character import Character
+    from sqlalchemy import select
+    char = (await async_db.execute(
+        select(Character).where(Character.project_id == pid, Character.name == "角色A")
+    )).scalar_one_or_none()
+    assert char is not None
+    assert char.role_type == "protagonist"
+    assert char.profile == "冷酷杀手"
+    assert char.faction == "暗影"
+    assert str(staging.confirmed_target_id) == target_id
+
+
+@pytest.mark.asyncio
+async def test_confirm_staging_world_rule_writes_world_entry(async_db):
+    """confirm WORLD_RULE → WorldEntry upsert (find-or-create by project_id + title)。"""
+    import uuid
+    from models.project import Project
+    from models.writing_memory_staging import WritingMemoryStaging
+    from models.harness_enums import MemoryStagingStatus, MemoryType
+    from services.memory_staging_service import confirm_staging_item
+
+    pid = uuid.uuid4()
+    async_db.add(Project(id=pid, title="H3a设定测试", mode="novel"))
+    await async_db.flush()
+
+    staging = WritingMemoryStaging(
+        project_id=pid,
+        memory_type=MemoryType.WORLD_RULE,
+        title="魔法体系A",
+        payload={"category": "magic", "content": "火系克制木系"},
+        evidence="证据",
+        status=MemoryStagingStatus.GENERATED,
+        chapter_sequence_number=2,
+    )
+    async_db.add(staging)
+    await async_db.flush()
+
+    target_type, target_id = await confirm_staging_item(async_db, staging, background_tasks=None)
+    await async_db.flush()
+
+    assert target_type == "WorldEntry"
+    assert target_id is not None
+
+    from models.world_entry import WorldEntry
+    from sqlalchemy import select
+    entry = (await async_db.execute(
+        select(WorldEntry).where(WorldEntry.project_id == pid, WorldEntry.title == "魔法体系A")
+    )).scalar_one_or_none()
+    assert entry is not None
+    assert entry.category == "magic"
+    assert entry.content == "火系克制木系"
+
+
+@pytest.mark.asyncio
+async def test_confirm_staging_event_writes_character_event(async_db):
+    """confirm EVENT → CharacterEvent upsert (有 character_name 时)。"""
+    import uuid
+    from models.project import Project
+    from models.writing_memory_staging import WritingMemoryStaging
+    from models.harness_enums import MemoryStagingStatus, MemoryType
+    from services.memory_staging_service import confirm_staging_item
+
+    pid = uuid.uuid4()
+    async_db.add(Project(id=pid, title="H3a事件测试", mode="novel"))
+    await async_db.flush()
+
+    staging = WritingMemoryStaging(
+        project_id=pid,
+        memory_type=MemoryType.EVENT,
+        title="角色A战斗",
+        payload={"character_name": "角色A", "event_summary": "角色A击败敌人", "state_change": "实力提升"},
+        evidence="证据",
+        status=MemoryStagingStatus.GENERATED,
+        chapter_sequence_number=3,
+    )
+    async_db.add(staging)
+    await async_db.flush()
+
+    target_type, target_id = await confirm_staging_item(async_db, staging, background_tasks=None)
+    await async_db.flush()
+
+    assert target_type == "CharacterEvent"
+    assert target_id is not None
+
+    from models.character_event import CharacterEvent
+    from models.character import Character
+    from sqlalchemy import select
+    # Character 被 find-or-create
+    char = (await async_db.execute(
+        select(Character).where(Character.project_id == pid, Character.name == "角色A")
+    )).scalar_one_or_none()
+    assert char is not None
+    # CharacterEvent 被 upsert
+    event = (await async_db.execute(
+        select(CharacterEvent).where(
+            CharacterEvent.project_id == pid,
+            CharacterEvent.character_id == char.id,
+            CharacterEvent.chapter_sequence_number == 3,
+        )
+    )).scalar_one_or_none()
+    assert event is not None
+    assert event.event_summary == "角色A击败敌人"
+    assert event.state_change == "实力提升"
+
+
+@pytest.mark.asyncio
+async def test_confirm_staging_event_without_character_name_skips(async_db):
+    """confirm EVENT 无 character_name → 不写 CharacterEvent，target 为 None。"""
+    import uuid
+    from models.project import Project
+    from models.writing_memory_staging import WritingMemoryStaging
+    from models.harness_enums import MemoryStagingStatus, MemoryType
+    from services.memory_staging_service import confirm_staging_item
+
+    pid = uuid.uuid4()
+    async_db.add(Project(id=pid, title="H3a无角色事件", mode="novel"))
+    await async_db.flush()
+
+    staging = WritingMemoryStaging(
+        project_id=pid,
+        memory_type=MemoryType.EVENT,
+        title="无名事件",
+        payload={"event_summary": "某事件"},
+        evidence="证据",
+        status=MemoryStagingStatus.GENERATED,
+        chapter_sequence_number=1,
+    )
+    async_db.add(staging)
+    await async_db.flush()
+
+    target_type, target_id = await confirm_staging_item(async_db, staging, background_tasks=None)
+    assert target_type is None
+    assert target_id is None
+
+
+@pytest.mark.asyncio
+async def test_confirm_staging_plot_fact_no_formal_write(async_db):
+    """confirm PLOT_FACT → 不写正式表，target 为 None。"""
+    import uuid
+    from models.project import Project
+    from models.writing_memory_staging import WritingMemoryStaging
+    from models.harness_enums import MemoryStagingStatus, MemoryType
+    from services.memory_staging_service import confirm_staging_item
+
+    pid = uuid.uuid4()
+    async_db.add(Project(id=pid, title="H3a剧情事实", mode="novel"))
+    await async_db.flush()
+
+    staging = WritingMemoryStaging(
+        project_id=pid,
+        memory_type=MemoryType.PLOT_FACT,
+        title="主角觉醒",
+        payload={"description": "主角在第3章觉醒了能力"},
+        evidence="证据",
+        status=MemoryStagingStatus.GENERATED,
+        chapter_sequence_number=3,
+    )
+    async_db.add(staging)
+    await async_db.flush()
+
+    target_type, target_id = await confirm_staging_item(async_db, staging, background_tasks=None)
+    assert target_type is None
+    assert target_id is None
+
+
+@pytest.mark.asyncio
+async def test_confirm_staging_foreshadowing_writes_hidden_thread(async_db):
+    """confirm FORESHADOWING → HiddenThread upsert (find-or-create by project_id + name)。"""
+    import uuid
+    from models.project import Project
+    from models.writing_memory_staging import WritingMemoryStaging
+    from models.harness_enums import MemoryStagingStatus, MemoryType
+    from services.memory_staging_service import confirm_staging_item
+
+    pid = uuid.uuid4()
+    async_db.add(Project(id=pid, title="H3a伏笔测试", mode="novel"))
+    await async_db.flush()
+
+    staging = WritingMemoryStaging(
+        project_id=pid,
+        memory_type=MemoryType.FORESHADOWING,
+        title="神秘戒指",
+        payload={"description": "主角捡到的戒指有未知力量", "chapter_nums": [1, 3]},
+        evidence="证据",
+        status=MemoryStagingStatus.GENERATED,
+        chapter_sequence_number=1,
+    )
+    async_db.add(staging)
+    await async_db.flush()
+
+    target_type, target_id = await confirm_staging_item(async_db, staging, background_tasks=None)
+    await async_db.flush()
+
+    assert target_type == "HiddenThread"
+    assert target_id is not None
+
+    from models.hidden_thread import HiddenThread
+    from sqlalchemy import select
+    thread = (await async_db.execute(
+        select(HiddenThread).where(HiddenThread.project_id == pid, HiddenThread.name == "神秘戒指")
+    )).scalar_one_or_none()
+    assert thread is not None
+    assert thread.description == "主角捡到的戒指有未知力量"
+    assert thread.chapter_nums == [1, 3]
+
+
+@pytest.mark.asyncio
+async def test_confirm_staging_idempotent_already_confirmed(async_db):
+    """已 CONFIRMED 且有 confirmed_target_id → 直接返回，不重复写。"""
+    import uuid
+    from models.project import Project
+    from models.writing_memory_staging import WritingMemoryStaging
+    from models.harness_enums import MemoryStagingStatus, MemoryType
+    from services.memory_staging_service import confirm_staging_item
+
+    pid = uuid.uuid4()
+    async_db.add(Project(id=pid, title="H3a幂等", mode="novel"))
+    await async_db.flush()
+
+    staging = WritingMemoryStaging(
+        project_id=pid,
+        memory_type=MemoryType.CHARACTER,
+        title="角色B",
+        payload={"name": "角色B"},
+        status=MemoryStagingStatus.CONFIRMED,
+        confirmed_target_type="Character",
+        confirmed_target_id="99999999-9999-9999-9999-999999999999",
+    )
+    async_db.add(staging)
+    await async_db.flush()
+
+    target_type, target_id = await confirm_staging_item(async_db, staging, background_tasks=None)
+    # 直接返回已有 target，不重新写
+    assert target_type == "Character"
+    assert target_id == "99999999-9999-9999-9999-999999999999"

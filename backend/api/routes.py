@@ -3486,13 +3486,22 @@ async def _transition_staging_status(
 async def confirm_memory_staging(
     project_id: str,
     staging_id: str,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """确认写作记忆 staging（H1 只改状态，H3 才写正式表）。"""
+    """确认写作记忆 staging，写入 workbench 正式表。
+
+    H3a: confirm 时按 memory_type 写入 Character/WorldEntry/CharacterEvent/HiddenThread。
+    PLOT_FACT 不写正式表，只保持 CONFIRMED staging。
+    """
+    from services.memory_staging_service import confirm_staging_item
+
     staging = await _transition_staging_status(
         db, _to_uuid(project_id), staging_id, "CONFIRMED", user
     )
+    # 写正式表（与 staging 状态更新同一事务）
+    await confirm_staging_item(db, staging, background_tasks=background_tasks)
     await db.commit()
     await db.refresh(staging)
     return WritingMemoryStagingResponse.model_validate(staging)
