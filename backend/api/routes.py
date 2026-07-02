@@ -89,7 +89,7 @@ from api.rate_limiter import agent_limiter
 from rag.embedding_service import generate_embedding, _update_embedding_bg
 from services.diff_service import compute_diff
 from services.chapter_save import save_chapter_content
-from agents.guardrail import guardrail_to_text as _guardrail_to_text
+from agents.guardrail import guardrail_to_text as _guardrail_to_text, get_blocking_issues
 from services.document_save import save_document_content
 from services.skill_pack_planner import SkillPackPlan, plan_direct_skill_pack
 from services.txt_import import decode_txt_bytes, split_txt_into_chapters, build_import_meta
@@ -3321,6 +3321,11 @@ async def generate_chapter(
                         yield _generation_record_event(record_id)
                         await mark_waiting_human(db, ai_run, step_name="human_review", thread_id=thread_id)
 
+                        # ── Harness G: 提取 blocking_issues（HIGH severity guardrail）──
+                        _hr_state = await app.aget_state(config)
+                        _hr_guardrail = _hr_state.values.get("consistency_report", {}) if _hr_state else {}
+                        _hr_blocking = get_blocking_issues(_hr_guardrail) if isinstance(_hr_guardrail, dict) else []
+
                         # ── Harness E: 创建 human_interrupt 记录 ──
                         interrupt = await create_interrupt(
                             db,
@@ -3330,6 +3335,7 @@ async def generate_chapter(
                             payload={
                                 "generation_record_id": record_id,
                                 "content_hash": hash(writer_content) if writer_content else None,
+                                "blocking_issues": _hr_blocking,
                             },
                         )
 
@@ -3366,6 +3372,10 @@ async def generate_chapter(
                 yield _generation_record_event(record_id)
                 await mark_waiting_human(db, ai_run, step_name="human_review", thread_id=thread_id)
 
+                # ── Harness G: 提取 blocking_issues（HIGH severity guardrail）──
+                _fb_guardrail = workflow_state.values.get("consistency_report", {}) if workflow_state else {}
+                _fb_blocking = get_blocking_issues(_fb_guardrail) if isinstance(_fb_guardrail, dict) else []
+
                 # ── Harness E: 创建 human_interrupt 记录 ──
                 interrupt = await create_interrupt(
                     db,
@@ -3375,6 +3385,7 @@ async def generate_chapter(
                     payload={
                         "generation_record_id": record_id,
                         "content_hash": hash(writer_content) if writer_content else None,
+                        "blocking_issues": _fb_blocking,
                     },
                 )
 

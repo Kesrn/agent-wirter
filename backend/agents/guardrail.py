@@ -149,3 +149,22 @@ def has_blocking_issues(result: dict[str, Any]) -> bool:
     if result.get("parse_error"):
         return False
     return result.get("overall_severity") == "high"
+
+
+def get_blocking_issues(result: dict[str, Any]) -> list[dict[str, str]]:
+    """提取 GuardrailResult 中所有 HIGH severity 的 issues。
+
+    用于在 human interrupt payload 中标记 blocking reason。
+
+    Args:
+        result: parse_guardrail_result 返回的 dict
+
+    Returns:
+        HIGH severity issues 列表（可能为空）
+    """
+    if result.get("parse_error"):
+        return []
+    issues = result.get("issues", [])
+    if not isinstance(issues, list):
+        return []
+    return [i for i in issues if isinstance(i, dict) and i.get("severity") == "high"]

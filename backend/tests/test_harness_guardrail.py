@@ -215,3 +215,43 @@ def test_consistency_check_sse_payload_has_both_fields():
     assert "guardrail_result" in deserialized
     assert deserialized["guardrail_result"]["overall_severity"] == "high"
     assert "剧情断裂" in deserialized["report"]
+
+
+# ==================== blocking_issues 提取 ====================
+
+def test_blocking_issues_extraction():
+    """从 guardrail_result 提取 HIGH severity issues 作为 blocking_issues。"""
+    from agents.guardrail import get_blocking_issues
+
+    guardrail = {
+        "issues": [
+            {"type": "character", "description": "角色矛盾", "severity": "high"},
+            {"type": "plot", "description": "剧情问题", "severity": "medium"},
+            {"type": "worldbuilding", "description": "设定矛盾", "severity": "high"},
+        ],
+        "overall_severity": "high",
+        "parse_error": False,
+    }
+    blocking = get_blocking_issues(guardrail)
+    assert len(blocking) == 2
+    assert all(b["severity"] == "high" for b in blocking)
+
+
+def test_blocking_issues_empty():
+    """无 HIGH issue 时 blocking_issues 为空。"""
+    from agents.guardrail import get_blocking_issues
+
+    guardrail = {
+        "issues": [{"type": "plot", "description": "小问题", "severity": "low"}],
+        "overall_severity": "low",
+        "parse_error": False,
+    }
+    assert get_blocking_issues(guardrail) == []
+
+
+def test_blocking_issues_parse_error():
+    """parse_error 时 blocking_issues 为空。"""
+    from agents.guardrail import get_blocking_issues
+
+    guardrail = {"issues": [], "overall_severity": "info", "parse_error": True, "raw": "文本"}
+    assert get_blocking_issues(guardrail) == []
