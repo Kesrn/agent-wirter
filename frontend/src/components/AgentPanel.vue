@@ -12,6 +12,7 @@ import TurnPicker from './TurnPicker.vue'
 import RevisionSuggestionPicker from './RevisionSuggestionPicker.vue'
 import ArticleParamsPicker from './ArticleParamsPicker.vue'
 import DirectionPicker from './DirectionPicker.vue'
+import MemoryStagingPanel from './MemoryStagingPanel.vue'
 
 const props = defineProps<{ projectId: string; mode: ProjectMode }>()
 const chapterStore = useChapterStore()
@@ -939,6 +940,9 @@ defineExpose({ testExpert, cancelStream })
     <section v-if="pendingMode === 'full_pipeline'" class="workflow-section">
       <AgentWorkflow :project-id="projectId" :mode="props.mode" />
     </section>
+
+    <!-- 写作记忆 staging -->
+    <MemoryStagingPanel v-if="isNovel" :project-id="projectId" />
 
     <!-- Review comments -->
     <div v-if="reviewComments.length" class="review-section">

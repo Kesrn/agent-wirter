@@ -20,6 +20,7 @@ import {
   type DocumentVersionDiffRequest, type DocumentVersionDiffResponse,
   type ApiGenerationRecordListItem, type ApiGenerationRecord,
   type ApiRunListItem, type ApiRun, type ApiRunStep,
+  type ApiWritingMemoryStaging,
   type GenerationRecordUpdatePayload, type GenerationRecordDiffRequest, type GenerationRecordDiffResponse,
   type ChapterReviewNote, type ChapterReviewNoteCreatePayload, type ChapterReviewNoteUpdatePayload,
   type ApiEvaluationDataset, type ApiEvaluationCase, type ApiEvaluationRun,
@@ -735,6 +736,14 @@ export const api = {
     request<ApiGenerationRecord>(`/projects/${projectId}/generations/${generationId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   diffGenerationRecord: (projectId: string, generationId: string, data: GenerationRecordDiffRequest) =>
     request<GenerationRecordDiffResponse>(`/projects/${projectId}/generations/${generationId}/diff`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // ==================== 写作记忆 staging ====================
+  listMemoryStaging: (projectId: string, status?: string) =>
+    request<ApiWritingMemoryStaging[]>(`/projects/${projectId}/memory-staging${status ? `?status=${status}` : ''}`),
+  confirmMemoryStaging: (projectId: string, stagingId: string) =>
+    request<ApiWritingMemoryStaging>(`/projects/${projectId}/memory-staging/${stagingId}/confirm`, { method: 'POST' }),
+  rejectMemoryStaging: (projectId: string, stagingId: string) =>
+    request<ApiWritingMemoryStaging>(`/projects/${projectId}/memory-staging/${stagingId}/reject`, { method: 'POST' }),
 
   // ─── Evaluation datasets ───
   listEvaluationDatasets: (projectId: string) =>

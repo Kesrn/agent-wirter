@@ -797,6 +797,29 @@ export interface ConsistencyCheckPayload {
   guardrail_result?: GuardrailResult
 }
 
+// --- 写作记忆 staging ---
+export type MemoryStagingStatus = 'GENERATED' | 'CONFIRMED' | 'REJECTED'
+export type MemoryType = 'CHARACTER' | 'WORLD_RULE' | 'PLOT_FACT' | 'EVENT' | 'FORESHADOWING'
+
+export interface ApiWritingMemoryStaging {
+  id: string
+  project_id: string
+  run_id: string | null
+  chapter_id: string | null
+  chapter_version_id: string | null
+  chapter_sequence_number: number | null
+  memory_type: MemoryType | string
+  title: string
+  payload: Record<string, unknown>
+  evidence: string | null
+  status: MemoryStagingStatus | string
+  confirmed_target_type: string | null
+  confirmed_target_id: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+  created_at: string
+}
+
 /** Payload for enhance_directions SSE event */
 export interface EnhanceDirectionsPayload {
   directions: string[]
