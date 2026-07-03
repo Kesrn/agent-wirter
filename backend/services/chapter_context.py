@@ -105,10 +105,22 @@ class ContextStats:
     world_entries: int = 0
     fanfic_rules: int = 0
     sources: int = 0  # project_sources / 检索命中的资料
+    confirmed_memories: int = 0
 
     @property
     def total(self) -> int:
-        return self.characters + self.events + self.hidden_threads + self.world_entries + self.fanfic_rules + self.sources
+        return self.characters + self.events + self.hidden_threads + self.world_entries + self.fanfic_rules + self.sources + self.confirmed_memories
+
+
+@dataclass
+class ConfirmedMemoryInfo:
+    """已确认的写作记忆（staging CONFIRMED）"""
+    id: str
+    memory_type: str
+    title: str
+    description: str = ""
+    evidence: str | None = None
+    chapter_sequence_number: int | None = None
 
 
 @dataclass
@@ -125,6 +137,7 @@ class ChapterContext:
     fanfic_rules: list[FanficRuleInfo] = field(default_factory=list)
     retrieved_sources: list[RetrievedSourceInfo] = field(default_factory=list)
     previous_chapters: list[ChapterInfo] = field(default_factory=list)
+    confirmed_memories: list[ConfirmedMemoryInfo] = field(default_factory=list)
     stats: ContextStats = field(default_factory=ContextStats)
 
     def to_dict(self) -> dict:
@@ -317,6 +330,9 @@ async def build_chapter_context(
     # ── 接入 project_sources（同人规则 + 检索资料） ──
     await _load_project_sources(db, pid, ctx, stats, user_query=user_query)
 
+    # ── 已确认记忆（H3b）──
+    await _load_confirmed_memories(db, pid, seq, ctx, stats)
+
     logger.info(
         "chapter_context built: project=%s chapter=%d stats=%s intent=%s",
         pid,
@@ -480,6 +496,46 @@ async def _load_world_entries(
             )
         )
     stats.world_entries = len(ctx.world_entries)
+
+
+async def _load_confirmed_memories(
+    db: AsyncSession, project_id: str, current_seq: int, ctx: ChapterContext, stats: ContextStats
+) -> None:
+    """加载已确认的写作记忆（staging CONFIRMED，chapter_sequence_number <= 当前章节或 NULL）。"""
+    from models.writing_memory_staging import WritingMemoryStaging
+    from sqlalchemy import or_
+
+    memories = (
+        await db.execute(
+            select(WritingMemoryStaging).where(
+                WritingMemoryStaging.project_id == project_id,
+                WritingMemoryStaging.status == "CONFIRMED",
+                or_(
+                    WritingMemoryStaging.chapter_sequence_number.is_(None),
+                    WritingMemoryStaging.chapter_sequence_number <= current_seq,
+                ),
+            ).order_by(
+                WritingMemoryStaging.chapter_sequence_number.desc().nullslast(),
+            ).limit(20)
+        )
+    ).scalars().all()
+
+    for m in memories:
+        desc = ""
+        payload = m.payload or {}
+        if isinstance(payload, dict):
+            desc = payload.get("description") or payload.get("content") or payload.get("event_summary") or ""
+        ctx.confirmed_memories.append(
+            ConfirmedMemoryInfo(
+                id=str(m.id),
+                memory_type=m.memory_type,
+                title=m.title,
+                description=desc,
+                evidence=m.evidence,
+                chapter_sequence_number=m.chapter_sequence_number,
+            )
+        )
+    stats.confirmed_memories = len(ctx.confirmed_memories)
 
 
 async def _load_previous_chapters(
@@ -865,6 +921,18 @@ def format_chapter_context_for_prompt(context: ChapterContext) -> str:
         for s in context.retrieved_sources:
             src_lines.append(f"- [{s.source_type}] {s.title}：{s.snippet}")
         parts.append(f"## 检索资料\n" + "\n".join(src_lines))
+
+    # 已确认记忆（H3b：staging CONFIRMED，含 PLOT_FACT）
+    if context.confirmed_memories:
+        mem_lines = []
+        for m in context.confirmed_memories:
+            source_ch = f"来源：第{m.chapter_sequence_number}章" if m.chapter_sequence_number else "来源：未知"
+            line = f"- [{m.memory_type}] {m.title}"
+            if m.description:
+                line += f"：{m.description}"
+            line += f"（{source_ch}）"
+            mem_lines.append(line)
+        parts.append(f"## 已确认记忆\n" + "\n".join(mem_lines))
 
     return "\n\n".join(parts) if parts else "(暂无章节上下文)"
 

@@ -701,3 +701,111 @@ async def test_confirm_staging_idempotent_already_confirmed(async_db):
     # 直接返回已有 target，不重新写
     assert target_type == "Character"
     assert target_id == "99999999-9999-9999-9999-999999999999"
+
+
+# ==================== H3b: Context Builder 注入 confirmed 记忆 ====================
+
+@pytest.mark.asyncio
+async def test_context_builder_includes_confirmed_memories(async_db):
+    """build_chapter_context 应包含 CONFIRMED staging 记忆。"""
+    import uuid
+    from models.project import Project
+    from models.chapter import Chapter
+    from models.writing_memory_staging import WritingMemoryStaging
+    from models.harness_enums import MemoryStagingStatus, MemoryType
+    from services.chapter_context import build_chapter_context, format_chapter_context_for_prompt
+
+    pid = uuid.uuid4()
+    async_db.add(Project(id=pid, title="H3b上下文测试", mode="novel"))
+    await async_db.flush()
+
+    async_db.add(Chapter(
+        id=uuid.uuid4(), project_id=pid, title="第3章",
+        sequence_number=3, content="正文", status="draft",
+    ))
+    await async_db.flush()
+
+    # 一条 CONFIRMED 的 PLOT_FACT（来源第2章，<= 当前第3章）
+    async_db.add(WritingMemoryStaging(
+        project_id=pid,
+        memory_type=MemoryType.PLOT_FACT,
+        title="主角觉醒",
+        payload={"description": "主角在第2章觉醒了能力"},
+        status=MemoryStagingStatus.CONFIRMED,
+        chapter_sequence_number=2,
+    ))
+    # 一条 GENERATED（未确认，不应出现）
+    async_db.add(WritingMemoryStaging(
+        project_id=pid,
+        memory_type=MemoryType.CHARACTER,
+        title="角色X",
+        payload={"name": "角色X"},
+        status=MemoryStagingStatus.GENERATED,
+        chapter_sequence_number=2,
+    ))
+    await async_db.flush()
+
+    ctx = await build_chapter_context(async_db, pid, 3)
+    # confirmed_memories 应有 1 条（PLOT_FACT）
+    assert len(ctx.confirmed_memories) == 1
+    assert ctx.confirmed_memories[0].title == "主角觉醒"
+
+    # prompt 中应有 ## 已确认记忆
+    prompt = format_chapter_context_for_prompt(ctx)
+    assert "## 已确认记忆" in prompt
+    assert "主角觉醒" in prompt
+
+
+@pytest.mark.asyncio
+async def test_context_builder_confirmed_seq_filter(async_db):
+    """chapter_sequence_number > 当前章节的 CONFIRMED 不应注入。"""
+    import uuid
+    from models.project import Project
+    from models.chapter import Chapter
+    from models.writing_memory_staging import WritingMemoryStaging
+    from models.harness_enums import MemoryStagingStatus, MemoryType
+    from services.chapter_context import build_chapter_context
+
+    pid = uuid.uuid4()
+    async_db.add(Project(id=pid, title="H3b seq filter", mode="novel"))
+    await async_db.flush()
+    async_db.add(Chapter(
+        id=uuid.uuid4(), project_id=pid, title="第2章",
+        sequence_number=2, content="正文", status="draft",
+    ))
+    await async_db.flush()
+
+    # CONFIRMED 来源第1章（<= 2）→ 应注入
+    async_db.add(WritingMemoryStaging(
+        project_id=pid,
+        memory_type=MemoryType.WORLD_RULE,
+        title="规则A",
+        payload={"content": "规则A内容"},
+        status=MemoryStagingStatus.CONFIRMED,
+        chapter_sequence_number=1,
+    ))
+    # CONFIRMED 来源第5章（> 2）→ 不应注入
+    async_db.add(WritingMemoryStaging(
+        project_id=pid,
+        memory_type=MemoryType.WORLD_RULE,
+        title="规则B",
+        payload={"content": "规则B内容"},
+        status=MemoryStagingStatus.CONFIRMED,
+        chapter_sequence_number=5,
+    ))
+    # CONFIRMED 来源 NULL → 应注入
+    async_db.add(WritingMemoryStaging(
+        project_id=pid,
+        memory_type=MemoryType.FORESHADOWING,
+        title="伏笔A",
+        payload={"description": "伏笔A"},
+        status=MemoryStagingStatus.CONFIRMED,
+        chapter_sequence_number=None,
+    ))
+    await async_db.flush()
+
+    ctx = await build_chapter_context(async_db, pid, 2)
+    titles = [m.title for m in ctx.confirmed_memories]
+    assert "规则A" in titles
+    assert "规则B" not in titles  # seq 5 > 2
+    assert "伏笔A" in titles      # seq None → 注入
