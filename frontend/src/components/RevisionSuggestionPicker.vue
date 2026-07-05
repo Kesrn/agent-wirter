@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { ProjectMode } from '../api/types'
 
 const props = defineProps<{
@@ -18,16 +18,36 @@ const isNovel = computed(() => props.projectMode !== 'article')
 const unitLabel = computed(() => isNovel.value ? '章节' : '稿件')
 const loadingHint = computed(() => isNovel.value ? 'Agent 正在审核候选稿...' : 'Agent 正在审核候选内容...')
 
+const selectedMode = ref<'suggestion' | 'custom'>('suggestion')
 const selectedDirection = ref(props.directions[0] ?? '')
+const customDirection = ref('')
 const userNote = ref('')
 
+watch(
+  () => props.directions,
+  (directions) => {
+    if (directions.length && selectedMode.value === 'suggestion' && !directions.includes(selectedDirection.value)) {
+      selectedDirection.value = directions[0]
+    }
+  },
+)
+
+const finalDirection = computed(() => {
+  return selectedMode.value === 'custom'
+    ? customDirection.value.trim()
+    : selectedDirection.value.trim()
+})
+
+const canConfirm = computed(() => Boolean(finalDirection.value))
+
 function handleConfirm() {
-  emit('confirm', selectedDirection.value, userNote.value)
+  if (!canConfirm.value) return
+  emit('confirm', finalDirection.value, userNote.value)
 }
 </script>
 
 <template>
-  <div class="picker-overlay" @click.self="emit('cancel')">
+  <div class="picker-overlay">
     <div class="picker-card">
       <div class="picker-header">
         <h3>选择修改方向</h3>
@@ -44,8 +64,8 @@ function handleConfirm() {
             v-for="(dir, i) in directions"
             :key="i"
             class="direction-item"
-            :class="{ selected: selectedDirection === dir }"
-            @click="selectedDirection = dir"
+            :class="{ selected: selectedMode === 'suggestion' && selectedDirection === dir }"
+            @click="selectedMode = 'suggestion'; selectedDirection = dir"
           >
             <span class="dir-index">{{ i + 1 }}</span>
             <span class="dir-text">{{ dir }}</span>
@@ -53,6 +73,17 @@ function handleConfirm() {
         </div>
 
         <div v-if="directions.length" class="note-section">
+          <label class="note-label">自定义修改方向</label>
+          <textarea
+            v-model="customDirection"
+            class="note-input custom-direction-input"
+            :class="{ active: selectedMode === 'custom' }"
+            rows="3"
+            placeholder="也可以不选上面的建议，直接写你自己的修改方向..."
+            @focus="selectedMode = 'custom'"
+            @input="selectedMode = 'custom'"
+          ></textarea>
+
           <label class="note-label">补充说明</label>
           <textarea v-model="userNote" class="note-input" rows="2" placeholder="补充你希望这次重点修改的地方..."></textarea>
         </div>
@@ -60,7 +91,7 @@ function handleConfirm() {
 
       <div class="picker-footer">
         <button class="btn-cancel" @click="emit('cancel')">取消</button>
-        <button class="btn-confirm" :disabled="!selectedDirection" @click="handleConfirm">开始修改</button>
+        <button class="btn-confirm" :disabled="!canConfirm" @click="handleConfirm">开始修改</button>
       </div>
     </div>
   </div>
@@ -193,6 +224,10 @@ function handleConfirm() {
   transition: border-color var(--transition);
 }
 .note-input:focus { border-color: var(--border-focus); outline: none; }
+.custom-direction-input.active {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
 .picker-footer {
   display: flex;
   justify-content: flex-end;

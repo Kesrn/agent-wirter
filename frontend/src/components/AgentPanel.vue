@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { useChapterStore, useDocumentStore, useExpertStore, useUiStore, useOutlineStore, useCharacterStore, useWorldEntryStore, useHiddenThreadStore, useGenerationHistoryStore, friendlyError } from '../stores'
 import type { WorkflowStep, SSEEnvelope, GenerateMode, ProjectMode, ArticleGenerateParams, WritingUnit } from '../api/types'
-import type { AgentStartPayload, AgentOutputPayload, AgentDonePayload, ProgressPayload, ErrorPayload, WriterOutputPayload, CriticOutputPayload, ConsistencyCheckPayload, EnhanceDirectionsPayload, TurnSuggestionsPayload, RevisionSuggestionsPayload, SkillPackPayload, ArticleReviewPayload, GenerationRecordPayload, RunCreatedPayload } from '../api/types'
+import type { AgentStartPayload, AgentOutputPayload, AgentDonePayload, ProgressPayload, ErrorPayload, WriterOutputPayload, CriticOutputPayload, ConsistencyCheckPayload, EnhanceDirectionsPayload, TurnSuggestionsPayload, RevisionSuggestionsPayload, SkillPackPayload, ArticleReviewPayload, GenerationRecordPayload, RunCreatedPayload, ClarificationRequiredPayload } from '../api/types'
 import { api } from '../api/client'
 import ApprovalModal from './ApprovalModal.vue'
 import AgentWorkflow from './AgentWorkflow.vue'
@@ -13,6 +13,7 @@ import RevisionSuggestionPicker from './RevisionSuggestionPicker.vue'
 import ArticleParamsPicker from './ArticleParamsPicker.vue'
 import DirectionPicker from './DirectionPicker.vue'
 import MemoryStagingPanel from './MemoryStagingPanel.vue'
+import ClarificationPanel from './ClarificationPanel.vue'
 
 const props = defineProps<{ projectId: string; mode: ProjectMode }>()
 const chapterStore = useChapterStore()
@@ -68,6 +69,10 @@ const showArticleParams = ref(false)
 const latestGenerationRecordId = ref<string | null>(null)
 const latestRunId = ref<string | null>(null)
 
+// ─── Clarification Loop (生成前澄清) ───
+// 收到 clarification_required SSE 事件后暂存 payload，用于渲染 ClarificationPanel
+const clarificationState = ref<ClarificationRequiredPayload | null>(null)
+
 // ─── Chapter context stats ───
 interface ChapterContextStats {
   stats: { characters: number; events: number; hidden_threads: number; world_entries: number; sources: number }
@@ -99,7 +104,7 @@ const showDirectionPicker = ref(false)
 const directionOptions = ref<Array<{ id: string; title: string; description: string; risk: string }>>([])
 const directionLoading = ref(false)
 let pendingContextPick: {
-  outlineIds: string[]; characterIds: string[]; worldEntryIds: string[]; hiddenThreadIds: string[]; targetWords: number
+  outlineIds: string[]; characterIds: string[]; worldEntryIds: string[]; hiddenThreadIds: string[]; targetWords: number; userNote: string; includeKnowledgeSources: boolean
 } | null = null
 
 async function fetchAndShowDirections() {
@@ -128,6 +133,9 @@ async function fetchAndShowDirections() {
 function handleDirectionConfirm(_directionId: string, directionTitle: string, userNote: string) {
   showDirectionPicker.value = false
   if (!pendingContextPick) return
+  const combinedUserNote = [pendingContextPick.userNote, userNote.trim()]
+    .filter(Boolean)
+    .join('\n')
   expertStore.startGenerating(pid.value)
   expertStore.setWorkflowSteps(pid.value, defaultWorkflow.map(s => ({ ...s, status: 'pending' as const })))
   runGenerateStream(
@@ -138,8 +146,9 @@ function handleDirectionConfirm(_directionId: string, directionTitle: string, us
     pendingContextPick.targetWords,
     undefined, // enhanceDirection
     undefined, // turnDirection
-    userNote,
+    combinedUserNote,
     directionTitle, // selectedDirection
+    pendingContextPick.includeKnowledgeSources,
   )
   pendingContextPick = null
 }
@@ -155,6 +164,11 @@ function handleDirectionSkip() {
     pendingContextPick.worldEntryIds,
     pendingContextPick.hiddenThreadIds,
     pendingContextPick.targetWords,
+    undefined,
+    undefined,
+    pendingContextPick.userNote,
+    undefined,
+    pendingContextPick.includeKnowledgeSources,
   )
   pendingContextPick = null
 }
@@ -341,6 +355,7 @@ function handleGenerate() {
   pendingMode.value = 'full_pipeline'
   latestGenerationRecordId.value = null
   latestRunId.value = null
+  clarificationState.value = null
   if (isNovel.value) {
     showContextPicker.value = true
   } else {
@@ -368,10 +383,18 @@ function handleArticleCancel() {
   showArticleParams.value = false
 }
 
-function handleContextConfirm(outlineIds: string[], characterIds: string[], worldEntryIds: string[], hiddenThreadIds: string[], targetWords: number) {
+function handleContextConfirm(outlineIds: string[], characterIds: string[], worldEntryIds: string[], hiddenThreadIds: string[], targetWords: number, userNote: string, includeKnowledgeSources: boolean) {
   showContextPicker.value = false
-  pendingContextPick = { outlineIds, characterIds, worldEntryIds, hiddenThreadIds, targetWords }
-  fetchAndShowDirections()
+  pendingContextPick = { outlineIds, characterIds, worldEntryIds, hiddenThreadIds, targetWords, userNote, includeKnowledgeSources }
+  // full_pipeline 直接生成，不走 DirectionPicker（v2 由 Clarification Loop 负责生成前提问）
+  if (pendingMode.value === 'full_pipeline') {
+    expertStore.startGenerating(pid.value)
+    expertStore.setWorkflowSteps(pid.value, defaultWorkflow.map(s => ({ ...s, status: 'pending' as const })))
+    runGenerateStream(outlineIds, characterIds, worldEntryIds, hiddenThreadIds, targetWords, undefined, undefined, userNote, undefined, includeKnowledgeSources)
+    pendingContextPick = null
+  } else {
+    fetchAndShowDirections()
+  }
 }
 
 function handleContextCancel() {
@@ -386,6 +409,7 @@ function handleQuickAction(key: string) {
   pendingMode.value = action.mode
   latestGenerationRecordId.value = null
   latestRunId.value = null
+  clarificationState.value = null
   if (!isNovel.value) {
     showArticleParams.value = true
     return
@@ -551,6 +575,7 @@ async function runGenerateStream(
   turnDirection?: string,
   userNote?: string,
   selectedDirection?: string,
+  includeKnowledgeSources?: boolean,
 ) {
   const unit = currentWritingUnit.value
   if (!unit) {
@@ -575,6 +600,7 @@ async function runGenerateStream(
         selected_character_ids: selectedCharacterIds,
         selected_world_entry_ids: selectedWorldEntryIds,
         selected_hidden_thread_ids: selectedHiddenThreadIds,
+        include_knowledge_sources: includeKnowledgeSources,
         target_words: targetWords,
         enhance_direction: enhanceDirection,
         turn_direction: turnDirection,
@@ -663,6 +689,10 @@ function handleSSEEvent(envelope: SSEEnvelope) {
       }
       break
     }
+    case 'architect_output': {
+      // v2 architect 产出章节任务卡，前端暂不展示细节，静默处理
+      break
+    }
     case 'critic_output': {
       const payload = data as unknown as CriticOutputPayload
       const text = payload.critiques?.join('\n') ?? ''
@@ -745,6 +775,14 @@ function handleSSEEvent(envelope: SSEEnvelope) {
       latestRunId.value = payload.run_id
       break
     }
+    case 'clarification_required': {
+      // 生成前澄清：暂存 payload，停止"生成中"转圈，等待用户补充信息
+      const payload = data as unknown as ClarificationRequiredPayload
+      clarificationState.value = payload
+      expertStore.appendOutput(pid.value, `[系统] 需要补充信息（第 ${payload.round}/${payload.max_rounds} 轮澄清）\n`)
+      expertStore.stopGenerating(pid.value)
+      break
+    }
     case 'done': {
       const state = expertStore.getState(pid.value)
       for (const step of state.workflowSteps) {
@@ -772,6 +810,39 @@ function handleSSEEvent(envelope: SSEEnvelope) {
 }
 
 // ─── Approval ───
+
+// ─── Clarification Loop (生成前澄清) ───
+async function handleClarificationSubmit(answers: Record<string, string>) {
+  const runId = clarificationState.value?.run_id ?? latestRunId.value
+  if (!runId) {
+    clarificationState.value = null
+    return
+  }
+  try {
+    await api.submitClarificationAnswers(runId, { action: 'submit', answers })
+    // 提交成功后清空澄清状态，等待后端继续流式生成
+    clarificationState.value = null
+  } catch (e: unknown) {
+    expertStore.appendOutput(pid.value, `\n[错误] 提交澄清回答失败：${friendlyError(e, '请重试')}`)
+    ui.showToast(friendlyError(e, '提交澄清回答失败'), 'error')
+  }
+}
+
+async function handleClarificationSkip() {
+  const runId = clarificationState.value?.run_id ?? latestRunId.value
+  if (!runId) {
+    clarificationState.value = null
+    return
+  }
+  try {
+    await api.submitClarificationAnswers(runId, { action: 'skip', answers: {} })
+    // 跳过后清空澄清状态，等待后端继续流式生成
+    clarificationState.value = null
+  } catch (e: unknown) {
+    expertStore.appendOutput(pid.value, `\n[错误] 跳过澄清失败：${friendlyError(e, '请重试')}`)
+    ui.showToast(friendlyError(e, '跳过澄清失败'), 'error')
+  }
+}
 
 async function handleDecision(decision: 'accept' | 'accept_with_mods' | 'reject') {
   showApproval.value = false
@@ -943,6 +1014,18 @@ defineExpose({ testExpert, cancelStream })
 
     <!-- 写作记忆 staging -->
     <MemoryStagingPanel v-if="isNovel" :project-id="projectId" />
+
+    <!-- 生成前澄清（区别于生成后的最终审核） -->
+    <ClarificationPanel
+      v-if="clarificationState"
+      :run-id="clarificationState.run_id"
+      :questions="clarificationState.questions"
+      :round="clarificationState.round"
+      :max-rounds="clarificationState.max_rounds"
+      :assumptions-if-skipped="clarificationState.assumptions_if_skipped"
+      @submit="handleClarificationSubmit"
+      @skip="handleClarificationSkip"
+    />
 
     <!-- Review comments -->
     <div v-if="reviewComments.length" class="review-section">

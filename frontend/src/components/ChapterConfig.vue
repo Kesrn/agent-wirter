@@ -21,6 +21,24 @@ const outlineStore = useOutlineStore()
 const hiddenThreadStore = useHiddenThreadStore()
 const ui = useUiStore()
 
+function resizeTextArea(el: HTMLTextAreaElement) {
+  el.style.height = 'auto'
+  el.style.height = `${el.scrollHeight}px`
+}
+
+function autoGrowTextArea(event: Event) {
+  resizeTextArea(event.target as HTMLTextAreaElement)
+}
+
+const vAutoGrow = {
+  mounted(el: HTMLTextAreaElement) {
+    resizeTextArea(el)
+  },
+  updated(el: HTMLTextAreaElement) {
+    resizeTextArea(el)
+  },
+}
+
 // ─── Chapter outline / lines ───
 const chapterOutline = computed(() =>
   outlineStore.entriesForProject(props.projectId).find(o => o.chapter_num === props.chapterNum) ?? null
@@ -276,7 +294,7 @@ onMounted(async () => {
   <div class="chapter-config">
     <header class="config-header">
       <h2 class="config-title">第{{ chapterNum }}章配置 — {{ chapterTitle }}</h2>
-      <button class="btn-close" @click="emit('close')">← 返回</button>
+      <button class="btn-close" @click="emit('close')">关闭</button>
     </header>
 
     <div class="config-body">
@@ -294,11 +312,11 @@ onMounted(async () => {
         </div>
         <div class="form-row">
           <label>本章摘要</label>
-          <textarea v-model="outlineSummary" class="form-textarea" rows="4" placeholder="这一章发生了什么，解决什么问题，推到哪里"></textarea>
+          <textarea v-model="outlineSummary" v-auto-grow class="form-textarea" rows="4" placeholder="这一章发生了什么，解决什么问题，推到哪里" @input="autoGrowTextArea"></textarea>
         </div>
         <div class="form-row">
           <label>明线推进</label>
-          <textarea v-model="lightLine" class="form-textarea" rows="2" placeholder="读者能直接看到的剧情目标、冲突或转折"></textarea>
+          <textarea v-model="lightLine" v-auto-grow class="form-textarea" rows="2" placeholder="读者能直接看到的剧情目标、冲突或转折" @input="autoGrowTextArea"></textarea>
         </div>
       </section>
 
@@ -347,7 +365,7 @@ onMounted(async () => {
           </div>
           <div class="form-row">
             <label>事件摘要</label>
-            <textarea v-model="eventForm.event_summary" class="form-textarea" rows="2" placeholder="角色在本章做了什么"></textarea>
+            <textarea v-model="eventForm.event_summary" v-auto-grow class="form-textarea" rows="2" placeholder="角色在本章做了什么" @input="autoGrowTextArea"></textarea>
           </div>
           <div class="form-row">
             <label>行动（逗号分隔）</label>
@@ -418,7 +436,7 @@ onMounted(async () => {
           </div>
           <div class="form-row">
             <label>线索说明</label>
-            <textarea v-model="darkLineDescription" class="form-textarea" rows="2" placeholder="本章埋下或推进了什么隐藏线索"></textarea>
+            <textarea v-model="darkLineDescription" v-auto-grow class="form-textarea" rows="2" placeholder="本章埋下或推进了什么隐藏线索" @input="autoGrowTextArea"></textarea>
           </div>
           <div class="form-actions">
             <button class="btn-submit" :disabled="savingDarkLine" @click="saveDarkLine">
@@ -471,6 +489,7 @@ onMounted(async () => {
 <style scoped>
 .chapter-config {
   height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -505,8 +524,13 @@ onMounted(async () => {
 }
 .config-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: var(--sp-4) var(--sp-5);
+  padding-bottom: max(160px, calc(var(--sp-8) + env(safe-area-inset-bottom)));
+  scroll-padding-bottom: 160px;
   display: flex;
   flex-direction: column;
   gap: var(--sp-5);
@@ -556,6 +580,10 @@ onMounted(async () => {
   color: var(--text);
   font-size: var(--text-sm);
   line-height: 1.5;
+}
+.form-textarea {
+  resize: none;
+  overflow-y: hidden;
 }
 .form-input:focus,
 .form-textarea:focus {

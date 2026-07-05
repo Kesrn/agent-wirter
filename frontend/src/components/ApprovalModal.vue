@@ -42,7 +42,7 @@ function modsLabel(): string {
 </script>
 
 <template>
-  <div v-if="show" class="modal-overlay" @click.self="emit('decision', 'reject')">
+  <div v-if="show" class="modal-overlay">
     <div class="modal-card">
       <h3 class="modal-title">{{ titleLabel() }}</h3>
       <p class="modal-hint">以下为 AI 生成的{{ props.projectMode === 'article' ? '候选内容' : '候选稿' }}，确认后将写入编辑器草稿，需手动保存。</p>
@@ -100,7 +100,10 @@ function modsLabel(): string {
 
 .modal-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: var(--sp-3, 12px) var(--sp-4, 16px);
 }
 

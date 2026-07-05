@@ -12,7 +12,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="confirm-overlay" @click.self="emit('cancel')">
+  <div class="confirm-overlay">
     <div class="confirm-modal">
       <div class="confirm-mark" :class="{ danger }">!</div>
       <p class="confirm-message">{{ message }}</p>

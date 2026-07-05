@@ -13,7 +13,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  confirm: [outlineIds: string[], characterIds: string[], worldEntryIds: string[], hiddenThreadIds: string[], targetWords: number]
+  confirm: [outlineIds: string[], characterIds: string[], worldEntryIds: string[], hiddenThreadIds: string[], targetWords: number, userNote: string, includeKnowledgeSources: boolean]
   cancel: []
 }>()
 
@@ -47,8 +47,18 @@ const pickerSubtitle = computed(() =>
 )
 const confirmLabel = computed(() => isNovel.value ? '确认生成' : '确认生成内容')
 
-// Default: all selected
-const selectedOutlines = ref<string[]>(props.outlines.map(o => o.id))
+// 小说模式下默认且优先只使用本章大纲；文章模式无章节概念，全选
+function currentChapterOutlineIds() {
+  if (!isNovel.value || !props.currentChapterNum) {
+    return props.outlines.map(o => o.id)
+  }
+  return props.outlines
+    .filter(o => o.chapter_num === props.currentChapterNum)
+    .map(o => o.id)
+}
+
+// Default: novel 模式只选本章大纲，article 模式全选
+const selectedOutlines = ref<string[]>(currentChapterOutlineIds())
 const selectedCharacters = ref<string[]>(props.characters.map(c => c.id))
 const selectedWorldEntries = ref<string[]>(props.worldEntries.map(w => w.id))
 // Hidden threads: default-check those matching current chapter
@@ -58,6 +68,8 @@ const selectedHiddenThreads = ref<string[]>(
     : props.hiddenThreads.map(ht => ht.id),
 )
 const targetWords = ref(2000)
+const userNote = ref('')
+const includeKnowledgeSources = ref(false)
 
 const openSections = ref({ outlines: true, characters: false, worldEntries: false, hiddenThreads: false })
 
@@ -66,8 +78,15 @@ function toggleSection(key: 'outlines' | 'characters' | 'worldEntries' | 'hidden
 }
 
 function toggleAllOutlines() {
-  selectedOutlines.value = selectedOutlines.value.length === props.outlines.length ? [] : props.outlines.map(o => o.id)
+  // 小说模式下“全选”只在本章范围内切换，避免带入其他章节大纲
+  const ids = isNovel.value ? currentChapterOutlineIds() : props.outlines.map(o => o.id)
+  selectedOutlines.value = selectedOutlines.value.length === ids.length ? [] : ids
 }
+
+// 大纲“全选”复选框：小说模式下仅作用于本章大纲
+const outlineSelectAllScope = computed(() => isNovel.value ? currentChapterOutlineIds() : props.outlines.map(o => o.id))
+const outlineSelectAllLabel = computed(() => isNovel.value ? '本章' : '全选')
+const outlineSelectAllChecked = computed(() => outlineSelectAllScope.value.length > 0 && selectedOutlines.value.length === outlineSelectAllScope.value.length)
 function toggleAllCharacters() {
   selectedCharacters.value = selectedCharacters.value.length === props.characters.length ? [] : props.characters.map(c => c.id)
 }
@@ -107,12 +126,21 @@ function truncate(text: string, max: number): string {
 }
 
 function handleConfirm() {
-  emit('confirm', selectedOutlines.value, selectedCharacters.value, selectedWorldEntries.value, selectedHiddenThreads.value, targetWords.value)
+  emit(
+    'confirm',
+    selectedOutlines.value,
+    selectedCharacters.value,
+    selectedWorldEntries.value,
+    selectedHiddenThreads.value,
+    targetWords.value,
+    userNote.value.trim(),
+    includeKnowledgeSources.value,
+  )
 }
 </script>
 
 <template>
-  <div class="picker-overlay" @click.self="emit('cancel')">
+  <div class="picker-overlay">
     <div class="picker-card">
       <div class="picker-header">
         <h3>{{ pickerTitle }}</h3>
@@ -126,8 +154,8 @@ function handleConfirm() {
             <span class="section-chevron" :class="{ open: openSections.outlines }">▾</span>
             <span class="section-title">{{ sectionLabels.outlines }}</span>
             <label class="select-all" @click.stop>
-              <input type="checkbox" :checked="selectedOutlines.length === outlines.length && outlines.length > 0" @change="toggleAllOutlines" />
-              <span>全选</span>
+              <input type="checkbox" :checked="outlineSelectAllChecked" @change="toggleAllOutlines" />
+              <span>{{ outlineSelectAllLabel }}</span>
             </label>
           </div>
           <div v-if="openSections.outlines" class="section-list">
@@ -207,6 +235,24 @@ function handleConfirm() {
             </div>
           </div>
         </div>
+
+        <div class="generation-requirements">
+          <label class="requirements-label">本轮写作要求</label>
+          <textarea
+            v-model="userNote"
+            class="requirements-input"
+            rows="4"
+            placeholder="可选。例如：更强调主角心理变化；节奏快一点；少用旁白，多写动作和对话；不要提前揭示反派身份..."
+          ></textarea>
+        </div>
+
+        <div class="knowledge-source-option">
+          <label class="knowledge-toggle">
+            <input v-model="includeKnowledgeSources" type="checkbox" />
+            <span>加入资料库内容</span>
+          </label>
+          <p>默认不加入资料库。勾选后才会把同人规则、固定注入资料和关键词命中的资料放进本次上下文。</p>
+        </div>
       </div>
 
       <div class="picker-footer">
@@ -261,6 +307,8 @@ function handleConfirm() {
 .picker-body {
   flex: 1;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: var(--sp-3) var(--sp-5);
   display: flex;
   flex-direction: column;
@@ -310,6 +358,68 @@ function handleConfirm() {
   padding: var(--sp-1) 0;
   max-height: 180px;
   overflow-y: auto;
+}
+.generation-requirements {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+}
+.requirements-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+.requirements-input {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+.requirements-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.knowledge-source-option {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+}
+.knowledge-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+.knowledge-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+.knowledge-source-option p {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-tertiary);
 }
 
 /* Items */
