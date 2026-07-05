@@ -42,3 +42,4 @@ frontend/backend-dist/
 frontend/build-assets/
 frontend/dist-desktop/
 frontend/release/
+backend/.vite/
