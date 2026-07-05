@@ -23,6 +23,8 @@ from models.chapter import Chapter
 from models.chapter_version import ChapterVersion
 from models.chapter_review_note import ChapterReviewNote
 from models.ai_run import AiRun
+from models.ai_run_step import AiRunStep
+from models.llm_call_log import LlmCallLog
 from models.document import Document
 from models.document_version import DocumentVersion
 from models.generation_record import GenerationRecord
@@ -69,17 +71,20 @@ from schemas.api import (
     KnowledgeQaSessionResponse, KnowledgeQaSessionUpdateRequest, KnowledgeQaMessageResponse,
     KnowledgeSearchRequest, KnowledgeAskRequest,
     EvaluationRunCreate, EvaluationRunResponse, EvaluationResultResponse,
-    AiRunResponse, AiRunListItemResponse, AiRunStepResponse,
+    AiRunResponse, AiRunListItemResponse, AiRunStepResponse, AiRunContextResponse, AiRunContextCallResponse,
     HumanDecisionRequest, HumanDecisionResponse,
+    ClarificationAnswerRequest, ClarificationResponse,
     WritingMemoryStagingResponse,
     AuthUser,
 )
 from agents.safety import validate_expert_safety
-from agents.expert_templates import BUILTIN_EXPERTS
+from agents.expert_templates import ALL_BUILTIN_EXPERTS, BUILTIN_EXPERTS
 from agents.llm_provider import LLMConfigError, get_llm_provider
 from agents.workflow import get_creative_app, CreativeState
+from agents.workflow_v2 import get_creative_app_v2, get_creative_app_v2_continue, CreativeStateV2
 from harness.run_manager import (
     create_run, mark_running, mark_waiting_human, mark_completed, mark_failed, mark_cancelled,
+    build_expert_snapshot, workflow_to_snapshot,
 )
 from harness.step_logger import start_step, finish_step, fail_step
 from harness.human_interrupt_service import (
@@ -111,7 +116,7 @@ from services.generation_record_service import (
     update_generation_record_status,
 )
 from services.evaluation import default_rubric, normalize_expected_properties, normalize_rubric, run_evaluation_case
-from services.memory_staging_service import run_fact_extraction
+from services.memory_staging_service import run_fact_extraction, run_story_recorder_extraction
 from observability.langfuse import activate_langfuse_context, current_langfuse_trace_id, finish_langfuse_context
 from config.settings import settings
 
@@ -313,6 +318,7 @@ def _generation_list_item(record: GenerationRecord) -> GenerationRecordListItemR
         project_id=record.project_id,
         chapter_id=record.chapter_id,
         document_id=record.document_id,
+        run_id=record.run_id,
         mode=record.mode,
         expert_id=record.expert_id,
         direction=record.direction,
@@ -321,6 +327,50 @@ def _generation_list_item(record: GenerationRecord) -> GenerationRecordListItemR
         langfuse_trace_id=record.langfuse_trace_id,
         created_at=record.created_at,
     )
+
+
+def _extract_context_text_from_prompt(prompt: str | None) -> str | None:
+    """从 rendered_prompt_snapshot 中抽取用户真正关心的上下文段。
+
+    不按任意下一个 `##` 截断，因为 Context Builder 生成的上下文本身包含
+    `## 本章大纲`、`## 角色资料` 等多个小节。只在已知的后续 prompt 小节处截断。
+    """
+    if not prompt:
+        return None
+    markers = ("## 上下文/设定", "## 可用上下文", "## 上下文")
+    start = -1
+    for marker in markers:
+        idx = prompt.find(marker)
+        if idx >= 0:
+            start = idx + len(marker)
+            break
+    if start < 0:
+        return None
+    context = prompt[start:].lstrip(" \n:")
+    stop_markers = (
+        "\n## 执行重点",
+        "\n## 用户补充要求",
+        "\n\n## 用户本轮写作要求",
+        "\n\n## 执行重点",
+        "\n\n## 用户补充要求",
+        "\n\n## 章节信息",
+        "\n\n## 修改方向",
+        "\n\n## 当前候选稿",
+        "\n\n## 待检查文本",
+        "\n\n## 当前稿件",
+        "\n\n请根据",
+        "\n\n请分析",
+        "\n\n请检查",
+    )
+    stops = [pos for marker in stop_markers if (pos := context.find(marker)) >= 0]
+    if stops:
+        context = context[:min(stops)]
+    context = context.strip()
+    return context or None
+
+
+def _prompt_snapshot_was_truncated(request_meta: dict | None) -> bool:
+    return bool(isinstance(request_meta, dict) and request_meta.get("prompt_snapshot_truncated"))
 
 
 def _evaluation_dataset_response(dataset: EvaluationDataset, case_count: int = 0, run_count: int = 0) -> EvaluationDatasetResponse:
@@ -549,7 +599,7 @@ async def create_project(
     await db.commit()
     await db.refresh(project)
 
-    for tpl in BUILTIN_EXPERTS:
+    for tpl in ALL_BUILTIN_EXPERTS:
         expert = Expert(
             project_id=project.id,
             is_builtin=True,
@@ -621,7 +671,7 @@ async def import_txt_project(
         db.add(project)
         await db.flush()
 
-        for tpl in BUILTIN_EXPERTS:
+        for tpl in ALL_BUILTIN_EXPERTS:
             db.add(Expert(project_id=project.id, is_builtin=True, **tpl))
 
         for item in chapters_payload:
@@ -2329,6 +2379,24 @@ async def list_experts(
     return result.scalars().all()
 
 
+@router.post("/projects/{project_id}/experts/sync-v2")
+async def sync_v2_experts(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """为已有项目补齐 Expert System v2 内置专家，并标记旧大师 deprecated。
+    幂等：按 (project_id, expert_key) 去重，已存在的不重复创建。
+    """
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    from services.expert_sync import sync_v2_experts as _sync
+
+    result = await _sync(db, uid)
+    await db.commit()
+    return result
+
+
 @router.post("/projects/{project_id}/experts", response_model=ExpertResponse)
 async def create_expert(
     project_id: str,
@@ -2602,6 +2670,7 @@ async def generate_chapter(
                 selected_character_ids=req.selected_character_ids or [],
                 selected_world_entry_ids=req.selected_world_entry_ids or [],
                 selected_hidden_thread_ids=req.selected_hidden_thread_ids or [],
+                include_knowledge_sources=req.include_knowledge_sources,
                 target_words=req.target_words or 0,
                 selected_direction=req.selected_direction or "",
                 user_note=req.user_note or "",
@@ -2620,6 +2689,29 @@ async def generate_chapter(
 
             # ==================== enhance 模式 ====================
             if req.mode == "enhance":
+                # ── I-5: 补 AiRun + workflow 快照（仍走旧直接分支）──
+                from services.novel_orchestrator import resolve_workflow as _resolve_wf_enhance
+                _wf_enhance = _resolve_wf_enhance(project_mode=project.mode, mode="enhance")
+                _enhance_run = await create_run(
+                    db,
+                    project_id=uid,
+                    chapter_id=target_chapter_id,
+                    document_id=target_document_id,
+                    run_type="CHAPTER_REWRITE",
+                    mode="enhance",
+                    user_goal=req.user_note,
+                    model_config_snapshot=llm_config_dict,
+                    workflow_key=_wf_enhance.workflow_key if _wf_enhance else None,
+                    workflow_version=_wf_enhance.version if _wf_enhance else None,
+                    workflow_snapshot=workflow_to_snapshot(_wf_enhance),
+                    expert_snapshot=[],
+                )
+                await db.flush()
+                _enhance_run_id = str(_enhance_run.id)
+                yield f"event: run_created\ndata: {json.dumps({'run_id': _enhance_run_id, 'status': 'CREATED'}, ensure_ascii=False)}\n\n"
+                await mark_running(db, _enhance_run)
+                yield f"event: run_status\ndata: {json.dumps({'run_id': _enhance_run_id, 'status': 'RUNNING'}, ensure_ascii=False)}\n\n"
+
                 if not req.enhance_direction:
                     # 第一步：分析当前内容，输出 3 个编辑/润色方向。
                     yield f"event: agent_start\ndata: {json.dumps({'agent': 'editor', 'step': 'running'}, ensure_ascii=False)}\n\n"
@@ -2782,6 +2874,8 @@ async def generate_chapter(
 
                 record_id = await _save_generation_history(writer_content, skill_packs=direct_skill_packs)
                 yield _generation_record_event(record_id)
+                await mark_completed(db, _enhance_run)
+                await db.commit()
                 yield f"event: done\ndata: {json.dumps({'message': '润色完成'}, ensure_ascii=False)}\n\n"
                 return
 
@@ -2876,39 +2970,190 @@ async def generate_chapter(
                     )
                     direct_skill_packs = [summary]
                     done_message = "内容生成完成"
+                    writer_content = ""
+                    async for chunk in provider.generate_stream(system_prompt, user_prompt):
+                        if await _check_cancelled():
+                            return
+                        writer_content += chunk
+                        yield f"event: content_output\ndata: {json.dumps({'token': chunk}, ensure_ascii=False)}\n\n"
+                    yield f"event: agent_done\ndata: {json.dumps({'agent': 'writer', 'step': 'success'}, ensure_ascii=False)}\n\n"
+                    record_id = await _save_generation_history(writer_content, skill_packs=direct_skill_packs)
+                    yield _generation_record_event(record_id)
+                    yield f"event: done\ndata: {json.dumps({'message': done_message}, ensure_ascii=False)}\n\n"
+                    return
                 else:
-                    user_prompt = f"## 上下文\n{creative_context}\n\n## 续写方向\n{req.turn_direction}\n\n## 用户补充\n{req.user_note or '无'}\n\n## 当前章节（续写接在后面）\n{chapter_content}\n\n请严格按照上下文中的设定续写："
-                    system_prompt = "你是一位才华横溢的创意写作大师。根据指定方向续写章节，注意与原文的标点衔接。"
-                    plan = plan_direct_skill_pack(
-                        project_mode=project.mode,
-                        generate_mode=req.mode,
-                        action="continue_generate",
+                    # ── Novel continue 第二阶段：切 v2 LangGraph（continue_fast，无 HITL）──
+                    from services.novel_orchestrator import resolve_workflow as _resolve_wf_continue
+                    wf_continue = _resolve_wf_continue(project_mode="novel", mode="continue")
+                    thread_id = f"{uid}:{target_chapter_id or 'no-chapter'}:{uuid.uuid4().hex[:8]}"
+                    ai_run = await create_run(
+                        db,
+                        project_id=uid,
+                        chapter_id=target_chapter_id,
+                        run_type="CHAPTER_CONTINUE",
+                        mode="continue",
+                        user_goal=req.user_note,
+                        model_config_snapshot=llm_config_dict,
+                        workflow_key=wf_continue.workflow_key if wf_continue else None,
+                        workflow_version=wf_continue.version if wf_continue else None,
+                        workflow_snapshot=workflow_to_snapshot(wf_continue),
+                        expert_snapshot=[],
                     )
-                    pack, summary = _planned_direct_skill_pack(
-                        plan,
-                        project_id=str(uid),
-                        chapter_id=str(target_chapter_id or ""),
-                        draft=chapter_content,
-                        context=creative_context,
-                        mode=req.mode,
-                    )
-                    yield _skill_pack_sse_event(summary)
-                    system_prompt = build_expert_system_prompt("writer", system_prompt, pack)
-                    direct_skill_packs = [summary]
-                    done_message = "续写完成"
-                writer_content = ""
-                async for chunk in provider.generate_stream(system_prompt, user_prompt):
-                    if await _check_cancelled():
-                        return
-                    writer_content += chunk
-                    output_event = "content_output" if is_article_project else "writer_output"
-                    yield f"event: {output_event}\ndata: {json.dumps({'token': chunk}, ensure_ascii=False)}\n\n"
-                yield f"event: agent_done\ndata: {json.dumps({'agent': 'writer', 'step': 'success'}, ensure_ascii=False)}\n\n"
+                    await db.flush()
+                    run_id_str = str(ai_run.id)
+                    await mark_running(db, ai_run)
+                    yield f"event: run_created\ndata: {json.dumps({'run_id': run_id_str, 'status': 'CREATED'}, ensure_ascii=False)}\n\n"
+                    yield f"event: run_status\ndata: {json.dumps({'run_id': run_id_str, 'status': 'RUNNING'}, ensure_ascii=False)}\n\n"
 
-                record_id = await _save_generation_history(writer_content, skill_packs=direct_skill_packs)
-                yield _generation_record_event(record_id)
-                yield f"event: done\ndata: {json.dumps({'message': done_message}, ensure_ascii=False)}\n\n"
-                return
+                    app = get_creative_app_v2_continue()
+                    config = {"configurable": {"thread_id": thread_id}}
+                    initial_state: CreativeStateV2 = {
+                        "project_id": str(uid),
+                        "chapter_id": str(target_chapter_id or ""),
+                        "chapter_num": chapter_num,
+                        "mode": "continue",
+                        "context": "",
+                        "draft": chapter_content or "",
+                        "original_text": "",
+                        "critiques": [],
+                        "consistency_report": {},
+                        "edited_draft": "",
+                        "revision_count": 0,
+                        "writer_prompt": "",
+                        "critic_prompt": "",
+                        "editor_prompt": "",
+                        "consistency_prompt": "",
+                        "llm_config": llm_config_dict,
+                        "selected_outline_ids": req.selected_outline_ids or [],
+                        "selected_character_ids": req.selected_character_ids or [],
+                        "selected_world_entry_ids": req.selected_world_entry_ids or [],
+                        "selected_hidden_thread_ids": req.selected_hidden_thread_ids or [],
+                        "include_knowledge_sources": req.include_knowledge_sources,
+                        "target_words": req.target_words or 0,
+                        "selected_direction": req.turn_direction or "",
+                        "user_note": req.user_note or "",
+                        "skill_packs": [],
+                        "harness_run_id": run_id_str,
+                        "harness_step_id": None,
+                        "chapter_task_card": {},
+                        "structural_critique": {},
+                        "edit_report": {},
+                        "workflow_key": wf_continue.workflow_key if wf_continue else "",
+                    }
+
+                    _CONTINUE_STEP_NODE_MAP = {
+                        "context_loader": ("build_context", 1),
+                        "chapter_architect": ("plan_chapter", 2),
+                        "chapter_writer": ("generate_draft", 3),
+                        "continuity_checker": ("consistency_check", 4),
+                    }
+                    _CONTINUE_NODE_EVENT_MAP = {
+                        "chapter_architect": "architect_output",
+                        "chapter_writer": "writer_output",
+                        "continuity_checker": "consistency_check",
+                    }
+                    _CONTINUE_STREAM_NODES = {"chapter_writer"}
+                    writer_content = ""
+                    workflow_skill_packs: list[dict] = []
+                    seen_skill_pack_keys: set[tuple[str, str]] = set()
+                    current_stream_node = None
+                    active_steps: dict[str, object] = {}
+
+                    try:
+                        async for event in app.astream_events(initial_state, config=config, version="v2"):
+                            if await _check_cancelled():
+                                try:
+                                    await mark_cancelled(db, ai_run)
+                                    await db.commit()
+                                except Exception:
+                                    logger.warning("harness mark_cancelled 失败", exc_info=True)
+                                return
+                            kind = event.get("event")
+                            if kind == "on_chain_start":
+                                node_name = event.get("name", "")
+                                if node_name in _CONTINUE_NODE_EVENT_MAP:
+                                    yield f"event: progress\ndata: {json.dumps({'message': f'{node_name} 节点执行中'}, ensure_ascii=False)}\n\n"
+                                if node_name:
+                                    yield f"event: agent_start\ndata: {json.dumps({'agent': node_name, 'step': 'running'}, ensure_ascii=False)}\n\n"
+                                    if node_name in _CONTINUE_STREAM_NODES:
+                                        current_stream_node = node_name
+                                if node_name in _CONTINUE_STEP_NODE_MAP and node_name not in active_steps:
+                                    step_name, step_order = _CONTINUE_STEP_NODE_MAP[node_name]
+                                    try:
+                                        step = await start_step(db, run_id=ai_run.id, step_order=step_order, step_name=step_name, agent_name=node_name)
+                                        active_steps[node_name] = step
+                                        ai_run.current_step = step_name
+                                        await db.commit()
+                                        yield f"event: run_step\ndata: {json.dumps({'run_id': run_id_str, 'step_name': step_name, 'status': 'RUNNING'}, ensure_ascii=False)}\n\n"
+                                    except Exception:
+                                        logger.warning("harness start_step 失败 node=%s", node_name, exc_info=True)
+
+                            elif kind == "on_chain_end":
+                                node_name = event.get("name", "")
+                                output = event.get("data", {}).get("output", {})
+                                if node_name:
+                                    yield f"event: agent_done\ndata: {json.dumps({'agent': node_name, 'step': 'success'}, ensure_ascii=False)}\n\n"
+                                    if node_name in _CONTINUE_STREAM_NODES:
+                                        current_stream_node = None
+                                if node_name in _CONTINUE_STEP_NODE_MAP and node_name in active_steps:
+                                    step = active_steps.pop(node_name)
+                                    try:
+                                        await finish_step(db, step, output={})
+                                        yield f"event: run_step\ndata: {json.dumps({'run_id': run_id_str, 'step_name': _CONTINUE_STEP_NODE_MAP[node_name][0], 'status': 'SUCCESS'}, ensure_ascii=False)}\n\n"
+                                    except Exception:
+                                        logger.warning("harness finish_step 失败 node=%s", node_name, exc_info=True)
+
+                                for pack in _new_skill_packs(output, seen_skill_pack_keys):
+                                    workflow_skill_packs.append(pack)
+                                    yield _skill_pack_sse_event(pack, fallback_expert=node_name)
+
+                                if node_name == "chapter_architect":
+                                    card = output.get("chapter_task_card", {}) if isinstance(output, dict) else {}
+                                    yield f"event: architect_output\ndata: {json.dumps({'task_card': card}, ensure_ascii=False)}\n\n"
+                                elif node_name == "chapter_writer":
+                                    draft = output.get("draft", "") if isinstance(output, dict) else ""
+                                    writer_content = draft
+                                    if draft:
+                                        yield f"event: writer_output\ndata: {json.dumps({'content': draft}, ensure_ascii=False)}\n\n"
+                                elif node_name == "continuity_checker":
+                                    guardrail = output.get("consistency_report", {}) if isinstance(output, dict) else {}
+                                    if not isinstance(guardrail, dict):
+                                        guardrail = {}
+                                    report_text = _guardrail_to_text(guardrail)
+                                    yield f"event: consistency_check\ndata: {json.dumps({'report': report_text, 'guardrail_result': guardrail}, ensure_ascii=False)}\n\n"
+
+                            elif kind == "on_llm_stream":
+                                chunk_data = event.get("data", {})
+                                chunk = chunk_data.get("chunk")
+                                if chunk and current_stream_node:
+                                    token = ""
+                                    if hasattr(chunk, "choices") and chunk.choices:
+                                        delta = chunk.choices[0].delta
+                                        token = getattr(delta, "content", "") or ""
+                                    elif isinstance(chunk, dict):
+                                        choices = chunk.get("choices", [])
+                                        if choices:
+                                            token = choices[0].get("delta", {}).get("content", "") or ""
+                                    if token:
+                                        if current_stream_node == "chapter_writer":
+                                            writer_content += token
+                                        yield f"event: writer_output\ndata: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
+
+                        record_id = await _save_generation_history(writer_content, skill_packs=workflow_skill_packs, run_id=run_id_str)
+                        yield _generation_record_event(record_id)
+                        await mark_completed(db, ai_run)
+                        await db.commit()
+                        yield f"event: run_status\ndata: {json.dumps({'run_id': run_id_str, 'status': 'COMPLETED'}, ensure_ascii=False)}\n\n"
+                        yield f"event: done\ndata: {json.dumps({'message': '续写完成'}, ensure_ascii=False)}\n\n"
+                    except Exception as e:
+                        logger.exception("continue v2 生成失败")
+                        try:
+                            await mark_failed(db, ai_run, error_message=str(e))
+                            await db.commit()
+                        except Exception:
+                            logger.warning("harness mark_failed 失败", exc_info=True)
+                        yield f"event: error\ndata: {json.dumps({'message': f'生成失败: {str(e)}'}, ensure_ascii=False)}\n\n"
+                    return
 
             # ==================== continue + expert_id 模式 ====================
             elif req.mode == "continue" and req.expert_id:
@@ -2980,6 +3225,29 @@ async def generate_chapter(
 
             # ==================== summarize 模式 ====================
             elif req.mode == "summarize":
+                # ── I-5: 补 AiRun + workflow 快照（仍走旧直接分支）──
+                from services.novel_orchestrator import resolve_workflow as _resolve_wf_summarize
+                _wf_summarize = _resolve_wf_summarize(project_mode=project.mode, mode="summarize")
+                _summarize_run = await create_run(
+                    db,
+                    project_id=uid,
+                    chapter_id=target_chapter_id,
+                    document_id=target_document_id,
+                    run_type="SUMMARY_GENERATION",
+                    mode="summarize",
+                    user_goal=req.user_note,
+                    model_config_snapshot=llm_config_dict,
+                    workflow_key=_wf_summarize.workflow_key if _wf_summarize else None,
+                    workflow_version=_wf_summarize.version if _wf_summarize else None,
+                    workflow_snapshot=workflow_to_snapshot(_wf_summarize),
+                    expert_snapshot=[],
+                )
+                await db.flush()
+                _summarize_run_id = str(_summarize_run.id)
+                yield f"event: run_created\ndata: {json.dumps({'run_id': _summarize_run_id, 'status': 'CREATED'}, ensure_ascii=False)}\n\n"
+                await mark_running(db, _summarize_run)
+                yield f"event: run_status\ndata: {json.dumps({'run_id': _summarize_run_id, 'status': 'RUNNING'}, ensure_ascii=False)}\n\n"
+
                 yield f"event: agent_start\ndata: {json.dumps({'agent': 'reader', 'step': 'running'}, ensure_ascii=False)}\n\n"
                 if is_article_project:
                     plan = plan_direct_skill_pack(
@@ -3035,6 +3303,8 @@ async def generate_chapter(
                     yield f"event: {output_event}\ndata: {json.dumps({'token': chunk}, ensure_ascii=False)}\n\n"
                 yield f"event: agent_done\ndata: {json.dumps({'agent': 'reader', 'step': 'success'}, ensure_ascii=False)}\n\n"
                 # 不落库（只是反馈，不改原文）
+                await mark_completed(db, _summarize_run)
+                await db.commit()
                 yield f"event: done\ndata: {json.dumps({'message': done_message}, ensure_ascii=False)}\n\n"
                 return
 
@@ -3126,7 +3396,7 @@ async def generate_chapter(
             )
             enabled_experts = exp_result.scalars().all()
 
-            app = get_creative_app(enabled_experts=enabled_experts)
+            app = get_creative_app_v2()
             thread_id = f"{uid}:{target_chapter_id or target_document_id or 'no-chapter'}:{uuid.uuid4().hex[:8]}"
 
             # ── Harness: 创建 AI Run ──
@@ -3136,6 +3406,11 @@ async def generate_chapter(
                 "enhance": "CHAPTER_REWRITE",
                 "summarize": "SUMMARY_GENERATION",
             }.get(req.mode, "CHAPTER_DRAFT")
+
+            # ── Expert System v2: 解析 workflow 定义并写入快照 ──
+            from services.novel_orchestrator import resolve_workflow
+            wf = resolve_workflow(project_mode="novel", mode=req.mode)
+
             ai_run = await create_run(
                 db,
                 project_id=uid,
@@ -3145,6 +3420,10 @@ async def generate_chapter(
                 mode=req.mode,
                 user_goal=req.user_note,
                 model_config_snapshot=llm_config_dict,
+                workflow_key=wf.workflow_key if wf else None,
+                workflow_version=wf.version if wf else None,
+                workflow_snapshot=workflow_to_snapshot(wf),
+                expert_snapshot=build_expert_snapshot(enabled_experts),
             )
             await db.flush()
             run_id_str = str(ai_run.id)
@@ -3164,7 +3443,7 @@ async def generate_chapter(
                     if not consistency_prompt:
                         consistency_prompt = exp.system_prompt
 
-            initial_state: CreativeState = {
+            initial_state: CreativeStateV2 = {
                 "project_id": str(uid),
                 "chapter_id": str(target_chapter_id or target_document_id) if (target_chapter_id or target_document_id) else "",
                 "chapter_num": chapter_num,
@@ -3185,6 +3464,7 @@ async def generate_chapter(
                 "selected_character_ids": req.selected_character_ids or [],
                 "selected_world_entry_ids": req.selected_world_entry_ids or [],
                 "selected_hidden_thread_ids": req.selected_hidden_thread_ids or [],
+                "include_knowledge_sources": req.include_knowledge_sources,
                 "target_words": req.target_words or 0,
                 "selected_direction": req.selected_direction or "",
                 "user_note": req.user_note or "",
@@ -3192,19 +3472,26 @@ async def generate_chapter(
                 # ── Harness 注入：节点内 LLM call log 用（不传 db，避免 msgpack 序列化失败）──
                 "harness_run_id": run_id_str,
                 "harness_step_id": None,
+                # ── v2 新增 ──
+                "chapter_task_card": {},
+                "structural_critique": {},
+                "edit_report": {},
+                "workflow_key": wf.workflow_key if wf else "",
             }
 
             config = {"configurable": {"thread_id": thread_id}}
 
-            # 节点到 SSE 事件的映射
+            # 节点到 SSE 事件的映射（v2 节点名）
             NODE_EVENT_MAP = {
-                "writer": "writer_output",
-                "critic": "critic_output",
-                "consistency_checker": "consistency_check",
+                "chapter_architect": "architect_output",
+                "chapter_writer": "writer_output",
+                "structural_critic": "critic_output",
+                "narrative_editor": "editor_output",
+                "continuity_checker": "consistency_check",
             }
 
             # 流式输出的节点（逐 token 发送）
-            STREAM_NODES = {"writer"}
+            STREAM_NODES = {"chapter_writer"}
 
             writer_content = ""
             workflow_skill_packs: list[dict] = []
@@ -3214,10 +3501,12 @@ async def generate_chapter(
             # ── Harness: step 追踪 ──
             STEP_NODE_MAP = {
                 "context_loader": ("build_context", 1),
-                "writer": ("generate_draft", 2),
-                "critic": ("critique", 3),
-                "consistency_checker": ("consistency_check", 3),
-                "human_review": ("human_review", 4),
+                "chapter_architect": ("plan_chapter", 2),
+                "chapter_writer": ("generate_draft", 3),
+                "structural_critic": ("critique", 4),
+                "narrative_editor": ("edit_draft", 5),
+                "continuity_checker": ("consistency_check", 6),
+                "human_review": ("human_review", 7),
             }
             active_steps: dict[str, object] = {}  # node_name -> AiRunStep
             revision_round = 0
@@ -3280,13 +3569,19 @@ async def generate_chapter(
                         try:
                             output_snapshot: dict = {}
                             if isinstance(output, dict):
-                                if node_name == "writer":
+                                if node_name == "chapter_writer":
                                     output_snapshot = {"content_hash": str(hash(output.get("draft", "")))[:128]}
+                                elif node_name == "chapter_architect":
+                                    _card = output.get("chapter_task_card", {})
+                                    output_snapshot = {"has_task_card": bool(_card), "scene_count": len(_card.get("scenes", [])) if isinstance(_card, dict) else 0}
                                 elif node_name == "context_loader":
                                     output_snapshot = {"context_len": len(output.get("context", ""))}
-                                elif node_name == "critic":
-                                    output_snapshot = {"critique_count": len(output.get("critiques", []))}
-                                elif node_name == "consistency_checker":
+                                elif node_name == "structural_critic":
+                                    _crit = output.get("structural_critique", {})
+                                    output_snapshot = {"p0_count": len(_crit.get("p0", [])) if isinstance(_crit, dict) else 0}
+                                elif node_name == "narrative_editor":
+                                    output_snapshot = {"content_hash": str(hash(output.get("draft", "")))[:128]}
+                                elif node_name == "continuity_checker":
                                     _gr = output.get("consistency_report", {})
                                     _issues = _gr.get("issues", []) if isinstance(_gr, dict) else []
                                     output_snapshot = {"issue_count": len(_issues), "overall_severity": _gr.get("overall_severity", "info") if isinstance(_gr, dict) else "info"}
@@ -3302,18 +3597,27 @@ async def generate_chapter(
                     if node_name == "context_loader":
                         yield f"event: progress\ndata: {json.dumps({'message': '上下文加载完成'}, ensure_ascii=False)}\n\n"
 
-                    elif node_name == "writer":
+                    elif node_name == "chapter_architect":
+                        card = output.get("chapter_task_card", {}) if isinstance(output, dict) else {}
+                        yield f"event: architect_output\ndata: {json.dumps({'task_card': card}, ensure_ascii=False)}\n\n"
+
+                    elif node_name == "chapter_writer":
                         draft = output.get("draft", "") if isinstance(output, dict) else ""
                         writer_content = draft
-                        # 如果没有流式 token 事件（generate 而非 generate_stream），发送完整内容
                         if draft:
                             yield f"event: writer_output\ndata: {json.dumps({'content': draft}, ensure_ascii=False)}\n\n"
 
-                    elif node_name == "critic":
+                    elif node_name == "structural_critic":
                         critiques = output.get("critiques", []) if isinstance(output, dict) else []
-                        yield f"event: critic_output\ndata: {json.dumps({'critiques': critiques}, ensure_ascii=False)}\n\n"
+                        critique = output.get("structural_critique", {}) if isinstance(output, dict) else {}
+                        yield f"event: critic_output\ndata: {json.dumps({'critiques': critiques, 'structural_critique': critique}, ensure_ascii=False)}\n\n"
 
-                    elif node_name == "consistency_checker":
+                    elif node_name == "narrative_editor":
+                        draft = output.get("draft", "") if isinstance(output, dict) else ""
+                        writer_content = draft  # editor 覆盖 draft，更新 writer_content
+                        yield f"event: editor_output\ndata: {json.dumps({'content': draft}, ensure_ascii=False)}\n\n"
+
+                    elif node_name == "continuity_checker":
                         guardrail = output.get("consistency_report", {}) if isinstance(output, dict) else {}
                         if not isinstance(guardrail, dict):
                             guardrail = {}
@@ -3362,7 +3666,7 @@ async def generate_chapter(
                             if choices:
                                 token = choices[0].get("delta", {}).get("content", "") or ""
                         if token:
-                            if current_stream_node == "writer":
+                            if current_stream_node == "chapter_writer":
                                 writer_content += token
                             yield f"event: writer_output\ndata: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
 
@@ -3591,6 +3895,58 @@ async def get_ai_run_steps(
     ]
 
 
+@router.get("/ai-runs/{run_id}/context", response_model=AiRunContextResponse)
+async def get_ai_run_context(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """查看一次生成实际使用过的上下文快照。
+
+    数据来自 llm_call_logs：优先展示从 rendered_prompt_snapshot 中抽出的
+    `## 上下文` / `## 可用上下文` 段，同时保留 context_package_snapshot 摘要。
+    """
+    rid = _to_uuid(run_id)
+    run_result = await db.execute(select(AiRun).where(AiRun.id == rid))
+    run = run_result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run 不存在")
+    await _verify_project_owner(run.project_id, user.id, db)
+
+    result = await db.execute(
+        select(LlmCallLog, AiRunStep.step_name)
+        .outerjoin(AiRunStep, LlmCallLog.step_id == AiRunStep.id)
+        .where(LlmCallLog.run_id == rid)
+        .order_by(LlmCallLog.created_at.asc())
+    )
+    calls = [
+        AiRunContextCallResponse(
+            id=row.LlmCallLog.id,
+            run_id=row.LlmCallLog.run_id,
+            step_id=row.LlmCallLog.step_id,
+            step_name=row.step_name,
+            agent_name=row.LlmCallLog.agent_name,
+            provider=row.LlmCallLog.provider,
+            model=row.LlmCallLog.model,
+            context_snapshot=row.LlmCallLog.context_package_snapshot,
+            context_text=_extract_context_text_from_prompt(row.LlmCallLog.rendered_prompt_snapshot),
+            prompt_snapshot=row.LlmCallLog.rendered_prompt_snapshot,
+            prompt_truncated=_prompt_snapshot_was_truncated(row.LlmCallLog.request),
+            error_message=row.LlmCallLog.error_message,
+            created_at=row.LlmCallLog.created_at,
+        )
+        for row in result.all()
+    ]
+    return AiRunContextResponse(
+        run_id=run.id,
+        project_id=run.project_id,
+        mode=run.mode,
+        status=run.status,
+        workflow_key=run.workflow_key,
+        calls=calls,
+    )
+
+
 @router.get("/projects/{project_id}/ai-runs", response_model=list[AiRunListItemResponse])
 async def list_project_ai_runs(
     project_id: str,
@@ -3684,6 +4040,88 @@ async def create_human_decision(
     )
 
 
+# ==================== Clarification Loop API ====================
+
+@router.get("/ai-runs/{run_id}/clarification", response_model=ClarificationResponse)
+async def get_clarification(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """获取指定 run 的最新 clarification interrupt 状态。
+
+    返回问题列表、已有回答、轮次等信息。
+    如果没有 clarification interrupt，返回 status="none"。
+    """
+    rid = _to_uuid(run_id)
+    run_result = await db.execute(select(AiRun).where(AiRun.id == rid))
+    run = run_result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run 不存在")
+    await _verify_project_owner(run.project_id, user.id, db)
+
+    from services.clarification_interrupt import get_latest_clarification_interrupt, format_clarification_response
+
+    interrupt = await get_latest_clarification_interrupt(db, run.id)
+    if not interrupt:
+        return ClarificationResponse(
+            run_id=str(run.id),
+            status="none",
+            resolved=False,
+        )
+    data = format_clarification_response(interrupt)
+    return ClarificationResponse(**data)
+
+
+@router.post("/ai-runs/{run_id}/clarification-answers", response_model=ClarificationResponse)
+async def submit_clarification_answers(
+    run_id: str,
+    req: ClarificationAnswerRequest,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """提交澄清回答或跳过澄清。
+
+    action=submit: 把 answers 写入 payload，resolve interrupt
+    action=skip: 标记跳过，resolve interrupt（使用 assumptions_if_skipped）
+
+    幂等性：已 resolved 的 interrupt 返回当前状态（不报错）。
+    """
+    rid = _to_uuid(run_id)
+    run_result = await db.execute(select(AiRun).where(AiRun.id == rid))
+    run = run_result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run 不存在")
+    await _verify_project_owner(run.project_id, user.id, db)
+
+    from services.clarification_interrupt import (
+        get_latest_clarification_interrupt, submit_clarification_answers as _submit,
+        skip_clarification as _skip, format_clarification_response,
+    )
+
+    interrupt = await get_latest_clarification_interrupt(db, run.id)
+    if not interrupt:
+        raise HTTPException(status_code=404, detail="未找到 clarification interrupt")
+
+    if interrupt.resolved:
+        # 幂等：已 resolved 返回当前状态
+        data = format_clarification_response(interrupt)
+        return ClarificationResponse(**data)
+
+    try:
+        if req.action == "skip":
+            await _skip(db, interrupt)
+        else:
+            await _submit(db, interrupt, answers=req.answers)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    await db.commit()
+
+    data = format_clarification_response(interrupt)
+    return ClarificationResponse(**data)
+
+
 # ==================== 工作流恢复（HITL） ====================
 
 @router.post("/projects/{project_id}/documents/resume")
@@ -3720,7 +4158,15 @@ async def resume_chapter_generation(
         select(Expert).where(Expert.project_id == uid, Expert.is_enabled == True)
     )
     enabled_experts = exp_result.scalars().all()
-    app = get_creative_app(enabled_experts=enabled_experts)
+
+    # ── v2 判断：按 AiRun.workflow_key 决定走 v2 还是旧 workflow ──
+    _resume_run_check = (
+        await db.execute(select(AiRun).where(AiRun.thread_id == thread_id))
+    ).scalar_one_or_none()
+    if _resume_run_check and _resume_run_check.workflow_key:
+        app = get_creative_app_v2()
+    else:
+        app = get_creative_app(enabled_experts=enabled_experts)
     config = {"configurable": {"thread_id": thread_id}}
 
     async def event_stream():
@@ -3874,21 +4320,24 @@ async def resume_chapter_generation(
                             resume_skill_packs.append(pack)
                             yield _skill_pack_sse_event(pack, fallback_expert=node_name)
 
-                        if node_name == "writer":
+                        if node_name in {"writer", "chapter_writer"}:
                             draft = output.get("draft", "") if isinstance(output, dict) else ""
-                            revised_content = draft
+                            if draft:
+                                revised_content = draft
                             yield f"event: writer_output\ndata: {json.dumps({'content': draft}, ensure_ascii=False)}\n\n"
-                        elif node_name == "critic":
+                        elif node_name in {"critic", "structural_critic"}:
                             critiques = output.get("critiques", []) if isinstance(output, dict) else []
                             yield f"event: critic_output\ndata: {json.dumps({'critiques': critiques}, ensure_ascii=False)}\n\n"
-                        elif node_name == "consistency_checker":
+                        elif node_name in {"consistency_checker", "continuity_checker"}:
                             guardrail = output.get("consistency_report", {}) if isinstance(output, dict) else {}
                             if not isinstance(guardrail, dict):
                                 guardrail = {}
                             report_text = _guardrail_to_text(guardrail)
                             yield f"event: consistency_check\ndata: {json.dumps({'report': report_text, 'guardrail_result': guardrail}, ensure_ascii=False)}\n\n"
-                        elif node_name == "editor":
-                            edited = output.get("edited_draft", "") if isinstance(output, dict) else ""
+                        elif node_name in {"editor", "narrative_editor"}:
+                            edited = ""
+                            if isinstance(output, dict):
+                                edited = output.get("edited_draft", "") or output.get("draft", "")
                             if edited:
                                 revised_content = edited
                             yield f"event: editor_output\ndata: {json.dumps({'content': edited}, ensure_ascii=False)}\n\n"
@@ -3984,9 +4433,10 @@ async def resume_chapter_generation(
                                             accepted_version_id=str(_ver.id),
                                         )
                                         await db.commit()
-                            # ── Phase H2: 后台抽取写作记忆 ──
-                            # SQLite :memory: 测试环境跳过（独立 session 看不到内存表）；
-                            # 生产用 Postgres 不受影响
+                            # ── Phase I-6 / H2: 后台抽取写作记忆 ──
+                            # v2 run（有 workflow_key）用 story-recorder + memory-curator
+                            # 旧 run / 无 workflow_key 用旧 FactExtractionAgent
+                            # SQLite :memory: 测试环境跳过（独立 session 看不到内存表）
                             from db.session import get_engine as _get_engine_for_guard
                             _is_sqlite = _get_engine_for_guard().dialect.name == "sqlite"
                             if _resume_run_id and not _is_sqlite:
@@ -3995,16 +4445,31 @@ async def resume_chapter_generation(
                                     else (str(_ver.id) if _ver else None)
                                 )
                                 if _accepted_vid:
-                                    asyncio.create_task(run_fact_extraction(
-                                        project_id=str(uid),
-                                        chapter_id=str(chapter.id),
-                                        chapter_version_id=_accepted_vid,
-                                        chapter_sequence_number=chapter.sequence_number,
-                                        run_id=_resume_run_id,
-                                        content=raw_content,
-                                        context=current_values.get("context", ""),
-                                        llm_config=current_values.get("llm_config"),
-                                    ))
+                                    _use_story_recorder = (
+                                        _resume_run and _resume_run.workflow_key
+                                    )
+                                    if _use_story_recorder:
+                                        asyncio.create_task(run_story_recorder_extraction(
+                                            project_id=str(uid),
+                                            chapter_id=str(chapter.id),
+                                            chapter_version_id=_accepted_vid,
+                                            chapter_sequence_number=chapter.sequence_number,
+                                            run_id=_resume_run_id,
+                                            content=raw_content,
+                                            context=current_values.get("context", ""),
+                                            llm_config=current_values.get("llm_config"),
+                                        ))
+                                    else:
+                                        asyncio.create_task(run_fact_extraction(
+                                            project_id=str(uid),
+                                            chapter_id=str(chapter.id),
+                                            chapter_version_id=_accepted_vid,
+                                            chapter_sequence_number=chapter.sequence_number,
+                                            run_id=_resume_run_id,
+                                            content=raw_content,
+                                            context=current_values.get("context", ""),
+                                            llm_config=current_values.get("llm_config"),
+                                        ))
                 except Exception:
                     logger.exception("落库失败")
                     yield f"event: error\ndata: {json.dumps({'message': '保存失败'}, ensure_ascii=False)}\n\n"

@@ -113,6 +113,7 @@ class ExpertUpdate(BaseModel):
     trigger: str | None = Field(default=None, pattern=r"^(manual|auto_on_draft|auto_on_save|auto_on_chapter_complete)$")
     is_enabled: bool | None = None
     color: str | None = Field(default=None, max_length=20)
+    deprecated: bool | None = None  # Expert System v2: 标记旧大师
 
     @field_validator("system_prompt")
     @classmethod
@@ -147,6 +148,10 @@ class ExpertResponse(BaseModel):
     is_builtin: bool
     is_enabled: bool
     color: str
+    # Expert System v2
+    expert_key: str | None = None
+    version: int = 1
+    deprecated: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -241,12 +246,13 @@ class GenerateRequest(BaseModel):
     chapter_id: str | None = None
     document_id: str | None = None
     chapter_num: int | None = Field(default=None, ge=1)
-    mode: str = Field(default="continue", pattern=r"^(continue|full_pipeline|enhance|summarize)$")
+    mode: str = Field(default="full_pipeline", pattern=r"^(continue|full_pipeline|enhance|summarize)$")
     expert_id: str | None = None
     selected_outline_ids: list[str] | None = None
     selected_character_ids: list[str] | None = None
     selected_world_entry_ids: list[str] | None = None
     selected_hidden_thread_ids: list[str] | None = None
+    include_knowledge_sources: bool = False
     target_words: int | None = None
     selected_direction: str | None = None
     direction_option_id: str | None = None
@@ -651,6 +657,7 @@ class GenerationRecordListItemResponse(BaseModel):
     project_id: uuid.UUID
     chapter_id: uuid.UUID | None
     document_id: uuid.UUID | None
+    run_id: uuid.UUID | None = None
     mode: str
     expert_id: uuid.UUID | None
     direction: str | None
@@ -1026,6 +1033,35 @@ class AiRunStepResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AiRunContextCallResponse(BaseModel):
+    """一次 LLM 调用的可解释上下文快照。
+
+    只暴露用户需要复盘的上下文与调用摘要，不返回模型配置密钥等敏感信息。
+    """
+    id: uuid.UUID
+    run_id: uuid.UUID | None = None
+    step_id: uuid.UUID | None = None
+    step_name: str | None = None
+    agent_name: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    context_snapshot: dict | None = None
+    context_text: str | None = None
+    prompt_snapshot: str | None = None
+    prompt_truncated: bool = False
+    error_message: str | None = None
+    created_at: datetime
+
+
+class AiRunContextResponse(BaseModel):
+    run_id: uuid.UUID
+    project_id: uuid.UUID
+    mode: str
+    status: str
+    workflow_key: str | None = None
+    calls: list[AiRunContextCallResponse]
+
+
 # ==================== Human Interrupt ====================
 
 class HumanDecisionRequest(BaseModel):
@@ -1040,3 +1076,28 @@ class HumanDecisionResponse(BaseModel):
     interrupt_id: str
     status: str
     message: str
+
+
+# ── Clarification Loop ──
+
+
+class ClarificationAnswerRequest(BaseModel):
+    """提交澄清回答请求"""
+    action: str = Field(..., pattern=r"^(submit|skip)$")
+    answers: dict[str, str] = Field(default_factory=dict)
+
+
+class ClarificationResponse(BaseModel):
+    """澄清状态响应"""
+    run_id: str
+    interrupt_id: str | None = None
+    status: str
+    round: int = 1
+    max_rounds: int = 3
+    questions: list[dict] = Field(default_factory=list)
+    assumptions_if_skipped: list[str] = Field(default_factory=list)
+    existing_answers: dict[str, str] = Field(default_factory=dict)
+    clarification_summary: str = ""
+    resolved: bool = False
+
+    model_config = {"from_attributes": True}

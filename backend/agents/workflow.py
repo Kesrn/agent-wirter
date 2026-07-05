@@ -53,6 +53,7 @@ class CreativeState(TypedDict):
     selected_character_ids: list[str]  # 用户选中的角色 ID
     selected_world_entry_ids: list[str]  # 用户选中的世界观 ID
     selected_hidden_thread_ids: list[str]  # 用户选中的暗线 ID
+    include_knowledge_sources: bool  # 是否将资料库 project_sources 注入上下文
     target_words: int  # 目标字数
     selected_direction: str  # 用户选择的剧情走向（从 DirectionPicker 传入）
     user_note: str  # 用户补充要求
@@ -139,11 +140,19 @@ def _build_writer_user_prompt(state: CreativeState) -> str:
             direction_block += f"\n## 剧情走向\n用户选择了以下走向：{selected_direction}\n请严格遵循此走向展开情节。\n"
         if user_note:
             direction_block += f"\n## 用户补充要求\n{user_note}\n"
+        draft_block = (
+            f"\n\n## 已有章节草稿（仅作本章参考，不作为续写起点）\n{draft}"
+            if draft.strip()
+            else "\n\n## 已有章节草稿\n（无，请从本章资料生成完整章节）"
+        )
         user_prompt = (
-            f"## 上下文\n{context}{direction_block}\n\n"
-            f"## 当前草稿\n{draft}\n\n"
-            "请根据上下文和当前草稿生成/完善本章正文。"
-            "如果当前草稿非空，请将其整理为完整章节正文；不要接写无关后续内容。"
+            f"## 上下文\n{context}{direction_block}{draft_block}\n\n"
+            "请根据上下文中的本章大纲、角色、设定、检索资料和用户补充，生成“当前章节对应的完整正文”。\n"
+            "硬性要求：\n"
+            "1. 这是章节生成任务，不是续写任务；不要把前文摘要、已有章节片段或草稿当作续写起点。\n"
+            "2. 输出只覆盖本章应发生的内容，不要接写下一章或后续无关剧情。\n"
+            "3. 如果已有章节草稿非空，只能作为本章参考素材重组为完整章节；不要在其结尾后继续追加。\n"
+            "4. 只输出章节正文，不要输出说明、标题、项目符号或创作分析。"
         )
 
     if target_words:
@@ -267,6 +276,7 @@ async def context_loader_node(state: CreativeState) -> dict:
                     selected_character_ids=selected_characters or None,
                     selected_world_entry_ids=selected_world_entries or None,
                     selected_hidden_thread_ids=selected_hidden_threads or None,
+                    include_knowledge_sources=bool(state.get("include_knowledge_sources", False)),
                 )
                 context = format_chapter_context_for_prompt(ctx)
                 logger.info(
@@ -365,9 +375,14 @@ async def context_loader_node(state: CreativeState) -> dict:
                 # 前文：保持现有逻辑（最近3章，截断500字符）
                 chapter_id = state.get("chapter_id", "")
                 if chapter_id:
+                    current_seq = int(state.get("chapter_num") or 0)
+                    conditions = [Chapter.project_id == state["project_id"]]
+                    if current_seq:
+                        conditions.append(Chapter.sequence_number < current_seq)
+                    conditions.extend([Chapter.content.isnot(None), Chapter.content != ""])
                     result = await session.execute(
                         select(Chapter)
-                        .where(Chapter.project_id == state["project_id"])
+                        .where(*conditions)
                         .order_by(Chapter.sequence_number.desc())
                         .limit(3)
                     )
