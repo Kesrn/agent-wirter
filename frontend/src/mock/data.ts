@@ -17,6 +17,9 @@ export const DEFAULT_EXPERTS: Expert[] = [
     is_builtin: true,
     is_enabled: true,
     color: '#6366f1',
+    expert_key: null,
+    version: 1,
+    deprecated: false,
   },
   {
     id: 'cruel',
@@ -33,6 +36,9 @@ export const DEFAULT_EXPERTS: Expert[] = [
     is_builtin: true,
     is_enabled: true,
     color: '#ef4444',
+    expert_key: null,
+    version: 1,
+    deprecated: false,
   },
   {
     id: 'twist',
@@ -49,6 +55,9 @@ export const DEFAULT_EXPERTS: Expert[] = [
     is_builtin: true,
     is_enabled: true,
     color: '#f59e0b',
+    expert_key: null,
+    version: 1,
+    deprecated: false,
   },
   {
     id: 'renderer',
@@ -65,6 +74,9 @@ export const DEFAULT_EXPERTS: Expert[] = [
     is_builtin: true,
     is_enabled: true,
     color: '#10b981',
+    expert_key: null,
+    version: 1,
+    deprecated: false,
   },
   {
     id: 'editor',
@@ -81,6 +93,9 @@ export const DEFAULT_EXPERTS: Expert[] = [
     is_builtin: true,
     is_enabled: true,
     color: '#3b82f6',
+    expert_key: null,
+    version: 1,
+    deprecated: false,
   },
   {
     id: 'summarizer',
@@ -97,6 +112,9 @@ export const DEFAULT_EXPERTS: Expert[] = [
     is_builtin: true,
     is_enabled: true,
     color: '#8b5cf6',
+    expert_key: null,
+    version: 1,
+    deprecated: false,
   },
 ]
 

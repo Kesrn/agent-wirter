@@ -86,6 +86,10 @@ export interface Expert {
   is_builtin: boolean
   is_enabled: boolean
   color: string
+  /** Expert System v2 */
+  expert_key?: string | null
+  version: number
+  deprecated: boolean
 }
 
 /** 项目创作模式 */
@@ -329,6 +333,10 @@ export interface ApiExpert {
   is_enabled: boolean
   color: string
   created_at: string
+  /** Expert System v2 */
+  expert_key?: string | null
+  version: number
+  deprecated: boolean
 }
 
 /** Backend WorldEntryResponse */
@@ -697,6 +705,7 @@ export interface GenerateRequest {
   selected_character_ids?: string[]
   selected_world_entry_ids?: string[]
   selected_hidden_thread_ids?: string[]
+  include_knowledge_sources?: boolean
   target_words?: number
   selected_direction?: string
   direction_option_id?: string
@@ -724,7 +733,7 @@ export interface ArticleGenerateParams {
 // ─── SSE types ───
 
 /** SSE event types emitted by the backend generate/test endpoints */
-export type SSEEventType = 'progress' | 'agent_start' | 'agent_output' | 'agent_done' | 'writer_output' | 'content_output' | 'editor_output' | 'critic_output' | 'consistency_check' | 'enhance_directions' | 'turn_suggestions' | 'content_suggestions' | 'article_review' | 'revision_suggestions' | 'skill_pack' | 'generation_record' | 'done' | 'error' | 'run_created' | 'run_status' | 'run_step'
+export type SSEEventType = 'progress' | 'agent_start' | 'agent_output' | 'agent_done' | 'writer_output' | 'content_output' | 'editor_output' | 'architect_output' | 'critic_output' | 'consistency_check' | 'enhance_directions' | 'turn_suggestions' | 'content_suggestions' | 'article_review' | 'revision_suggestions' | 'skill_pack' | 'generation_record' | 'clarification_required' | 'done' | 'error' | 'run_created' | 'run_status' | 'run_step'
 
 /** SSE envelope parsed from the backend stream */
 export interface SSEEnvelope {
@@ -864,6 +873,55 @@ export interface GenerationRecordPayload {
   langfuse_trace_id?: string | null
 }
 
+// ─── Clarification Loop (生成前澄清) ───
+
+/** Clarification option */
+export interface ClarificationOption {
+  value: string
+  label: string
+  description?: string
+}
+
+/** Clarification question */
+export interface ClarificationQuestion {
+  id: string
+  type: 'single_choice' | 'multi_choice' | 'free_text' | 'number'
+  question: string
+  options?: ClarificationOption[]
+  required?: boolean
+  reason?: string
+}
+
+/** Clarification 状态响应 (GET /ai-runs/{run_id}/clarification) */
+export interface ClarificationState {
+  run_id: string
+  interrupt_id: string | null
+  status: string
+  round: number
+  max_rounds: number
+  questions: ClarificationQuestion[]
+  assumptions_if_skipped: string[]
+  existing_answers: Record<string, string>
+  clarification_summary: string
+  resolved: boolean
+}
+
+/** Clarification 提交请求 (POST /ai-runs/{run_id}/clarification-answers) */
+export interface ClarificationAnswerRequest {
+  action: 'submit' | 'skip'
+  answers: Record<string, string>
+}
+
+/** Payload for clarification_required SSE event */
+export interface ClarificationRequiredPayload {
+  run_id: string
+  interrupt_id: string | null
+  round: number
+  max_rounds: number
+  questions: ClarificationQuestion[]
+  assumptions_if_skipped: string[]
+}
+
 // ─── Chapter Version History ───
 
 export interface ApiChapterVersion {
@@ -937,6 +995,7 @@ export interface ApiGenerationRecordListItem {
   project_id: string
   chapter_id: string | null
   document_id: string | null
+  run_id?: string | null
   mode: GenerateMode
   expert_id: string | null
   direction: string | null
@@ -995,6 +1054,31 @@ export interface ApiRunStep {
   llm_call_count: number
 }
 
+export interface ApiRunContextCall {
+  id: string
+  run_id: string | null
+  step_id: string | null
+  step_name: string | null
+  agent_name: string | null
+  provider: string | null
+  model: string | null
+  context_snapshot: Record<string, unknown> | null
+  context_text: string | null
+  prompt_snapshot: string | null
+  prompt_truncated: boolean
+  error_message: string | null
+  created_at: string
+}
+
+export interface ApiRunContext {
+  run_id: string
+  project_id: string
+  mode: string
+  status: string
+  workflow_key: string | null
+  calls: ApiRunContextCall[]
+}
+
 export interface RunCreatedPayload {
   run_id: string
   status: string
@@ -1011,6 +1095,7 @@ export interface GenerationRecord {
   wordCount: number
   status: GenerationRecordStatus
   langfuseTraceId: string | null
+  runId: string | null
   createdAt: string
   content: string | null
   skillPacks: SkillPackPayload[]

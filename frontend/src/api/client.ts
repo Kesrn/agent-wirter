@@ -20,12 +20,14 @@ import {
   type DocumentVersionDiffRequest, type DocumentVersionDiffResponse,
   type ApiGenerationRecordListItem, type ApiGenerationRecord,
   type ApiRunListItem, type ApiRun, type ApiRunStep,
+  type ApiRunContext,
   type ApiWritingMemoryStaging,
   type GenerationRecordUpdatePayload, type GenerationRecordDiffRequest, type GenerationRecordDiffResponse,
   type ChapterReviewNote, type ChapterReviewNoteCreatePayload, type ChapterReviewNoteUpdatePayload,
   type ApiEvaluationDataset, type ApiEvaluationCase, type ApiEvaluationRun,
   type EvaluationDatasetCreatePayload, type EvaluationDatasetUpdatePayload,
   type EvaluationCaseCreatePayload, type EvaluationCaseUpdatePayload, type EvaluationRunCreatePayload,
+  type ClarificationState, type ClarificationAnswerRequest,
 } from './types'
 import { clearAuthSession, getAuthToken } from '../utils/authSession'
 
@@ -291,6 +293,8 @@ export const api = {
     request<ApiExpert>(`/projects/${projectId}/experts`, { method: 'POST', body: JSON.stringify(data) }),
   updateExpert: (projectId: string, expertId: string, data: ExpertUpdatePayload) =>
     request<ApiExpert>(`/projects/${projectId}/experts/${expertId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  syncV2Experts: (projectId: string) =>
+    request<{ created: number; deprecated_marked: number; skipped: number }>(`/projects/${projectId}/experts/sync-v2`, { method: 'POST' }),
 
   // ─── World Entries ───
   listWorldEntries: (projectId: string) => request<ApiWorldEntry[]>(`/projects/${projectId}/world-entries`),
@@ -730,8 +734,15 @@ export const api = {
     request<ApiRun>(`/ai-runs/${runId}`),
   getRunSteps: (runId: string) =>
     request<ApiRunStep[]>(`/ai-runs/${runId}/steps`),
+  getRunContext: (runId: string) =>
+    request<ApiRunContext>(`/ai-runs/${runId}/context`),
   listProjectRuns: (projectId: string, limit?: number) =>
     request<ApiRunListItem[]>(`/projects/${projectId}/ai-runs${limit ? `?limit=${limit}` : ''}`),
+  // ─── Clarification Loop (生成前澄清) ───
+  getClarification: (runId: string) =>
+    request<ClarificationState>(`/ai-runs/${runId}/clarification`),
+  submitClarificationAnswers: (runId: string, data: ClarificationAnswerRequest) =>
+    request<ClarificationState>(`/ai-runs/${runId}/clarification-answers`, { method: 'POST', body: JSON.stringify(data) }),
   updateGenerationRecord: (projectId: string, generationId: string, data: GenerationRecordUpdatePayload) =>
     request<ApiGenerationRecord>(`/projects/${projectId}/generations/${generationId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   diffGenerationRecord: (projectId: string, generationId: string, data: GenerationRecordDiffRequest) =>
