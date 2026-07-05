@@ -755,7 +755,7 @@ function evidenceText(ev: any) {
     </div>
 
     <!-- 编辑/新增弹窗 -->
-    <div v-if="editing" class="edit-modal-overlay" @click.self="editing = false">
+    <div v-if="editing" class="edit-modal-overlay">
       <div class="edit-modal">
         <h4>{{ editingId ? '编辑' : '新增' }}{{ tabLabels[activeTab] }}</h4>
         <div v-for="field in editFieldConfig[activeTab]" :key="field.key" class="edit-field">
@@ -785,7 +785,7 @@ function evidenceText(ev: any) {
     </div>
 
     <!-- 出场记录面板 -->
-    <div v-if="appearanceChar" class="edit-modal-overlay" @click.self="closeAppearances">
+    <div v-if="appearanceChar" class="edit-modal-overlay">
       <div class="edit-modal">
         <h4>{{ appearanceChar.name }} 的出场记录（{{ appearances.length }}）</h4>
         <div v-if="appearanceLoading" class="loading-hint">加载中...</div>

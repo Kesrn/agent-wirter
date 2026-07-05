@@ -414,7 +414,7 @@ async function openProjectWorldLibrary(project: Project) {
     />
 
     <Teleport to="body">
-      <div v-if="configProject" class="project-config-overlay" @click.self="configProject = null">
+      <div v-if="configProject" class="project-config-overlay">
         <section class="project-config-modal" role="dialog" aria-modal="true" aria-label="全书配置">
           <NovelConfig
             :project-id="configProject.id"
@@ -426,7 +426,7 @@ async function openProjectWorldLibrary(project: Project) {
     </Teleport>
 
     <Teleport to="body">
-      <div v-if="worldLibraryProject" class="project-config-overlay" @click.self="worldLibraryProject = null">
+      <div v-if="worldLibraryProject" class="project-config-overlay">
         <section class="project-config-modal" role="dialog" aria-modal="true" :aria-label="worldLibraryTitle(worldLibraryProject)">
           <ProjectWorldLibrary
             :project-id="worldLibraryProject.id"

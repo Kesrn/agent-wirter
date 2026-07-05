@@ -63,7 +63,7 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
 </script>
 
 <template>
-  <div class="diff-overlay" @click.self="emit('close')">
+  <div class="diff-overlay">
     <div class="diff-modal">
       <div class="diff-header">
         <span class="diff-title">版本对比</span>
@@ -189,10 +189,13 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
 /* ─── Desk (holds two pages) ─── */
 .diff-desk {
   flex: 1;
+  min-height: 0;
   display: flex;
   gap: 20px;
   padding: 20px;
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   background: var(--diff-chrome-bg);
 }
 
@@ -200,6 +203,7 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
 .diff-page {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--diff-page-bg);
@@ -221,7 +225,10 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
 }
 .page-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: 16px 0;
   font-family: var(--font-serif);
   font-size: 14px;

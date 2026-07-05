@@ -22,12 +22,22 @@ describe('writing editor layout scroll contract', () => {
     const rootBlock = cssBlock(writingEditorSource, '.writing-editor')
     const bodyBlock = cssBlock(writingEditorSource, '.editor-body')
     const contentBlock = cssBlock(writingEditorSource, '.editor-content')
+    const textareaBlock = cssBlock(writingEditorSource, '.editor-textarea')
 
     expect(rootBlock).toContain('min-height: 0')
     expect(bodyBlock).toContain('overflow: hidden')
     expect(bodyBlock).toContain('min-height: 0')
-    expect(contentBlock).toContain('overflow: auto')
+    expect(contentBlock).toContain('overflow-y: auto')
     expect(contentBlock).toContain('-webkit-overflow-scrolling: touch')
+    expect(contentBlock).toContain('overscroll-behavior: contain')
     expect(contentBlock).toContain('min-height: 0')
+    expect(textareaBlock).toContain('overflow-y: hidden')
+    expect(textareaBlock).not.toContain('overflow-y: auto')
+  })
+
+  it('resizes the textarea to content height instead of creating nested scroll after save', () => {
+    expect(writingEditorSource).toContain("el.style.height = 'auto'")
+    expect(writingEditorSource).toContain('Math.max(minHeight, el.scrollHeight)')
+    expect(writingEditorSource).toContain('即使正文未变化，也要恢复')
   })
 })

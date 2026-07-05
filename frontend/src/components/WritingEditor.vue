@@ -195,13 +195,8 @@ function syncTextareaHeight() {
   const parentStyle = window.getComputedStyle(parent)
   const verticalPadding =
     parseFloat(parentStyle.paddingTop || '0') + parseFloat(parentStyle.paddingBottom || '0')
-  if (props.mode === 'novel') {
-    const fillHeight = Math.max(360, parent.clientHeight - verticalPadding)
-    el.style.height = `${fillHeight}px`
-    return
-  }
-
-  const minHeight = Math.max(320, parent.clientHeight - verticalPadding)
+  const baseMinHeight = props.mode === 'novel' ? 360 : 320
+  const minHeight = Math.max(baseMinHeight, parent.clientHeight - verticalPadding)
   el.style.height = 'auto'
   el.style.height = `${Math.max(minHeight, el.scrollHeight)}px`
 }
@@ -211,6 +206,9 @@ let lastKnownDraft = ''
 let lastUnitId = ''
 watch(currentUnit, (unit) => {
   if (!unit) return
+  // 保存后 store 会用后端返回对象替换当前章节；即使正文未变化，也要恢复
+  // textarea 高度，让外层 editor-content 继续作为唯一滚动层。
+  nextTick(syncTextareaHeight)
   // Reset tracking when switching writing units
   if (unit.id !== lastUnitId) {
     lastUnitId = unit.id
@@ -932,7 +930,7 @@ function onTextareaInput(e: Event) {
       :diff="diffResult.diff"
       @close="handleCloseDiff"
     />
-    <div v-if="showLinkDialog" class="link-dialog-overlay" @click.self="closeLinkDialog">
+    <div v-if="showLinkDialog" class="link-dialog-overlay">
       <form class="link-dialog" @submit.prevent="confirmLinkInsert">
         <div class="link-dialog-header">
           <h3>插入链接</h3>
@@ -1290,20 +1288,24 @@ function onTextareaInput(e: Event) {
 }
 
 .editor-body {
-  flex: 1;
+  flex: 1 1 0;
   overflow: hidden;
   display: flex;
+  flex-direction: row;
   background:
     radial-gradient(circle at 50% 0, color-mix(in srgb, var(--accent) 8%, transparent), transparent 42%),
     linear-gradient(180deg, color-mix(in srgb, var(--bg-panel) 16%, transparent), transparent 28%),
     var(--paper-stage, #eceff3);
   min-height: 0;
   min-width: 0;
+  position: relative;
 }
 .editor-content {
-  flex: 1;
-  overflow: auto;
+  flex: 1 1 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   min-width: 0;
   min-height: 0;
   padding: 34px 42px 112px;
@@ -1337,7 +1339,7 @@ function onTextareaInput(e: Event) {
   border: 1px solid var(--paper-border, rgba(148, 163, 184, 0.22));
   border-radius: 18px;
   resize: none;
-  overflow-y: auto;
+  overflow-y: hidden;
   overflow-x: hidden;
   overflow-anchor: none;
   font-size: var(--text-lg);

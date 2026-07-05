@@ -231,7 +231,7 @@ function itemTitle(item: EditableItem, group: EditableGroup): string {
 </script>
 
 <template>
-  <div v-if="show" class="structure-overlay" @click.self="emit('close')">
+  <div v-if="show" class="structure-overlay">
     <section class="structure-modal" role="dialog" aria-modal="true" :aria-label="title">
       <header class="structure-header">
         <div>
@@ -355,7 +355,10 @@ function itemTitle(item: EditableItem, group: EditableGroup): string {
 
 .structure-body {
   flex: 1;
+  min-height: 0;
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: var(--sp-4) var(--sp-5);
 }
 

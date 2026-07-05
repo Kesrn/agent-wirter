@@ -134,14 +134,18 @@ const worldEntries = computed(() => {
     .sort((a, b) => order[a.scope_type] - order[b.scope_type] || a.category.localeCompare(b.category))
 })
 const hiddenThreads = computed(() => hiddenThreadStore.threadsForProject(projectId.value))
-const viewMode = ref<'editor' | 'chapterConfig'>('editor')
+const showChapterConfigModal = ref(false)
 const configChapterNum = ref(0)
 const configChapterTitle = ref('')
 
 function openChapterConfig(ch: any) {
-  viewMode.value = 'chapterConfig'
   configChapterNum.value = unitPosition(ch)
   configChapterTitle.value = unitDisplayTitle(ch)
+  showChapterConfigModal.value = true
+}
+
+function closeChapterConfig() {
+  showChapterConfigModal.value = false
 }
 
 type SearchTab = 'units' | 'outline' | 'characters' | 'world'
@@ -1460,8 +1464,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 
       <!-- Center: editor -->
       <main class="editor-area">
-        <ChapterConfig v-if="viewMode === 'chapterConfig'" :project-id="projectId" :project-mode="projectMode" :chapter-num="configChapterNum" :chapter-title="configChapterTitle" @close="viewMode = 'editor'" />
-        <WritingEditor v-else-if="currentWritingUnit" :project-id="projectId" :mode="projectMode" />
+        <WritingEditor v-if="currentWritingUnit" :project-id="projectId" :mode="projectMode" />
         <div v-else class="empty-hint" style="padding-top: 120px;">选择一个{{ unitLabel }}开始写作</div>
       </main>
 
@@ -1557,8 +1560,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
     </div>
 
     <div v-if="mobilePanel === 'editor'" class="mobile-pane mobile-editor">
-      <ChapterConfig v-if="viewMode === 'chapterConfig'" :project-id="projectId" :project-mode="projectMode" :chapter-num="configChapterNum" :chapter-title="configChapterTitle" @close="viewMode = 'editor'; mobilePanel = 'editor'" />
-      <WritingEditor v-else-if="currentWritingUnit" :project-id="projectId" :mode="projectMode" />
+      <WritingEditor v-if="currentWritingUnit" :project-id="projectId" :mode="projectMode" />
       <div v-else class="empty-hint">选择一个{{ unitLabel }}开始写作</div>
     </div>
 
@@ -1566,6 +1568,25 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
       <AgentPanel ref="agentPanelRef" :project-id="projectId" :mode="projectMode" />
     </div>
   </div>
+
+  <Teleport to="body">
+    <div v-if="showChapterConfigModal" class="chapter-config-modal-overlay">
+      <section
+        class="chapter-config-modal"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="`第${configChapterNum}章资料配置`"
+      >
+        <ChapterConfig
+          :project-id="projectId"
+          :project-mode="projectMode"
+          :chapter-num="configChapterNum"
+          :chapter-title="configChapterTitle"
+          @close="closeChapterConfig"
+        />
+      </section>
+    </div>
+  </Teleport>
 
   <!-- Writing unit context menu -->
   <Teleport to="body">
@@ -1905,9 +1926,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   right: -24px;
 }
 .sidebar-inner {
-  flex: 1;
+  flex: 1 1 0;
   overflow: hidden;
-  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -1944,7 +1964,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, var(--shadow-sm);
 }
 .sidebar-content {
-  flex: 1;
+  flex: 1 1 0;
   overflow-y: auto;
   padding: 14px;
   min-width: 0;
@@ -2376,6 +2396,33 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   min-height: 0;
 }
 
+.chapter-config-modal-overlay {
+  position: fixed;
+  inset: var(--desktop-status-bar-height, 0px) 0 0;
+  z-index: 2500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, #020617 62%, transparent);
+  backdrop-filter: blur(12px);
+}
+.chapter-config-modal {
+  width: min(1180px, calc(100vw - 48px));
+  height: min(88dvh, calc(100dvh - var(--desktop-status-bar-height, 0px) - 48px));
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 18px;
+  background: var(--bg-panel);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.46);
+}
+.chapter-config-modal :deep(.chapter-config) {
+  width: 100%;
+  height: 100%;
+}
+
 /* Agent area */
 .agent-area {
   border-left: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
@@ -2386,13 +2433,15 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 .agent-content {
-  flex: 1;
+  flex: 1 1 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 20px;
   min-width: 0;
+  min-height: 0;
 }
 .agent-area.agent-hidden {
   border-left: none;
@@ -2446,6 +2495,17 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   flex-direction: column;
   padding: 0;
   overflow: hidden;
+}
+@media (max-width: 768px) {
+  .chapter-config-modal-overlay {
+    align-items: stretch;
+    padding: 10px;
+  }
+  .chapter-config-modal {
+    width: 100%;
+    height: calc(100dvh - var(--desktop-status-bar-height, 0px) - 20px);
+    border-radius: 14px;
+  }
 }
 
 /* Outline actions (edit/delete icons) */

@@ -429,6 +429,7 @@ function characterName(characterId: string): string {
 <style scoped>
 .novel-config {
   height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -463,8 +464,11 @@ function characterName(characterId: string): string {
 }
 .config-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: var(--sp-4) var(--sp-5);
   display: flex;
   flex-direction: column;

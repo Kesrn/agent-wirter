@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, nextTick, onMounted, watch, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useLLMSettingsStore, useUiStore, friendlyError } from '../stores'
 import type { LLMProviderName, LLMConfigCreatePayload } from '../api/types'
@@ -18,6 +18,7 @@ const showApiKey = ref(false)
 const useModelDropdown = ref(false)
 const modelDropdownOpen = ref(false)
 const modelInputMode = ref(false) // true = manual input, false = dropdown
+let syncingFromSavedConfig = false
 
 const PROVIDER_DEFAULTS: Record<string, string> = {
   openai: 'https://api.openai.com/v1',
@@ -59,17 +60,26 @@ const providerOptions: { value: LLMProviderName; label: string }[] = [
 
 const isMock = computed(() => formProvider.value === 'mock')
 
+async function syncFormFromSavedConfig() {
+  if (!store.config) return
+  syncingFromSavedConfig = true
+  formProvider.value = store.config.provider
+  formBaseUrl.value = store.config.base_url ?? PROVIDER_DEFAULTS[store.config.provider] ?? ''
+  formModelId.value = store.config.model_id ?? ''
+  useModelDropdown.value = false
+  modelDropdownOpen.value = false
+  modelInputMode.value = false
+  store.availableModels = []
+  await nextTick()
+  syncingFromSavedConfig = false
+}
+
 onMounted(() => {
-  store.loadConfig().then(() => {
-    if (store.config) {
-      formProvider.value = store.config.provider
-      formBaseUrl.value = store.config.base_url ?? PROVIDER_DEFAULTS[store.config.provider] ?? ''
-      formModelId.value = store.config.model_id ?? ''
-    }
-  })
+  store.loadConfig().then(syncFormFromSavedConfig)
 })
 
 watch(formProvider, (newProvider) => {
+  if (syncingFromSavedConfig) return
   formBaseUrl.value = PROVIDER_DEFAULTS[newProvider] ?? ''
   formModelId.value = ''
   useModelDropdown.value = false
@@ -85,7 +95,7 @@ async function handleSave() {
   const payload: LLMConfigCreatePayload = {
     provider: formProvider.value,
     base_url: isMock.value ? null : formBaseUrl.value || null,
-    model_id: isMock.value ? null : formModelId.value || null,
+    model_id: isMock.value ? null : formModelId.value || store.config?.model_id || null,
   }
   if (!isMock.value && formApiKey.value) {
     payload.api_key = formApiKey.value

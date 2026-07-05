@@ -98,6 +98,9 @@ function apiExpertToExpert(ae: ApiExpert): Expert {
     is_builtin: ae.is_builtin,
     is_enabled: ae.is_enabled,
     color: ae.color,
+    expert_key: ae.expert_key ?? null,
+    version: ae.version ?? 1,
+    deprecated: ae.deprecated ?? false,
   }
 }
 
@@ -1365,6 +1368,7 @@ function apiGenerationRecordToRecord(record: ApiGenerationRecordListItem | ApiGe
     wordCount: record.word_count,
     status: record.status,
     langfuseTraceId: record.langfuse_trace_id ?? null,
+    runId: record.run_id ?? null,
     createdAt: record.created_at,
     content: 'content' in record ? record.content : null,
     skillPacks: 'request_params' in record ? skillPacksFromRequestParams(record.request_params) : [],
@@ -1467,6 +1471,7 @@ export const useGenerationHistoryStore = defineStore('generationHistory', () => 
       wordCount: 0,
       status: 'candidate',
       langfuseTraceId: null,
+      runId: null,
       createdAt: new Date().toISOString(),
       content: null,
       skillPacks: [],

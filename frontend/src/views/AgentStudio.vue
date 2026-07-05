@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useExpertStore, useUiStore, friendlyError } from '../stores'
+import { api } from '../api/client'
 import AgentCreator from '../components/AgentCreator.vue'
 
 const route = useRoute()
@@ -9,8 +10,34 @@ const store = useExpertStore()
 const ui = useUiStore()
 const projectId = computed(() => route.params.id as string)
 
+// v2 创作链 expert_key 白名单
+const CREATIVE_CHAIN_KEYS = new Set([
+  'chapter-architect', 'chapter-writer', 'structural-critic',
+  'narrative-editor', 'continuity-checker',
+])
+const MEMORY_KEYS = new Set(['story-recorder'])
+
 const builtInExperts = computed(() => store.experts.filter(e => e.is_builtin))
 const customExperts = computed(() => store.experts.filter(e => !e.is_builtin))
+
+// v2 专家分组：创作链 + 剧情记忆
+const creativeChainExperts = computed(() =>
+  builtInExperts.value.filter(e => e.expert_key && CREATIVE_CHAIN_KEYS.has(e.expert_key))
+)
+const memoryExperts = computed(() =>
+  builtInExperts.value.filter(e => e.expert_key && MEMORY_KEYS.has(e.expert_key))
+)
+// 旧版已废弃专家（builtin + deprecated）
+const deprecatedExperts = computed(() =>
+  builtInExperts.value.filter(e => e.deprecated)
+)
+// 其他 builtin（既非 v2 也非 deprecated，如未来新增）
+const otherBuiltinExperts = computed(() =>
+  builtInExperts.value.filter(e => !e.deprecated && !e.expert_key)
+)
+
+const showDeprecated = ref(false)
+const syncing = ref(false)
 
 onMounted(() => {
   if (projectId.value) {
@@ -23,6 +50,19 @@ async function handleToggle(expertId: string) {
     await store.toggleExpert(projectId.value, expertId)
   } catch (e: unknown) {
     ui.showToast(friendlyError(e, '更新失败'), 'error')
+  }
+}
+
+async function handleSyncV2() {
+  syncing.value = true
+  try {
+    const result = await api.syncV2Experts(projectId.value)
+    ui.showToast(`已补齐 v2 专家：新增 ${result.created}，标记旧专家 ${result.deprecated_marked}`, 'success')
+    await store.loadExperts(projectId.value)
+  } catch (e: unknown) {
+    ui.showToast(friendlyError(e, '同步失败'), 'error')
+  } finally {
+    syncing.value = false
   }
 }
 
@@ -41,61 +81,144 @@ function workflowLabel(wp: string): string {
     <header class="studio-header">
       <router-link :to="`/projects/${projectId}`" class="back-link">← 返回工作台</router-link>
       <h2>Agent 配置</h2>
+      <button class="sync-btn" :disabled="syncing || store.loading" @click="handleSyncV2">
+        {{ syncing ? '同步中...' : '同步 v2 专家' }}
+      </button>
     </header>
     <p class="studio-subtitle">管理内置专家和自定义创作角色</p>
 
-    <section class="expert-section">
-      <h3>内置专家</h3>
-      <div v-if="store.loading" class="loading-hint">加载中...</div>
-      <div v-else-if="store.loadError" class="error-hint">{{ store.loadError }}</div>
-      <div v-else class="expert-grid">
-        <div v-for="expert in builtInExperts" :key="expert.id" class="expert-card" :class="{ disabled: !expert.is_enabled }">
-          <div class="card-accent" :style="{ background: expert.color }"></div>
-          <div class="card-body">
-            <div class="card-top">
-              <h4>{{ expert.name }}</h4>
-              <label class="toggle-switch">
-                <input type="checkbox" :checked="expert.is_enabled" @change="handleToggle(expert.id)" />
-                <span class="toggle-track"></span>
-              </label>
-            </div>
-            <p class="expert-desc">{{ expert.description }}</p>
-            <div class="expert-tags">
-              <span class="tag">{{ roleTypeLabel(expert.role_type) }}</span>
-              <span class="tag">{{ workflowLabel(expert.workflow_position) }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="expert-section">
-      <h3>自定义 Agent</h3>
-      <div v-if="customExperts.length" class="expert-grid">
-        <div v-for="expert in customExperts" :key="expert.id" class="expert-card" :class="{ disabled: !expert.is_enabled }">
-          <div class="card-accent" :style="{ background: expert.color }"></div>
-          <div class="card-body">
-            <div class="card-top">
-              <h4>{{ expert.name }}</h4>
-              <label class="toggle-switch">
-                <input type="checkbox" :checked="expert.is_enabled" @change="handleToggle(expert.id)" />
-                <span class="toggle-track"></span>
-              </label>
-            </div>
-            <p class="expert-desc">{{ expert.description }}</p>
-            <div class="expert-tags">
-              <span class="tag">{{ roleTypeLabel(expert.role_type) }}</span>
-              <span class="tag">{{ workflowLabel(expert.workflow_position) }}</span>
+    <div v-if="store.loading" class="loading-hint">加载中...</div>
+    <div v-else-if="store.loadError" class="error-hint">{{ store.loadError }}</div>
+    <template v-else>
+      <!-- 创作链专家 -->
+      <section v-if="creativeChainExperts.length" class="expert-section">
+        <h3>创作链专家</h3>
+        <div class="expert-grid">
+          <div v-for="expert in creativeChainExperts" :key="expert.id" class="expert-card" :class="{ disabled: !expert.is_enabled }">
+            <div class="card-accent" :style="{ background: expert.color }"></div>
+            <div class="card-body">
+              <div class="card-top">
+                <h4>{{ expert.name }}</h4>
+                <label class="toggle-switch">
+                  <input type="checkbox" :checked="expert.is_enabled" @change="handleToggle(expert.id)" />
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+              <p class="expert-desc">{{ expert.description }}</p>
+              <div class="expert-tags">
+                <span class="tag">{{ roleTypeLabel(expert.role_type) }}</span>
+                <span class="tag">{{ workflowLabel(expert.workflow_position) }}</span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-      <div v-else class="empty-hint">尚未创建自定义 Agent</div>
-    </section>
+      </section>
 
-    <section class="expert-section">
-      <AgentCreator />
-    </section>
+      <!-- 剧情记忆专家 -->
+      <section v-if="memoryExperts.length" class="expert-section">
+        <h3>剧情记忆专家</h3>
+        <div class="expert-grid">
+          <div v-for="expert in memoryExperts" :key="expert.id" class="expert-card" :class="{ disabled: !expert.is_enabled }">
+            <div class="card-accent" :style="{ background: expert.color }"></div>
+            <div class="card-body">
+              <div class="card-top">
+                <h4>{{ expert.name }}</h4>
+                <label class="toggle-switch">
+                  <input type="checkbox" :checked="expert.is_enabled" @change="handleToggle(expert.id)" />
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+              <p class="expert-desc">{{ expert.description }}</p>
+              <div class="expert-tags">
+                <span class="tag">{{ roleTypeLabel(expert.role_type) }}</span>
+                <span class="tag">{{ workflowLabel(expert.workflow_position) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 其他内置专家（非 v2 非 deprecated） -->
+      <section v-if="otherBuiltinExperts.length" class="expert-section">
+        <h3>内置专家</h3>
+        <div class="expert-grid">
+          <div v-for="expert in otherBuiltinExperts" :key="expert.id" class="expert-card" :class="{ disabled: !expert.is_enabled }">
+            <div class="card-accent" :style="{ background: expert.color }"></div>
+            <div class="card-body">
+              <div class="card-top">
+                <h4>{{ expert.name }}</h4>
+                <label class="toggle-switch">
+                  <input type="checkbox" :checked="expert.is_enabled" @change="handleToggle(expert.id)" />
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+              <p class="expert-desc">{{ expert.description }}</p>
+              <div class="expert-tags">
+                <span class="tag">{{ roleTypeLabel(expert.role_type) }}</span>
+                <span class="tag">{{ workflowLabel(expert.workflow_position) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 旧版专家（已废弃，默认折叠） -->
+      <section v-if="deprecatedExperts.length" class="expert-section">
+        <div class="deprecated-header" @click="showDeprecated = !showDeprecated">
+          <span class="chevron" :class="{ open: showDeprecated }">▾</span>
+          <h3>旧版专家（已废弃）</h3>
+          <span class="count-badge">{{ deprecatedExperts.length }}</span>
+        </div>
+        <div v-if="showDeprecated" class="expert-grid deprecated-grid">
+          <div v-for="expert in deprecatedExperts" :key="expert.id" class="expert-card deprecated" :class="{ disabled: !expert.is_enabled }">
+            <div class="card-accent" :style="{ background: expert.color }"></div>
+            <div class="card-body">
+              <div class="card-top">
+                <h4>{{ expert.name }}</h4>
+                <label class="toggle-switch">
+                  <input type="checkbox" :checked="expert.is_enabled" @change="handleToggle(expert.id)" />
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+              <p class="expert-desc">{{ expert.description }}</p>
+              <div class="expert-tags">
+                <span class="tag">{{ roleTypeLabel(expert.role_type) }}</span>
+                <span class="tag">{{ workflowLabel(expert.workflow_position) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 自定义 Agent -->
+      <section class="expert-section">
+        <h3>自定义 Agent</h3>
+        <div v-if="customExperts.length" class="expert-grid">
+          <div v-for="expert in customExperts" :key="expert.id" class="expert-card" :class="{ disabled: !expert.is_enabled }">
+            <div class="card-accent" :style="{ background: expert.color }"></div>
+            <div class="card-body">
+              <div class="card-top">
+                <h4>{{ expert.name }}</h4>
+                <label class="toggle-switch">
+                  <input type="checkbox" :checked="expert.is_enabled" @change="handleToggle(expert.id)" />
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+              <p class="expert-desc">{{ expert.description }}</p>
+              <div class="expert-tags">
+                <span class="tag">{{ roleTypeLabel(expert.role_type) }}</span>
+                <span class="tag">{{ workflowLabel(expert.workflow_position) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-else class="empty-hint">尚未创建自定义 Agent</div>
+      </section>
+
+      <section class="expert-section">
+        <AgentCreator />
+      </section>
+    </template>
   </div>
 </template>
 
@@ -140,6 +263,26 @@ function workflowLabel(wp: string): string {
 }
 .back-link:hover { color: var(--accent); text-decoration: none; }
 
+.sync-btn {
+  margin-left: auto;
+  padding: var(--sp-1) var(--sp-3);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.sync-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 15%, var(--accent-subtle));
+}
+.sync-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .expert-section {
   margin-bottom: var(--sp-8);
 }
@@ -171,6 +314,9 @@ function workflowLabel(wp: string): string {
 }
 .expert-card.disabled .card-accent {
   background: var(--text-tertiary) !important;
+}
+.expert-card.deprecated {
+  opacity: 0.55;
 }
 .card-top {
   display: flex;
@@ -211,6 +357,35 @@ function workflowLabel(wp: string): string {
   background: var(--bg-hover);
   color: var(--text-secondary);
 }
+
+/* Deprecated section */
+.deprecated-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: var(--sp-4);
+}
+.deprecated-header h3 {
+  color: var(--text-tertiary);
+  margin: 0;
+}
+.chevron {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  transition: transform var(--transition);
+}
+.chevron.open { transform: rotate(180deg); }
+.count-badge {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--text-tertiary);
+}
+
 .empty-hint {
   color: var(--text-tertiary);
   font-size: var(--text-sm);
@@ -275,6 +450,10 @@ function workflowLabel(wp: string): string {
     align-items: flex-start;
     flex-direction: column;
     gap: var(--sp-2);
+  }
+
+  .sync-btn {
+    margin-left: 0;
   }
 
   .expert-grid {

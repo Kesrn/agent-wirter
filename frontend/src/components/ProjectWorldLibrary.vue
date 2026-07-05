@@ -248,6 +248,7 @@ async function deleteEntry(entry: WorldEntry) {
 <style scoped>
 .project-world-library {
   height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -294,8 +295,11 @@ async function deleteEntry(entry: WorldEntry) {
 }
 .library-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: var(--sp-4) var(--sp-5);
 }
 .library-section {

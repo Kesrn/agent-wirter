@@ -106,6 +106,7 @@ watch(
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 0;
   background: var(--bg-panel);
   border-left: 1px solid var(--border);
   overflow: hidden;
@@ -165,7 +166,10 @@ watch(
   margin: 0;
   padding: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   flex: 1;
+  min-height: 0;
 }
 .version-item {
   padding: var(--sp-3) var(--sp-4);

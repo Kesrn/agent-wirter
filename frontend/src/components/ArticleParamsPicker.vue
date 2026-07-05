@@ -56,7 +56,7 @@ function handleConfirm() {
 </script>
 
 <template>
-  <div class="picker-overlay" @click.self="emit('cancel')">
+  <div class="picker-overlay">
     <div class="picker-card">
       <div class="picker-header">
         <h3>{{ title }}</h3>
@@ -165,7 +165,10 @@ function handleConfirm() {
 }
 .picker-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: var(--sp-3) var(--sp-5);
   display: flex;
   flex-direction: column;

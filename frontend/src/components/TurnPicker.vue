@@ -22,7 +22,7 @@ function handleConfirm() {
 </script>
 
 <template>
-  <div class="picker-overlay" @click.self="emit('cancel')">
+  <div class="picker-overlay">
     <div class="picker-card">
       <div class="picker-header">
         <h3>{{ isArticle ? '选择内容方向' : '选择转折方向' }}</h3>

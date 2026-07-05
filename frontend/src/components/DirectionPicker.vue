@@ -42,7 +42,7 @@ function handleConfirm() {
 </script>
 
 <template>
-  <div class="picker-overlay" @click.self="emit('cancel')">
+  <div class="picker-overlay">
     <div class="picker-card">
       <div class="picker-header">
         <h3>选择剧情走向</h3>
@@ -124,7 +124,10 @@ function handleConfirm() {
 .picker-body {
   padding: var(--sp-4) var(--sp-5);
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   flex: 1;
+  min-height: 0;
 }
 .loading-hint {
   display: flex;
