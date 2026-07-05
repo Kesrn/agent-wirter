@@ -5,8 +5,8 @@
 设计原则：
 - 结构化数据（角色、事件、大纲、设定、暗线）直接查原表，不落 project_sources。
 - selected_*_ids 作为附加加载，不替代自动聚合。
-- fanfic_rules / retrieved_sources 从 project_sources 加载：always_inject 资料无条件注入，
-  其余按本章角色名 / 大纲关键词自动检索匹配。
+- fanfic_rules / retrieved_sources 从 project_sources 加载，但默认不注入；
+  只有 include_knowledge_sources=True 时才加载资料库内容。
 """
 
 from __future__ import annotations
@@ -124,6 +124,15 @@ class ConfirmedMemoryInfo:
 
 
 @dataclass
+class PreviousChapterEndingInfo:
+    """上一章结尾锚点（K-1：opening_anchor 自动提取）"""
+    id: str
+    sequence_number: int
+    title: str
+    ending_text: str
+
+
+@dataclass
 class ChapterContext:
     """build_chapter_context 的返回值"""
 
@@ -138,6 +147,7 @@ class ChapterContext:
     retrieved_sources: list[RetrievedSourceInfo] = field(default_factory=list)
     previous_chapters: list[ChapterInfo] = field(default_factory=list)
     confirmed_memories: list[ConfirmedMemoryInfo] = field(default_factory=list)
+    previous_chapter_ending: PreviousChapterEndingInfo | None = None  # K-1: opening_anchor
     stats: ContextStats = field(default_factory=ContextStats)
 
     def to_dict(self) -> dict:
@@ -255,6 +265,7 @@ async def build_chapter_context(
     selected_character_ids: list[str] | None = None,
     selected_world_entry_ids: list[str] | None = None,
     selected_hidden_thread_ids: list[str] | None = None,
+    include_knowledge_sources: bool = False,
 ) -> ChapterContext:
     """为指定章节聚合上下文。
 
@@ -269,7 +280,8 @@ async def build_chapter_context(
     - 最近 3 章前文
     - 用户通过 selected_*_ids 显式选择的条目（追加不替代）
 
-    project_sources 已接入：always_inject 资料无条件注入，其余按关键词自动检索。
+    资料库 project_sources 默认不注入；调用方显式传 include_knowledge_sources=True 时，
+    fanfic_rule / always_inject / 自动检索命中的资料才会进入 prompt。
     """
     import uuid as _uuid
 
@@ -325,13 +337,18 @@ async def build_chapter_context(
         selected_hidden_thread_ids,
         ctx,
         stats,
+        current_seq=seq,
     )
 
-    # ── 接入 project_sources（同人规则 + 检索资料） ──
-    await _load_project_sources(db, pid, ctx, stats, user_query=user_query)
+    # ── 接入 project_sources（同人规则 + 检索资料）：默认关闭，避免资料库污染本章 prompt ──
+    if include_knowledge_sources:
+        await _load_project_sources(db, pid, ctx, stats, user_query=user_query)
 
     # ── 已确认记忆（H3b）──
     await _load_confirmed_memories(db, pid, seq, ctx, stats)
+
+    # ── 上章结尾锚点（K-1）──
+    await _load_previous_chapter_ending(db, pid, seq, ctx)
 
     logger.info(
         "chapter_context built: project=%s chapter=%d stats=%s intent=%s",
@@ -538,6 +555,63 @@ async def _load_confirmed_memories(
     stats.confirmed_memories = len(ctx.confirmed_memories)
 
 
+async def _load_previous_chapter_ending(
+    db: AsyncSession,
+    project_id: str,
+    current_seq: int,
+    ctx: ChapterContext,
+    *,
+    max_chars: int = 500,
+) -> None:
+    """加载上一章结尾作为开篇锚点（K-1: opening_anchor 自动提取）。
+
+    查询规则：
+    1. 优先查 sequence_number == current_seq - 1
+    2. 如果缺章，回退到 sequence_number < current_seq 的最近一章
+    3. 正文为空则不注入
+    4. 取 content.strip()[-500:]，不是开头 500 字
+    """
+    from models.chapter import Chapter
+
+    # 优先查紧邻上一章
+    result = await db.execute(
+        select(Chapter).where(
+            Chapter.project_id == project_id,
+            Chapter.sequence_number == current_seq - 1,
+            Chapter.content.isnot(None),
+            Chapter.content != "",
+        )
+    )
+    chapter = result.scalar_one_or_none()
+
+    # 回退：查最近的前一章
+    if chapter is None:
+        result = await db.execute(
+            select(Chapter).where(
+                Chapter.project_id == project_id,
+                Chapter.sequence_number < current_seq,
+                Chapter.content.isnot(None),
+                Chapter.content != "",
+            )
+            .order_by(Chapter.sequence_number.desc())
+            .limit(1)
+        )
+        chapter = result.scalar_one_or_none()
+
+    if chapter is None or not chapter.content:
+        return
+
+    content = chapter.content.strip()
+    ending_text = content[-max_chars:] if len(content) > max_chars else content
+
+    ctx.previous_chapter_ending = PreviousChapterEndingInfo(
+        id=str(chapter.id),
+        sequence_number=chapter.sequence_number,
+        title=chapter.title,
+        ending_text=ending_text,
+    )
+
+
 async def _load_previous_chapters(
     db: AsyncSession, project_id: str, current_seq: int, ctx: ChapterContext
 ) -> None:
@@ -576,8 +650,14 @@ async def _load_selected(
     selected_hidden_thread_ids: list[str] | None,
     ctx: ChapterContext,
     stats: ContextStats,
+    *,
+    current_seq: int | None = None,
 ) -> None:
-    """按用户显式选择的 ID 精确加载条目，追加到已有上下文。"""
+    """按用户显式选择的 ID 精确加载条目，追加到已有上下文。
+
+    大纲兜底：生成/续写本章时（current_seq 非 None），只允许本章大纲进入
+    selected_outlines，跨章节大纲一律忽略，避免污染本章生成上下文。
+    """
     import uuid as _uuid
 
     # ── 大纲 ──
@@ -595,6 +675,9 @@ async def _load_selected(
         ).scalars().all()
         existing_outline_ids = {ctx.outline.id} if ctx.outline else set()
         for o in outlines:
+            # 兜底：跨章节大纲不注入本章上下文（current_seq 非 None 时）
+            if current_seq and o.sequence_number != current_seq:
+                continue
             if str(o.id) not in existing_outline_ids:
                 ctx.selected_outlines.append(
                     OutlineInfo(
@@ -833,10 +916,19 @@ def format_chapter_context_for_prompt(context: ChapterContext) -> str:
 
     # 当前章节
     if context.chapter:
-        parts.append(
+        chapter_text = (
             f"## 当前章节\n"
-            f"第{context.chapter.sequence_number}章 {context.chapter.title}\n"
-            f"{context.chapter.content_snippet}"
+            f"第{context.chapter.sequence_number}章 {context.chapter.title}"
+        )
+        if context.chapter.content_snippet.strip():
+            chapter_text += (
+                "\n已有正文片段（仅作本章草稿参考，不作为续写起点）：\n"
+                f"{context.chapter.content_snippet}"
+            )
+        else:
+            chapter_text += "\n正文：空，请根据本章资料生成完整章节。"
+        parts.append(
+            chapter_text
         )
 
     # 本章大纲
@@ -852,6 +944,15 @@ def format_chapter_context_for_prompt(context: ChapterContext) -> str:
     # 明线推进（复用 Outline.turning_point）
     if context.outline and context.outline.turning_point:
         parts.append(f"## 明线推进\n{context.outline.turning_point}")
+
+    # 上章结尾锚点（K-1: opening_anchor）
+    if context.previous_chapter_ending:
+        ending = context.previous_chapter_ending
+        parts.append(
+            f"## 上章结尾锚点\n"
+            f"第{ending.sequence_number}章《{ending.title}》的结尾：\n"
+            f"{ending.ending_text}"
+        )
 
     # 参考大纲（用户额外选中的其他章节大纲，不覆盖本章大纲）
     if context.selected_outlines:

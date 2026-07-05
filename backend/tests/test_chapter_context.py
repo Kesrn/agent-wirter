@@ -362,13 +362,47 @@ class TestChapterContextService:
 
         assert ctx.outline is not None
         assert ctx.outline.title == "第一章大纲"
-        assert [o.title for o in ctx.selected_outlines] == ["第二章大纲"]
+        # 跨章节大纲兜底过滤：第二章大纲不应进入第一章的生成上下文
+        assert ctx.selected_outlines == []
         assert "## 本章大纲\n第1章 第一章大纲" in text
-        assert "## 参考大纲" in text
-        assert "第2章 第二章大纲" in text
+        assert "## 参考大纲" not in text
+        assert "第二章大纲" not in text
 
-    def test_project_sources_split_into_fanfic_rules_and_retrieved_sources(self):
-        """同人规则进入 fanfic_rules，其他资料继续走检索资料。"""
+    def test_cross_chapter_outlines_filtered_for_current_chapter(self):
+        """生成第 2 章时，即便请求带了第 1 章大纲 id，也不应注入第 1 章作为参考大纲"""
+        pid = _create_project("跨章大纲过滤测试")
+        _create_chapter(pid, "第一章", 1)
+        _create_chapter(pid, "第二章", 2)
+
+        ch1_outline_id = _create_outline(pid, 1, "穿越到全职法师小说的世界", "第一章概要", "第一章转折")
+        ch2_outline_id = _create_outline(pid, 2, "天澜魔法高中", "第二章概要", "第二章转折")
+
+        async def _run():
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(
+                    session,
+                    pid,
+                    2,
+                    selected_outline_ids=[ch1_outline_id, ch2_outline_id],
+                )
+                return ctx, format_chapter_context_for_prompt(ctx)
+
+        ctx, text = asyncio.new_event_loop().run_until_complete(_run())
+
+        # 本章大纲是第 2 章
+        assert ctx.outline is not None
+        assert ctx.outline.sequence_number == 2
+        assert ctx.outline.title == "天澜魔法高中"
+        # selected_outlines 不应包含第 1 章
+        assert all(o.sequence_number == 2 for o in ctx.selected_outlines)
+        assert not any(o.sequence_number == 1 for o in ctx.selected_outlines)
+        # prompt 不应出现第 1 章作为参考大纲
+        assert "## 参考大纲" not in text
+        assert "穿越到全职法师小说的世界" not in text
+        assert "## 本章大纲\n第2章 天澜魔法高中" in text
+
+    def test_project_sources_default_off(self):
+        """资料库默认不进入 prompt，避免本章生成被资料库内容污染。"""
         pid = _create_project("同人规则测试")
         _create_chapter(pid, "第一章", 1, "第一章正文")
         _create_outline(pid, 1, "第一章概要", "第一章概要", "第一章转折")
@@ -396,11 +430,58 @@ class TestChapterContextService:
 
         ctx, stats, text = asyncio.new_event_loop().run_until_complete(_run())
 
+        assert ctx.fanfic_rules == []
+        assert ctx.retrieved_sources == []
+        assert stats["stats"]["fanfic_rules"] == 0
+        assert stats["stats"]["sources"] == 0
+        assert "## 同人规则" not in text
+        assert "## 检索资料" not in text
+        assert "平台同人规则" not in text
+        assert "第一章资料" not in text
+
+    def test_project_sources_opt_in_split_into_fanfic_rules_and_retrieved_sources(self):
+        """显式开启资料库后，同人规则进入 fanfic_rules，其他资料继续走检索资料。"""
+        pid = _create_project("同人规则开启测试")
+        _create_chapter(pid, "第一章", 1, "第一章正文")
+        _create_outline(pid, 1, "第一章概要", "第一章概要", "第一章转折")
+        char_id = _create_character(pid, "主角", "protagonist")
+        _create_character_event(pid, char_id, 1, "主角登场")
+
+        _create_source(
+            pid,
+            title="平台同人规则",
+            source_type="fanfic_rule",
+            content="不可让主角突然性格崩坏。",
+        )
+        _create_source(
+            pid,
+            title="第一章资料",
+            source_type="upload",
+            content="这份资料会被章节标题命中。",
+            always_inject=True,
+        )
+
+        async def _run():
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(
+                    session,
+                    pid,
+                    1,
+                    user_query="主角",
+                    include_knowledge_sources=True,
+                )
+                return ctx, context_to_stats(ctx), format_chapter_context_for_prompt(ctx)
+
+        ctx, stats, text = asyncio.new_event_loop().run_until_complete(_run())
+
         assert [r.title for r in ctx.fanfic_rules] == ["平台同人规则"]
         assert any(s.title == "第一章资料" for s in ctx.retrieved_sources)
         assert stats["stats"]["fanfic_rules"] == 1
+        assert stats["stats"]["sources"] == 1
         assert "## 同人规则" in text
+        assert "## 检索资料" in text
         assert "平台同人规则" in text
+        assert "第一章资料" in text
 
 
 class TestFormatChapterContext:
@@ -474,3 +555,83 @@ class TestContextStats:
         assert stats["stats"]["events"] == 0
         assert stats["chapter_goal"]["outline"] == ""
         assert stats["chapter_goal"]["light_line"] == ""
+
+
+class TestOpeningAnchor:
+    """K-1: opening_anchor 自动提取测试"""
+
+    def test_previous_chapter_ending_uses_tail_text(self):
+        """上章结尾锚点应取上一章正文末尾，不是开头。"""
+        pid = _create_project("上章结尾锚点测试")
+        _create_chapter(pid, "第一章", 1, "A" * 800)  # 800 字，取后 500
+        _create_chapter(pid, "第二章", 2)
+
+        async def _run():
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(session, pid, 2)
+                return ctx
+
+        ctx = asyncio.new_event_loop().run_until_complete(_run())
+        assert ctx.previous_chapter_ending is not None
+        assert ctx.previous_chapter_ending.sequence_number == 1
+        assert ctx.previous_chapter_ending.title == "第一章"
+        # 应取末尾 500 字，不是开头
+        assert len(ctx.previous_chapter_ending.ending_text) == 500
+        assert ctx.previous_chapter_ending.ending_text.startswith("A" * 300)  # 800 - 500 = 300 offset
+
+        prompt = format_chapter_context_for_prompt(ctx)
+        assert "## 上章结尾锚点" in prompt
+        assert "第一章" in prompt
+
+    def test_previous_chapter_ending_omitted_when_no_previous_content(self):
+        """第一章没有上一章，不应出现上章结尾锚点。"""
+        pid = _create_project("无上章锚点测试")
+        _create_chapter(pid, "第一章", 1, "正文")
+
+        async def _run():
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(session, pid, 1)
+                return ctx
+
+        ctx = asyncio.new_event_loop().run_until_complete(_run())
+        assert ctx.previous_chapter_ending is None
+
+        prompt = format_chapter_context_for_prompt(ctx)
+        assert "## 上章结尾锚点" not in prompt
+
+    def test_previous_chapter_ending_omitted_when_no_previous_content_body(self):
+        """上一章正文为空时，不应出现上章结尾锚点。"""
+        pid = _create_project("上章空正文锚点测试")
+        _create_chapter(pid, "第一章", 1, "")  # 空正文
+        _create_chapter(pid, "第二章", 2)
+
+        async def _run():
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(session, pid, 2)
+                return ctx
+
+        ctx = asyncio.new_event_loop().run_until_complete(_run())
+        assert ctx.previous_chapter_ending is None
+
+    def test_previous_chapter_ending_falls_back_to_latest_previous_chapter(self):
+        """第 1 章无正文、第 2 章缺失时，应回退到最近有正文的前一章。"""
+        pid = _create_project("回退锚点测试")
+        _create_chapter(pid, "第1章", 1, "")      # 空正文
+        _create_chapter(pid, "第3章", 3, "前文正文内容ABC")  # 第 2 章缺失
+        _create_chapter(pid, "第4章", 4)
+
+        async def _run():
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(session, pid, 4)
+                return ctx
+
+        ctx = asyncio.new_event_loop().run_until_complete(_run())
+        # 应回退到第 3 章（最近有正文的前一章）
+        assert ctx.previous_chapter_ending is not None
+        assert ctx.previous_chapter_ending.sequence_number == 3
+        assert ctx.previous_chapter_ending.title == "第3章"
+        assert ctx.previous_chapter_ending.ending_text == "前文正文内容ABC"
+
+        prompt = format_chapter_context_for_prompt(ctx)
+        assert "## 上章结尾锚点" in prompt
+        assert "第3章" in prompt
