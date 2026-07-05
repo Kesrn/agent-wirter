@@ -206,9 +206,13 @@ def test_create_project():
     resp3 = client.get(f"/api/projects/{project_id}/experts", headers=headers)
     assert resp3.status_code == 200
     experts = resp3.json()
-    assert len(experts) == 6
-    assert experts[0]["name"] == "创意大师"
+    # v2(6) + 旧大师(6 deprecated) = 12
+    assert len(experts) == 12
     builtin_skills = {e["name"]: e["skill_dir"] for e in experts}
+    # v2 专家
+    assert builtin_skills["正文写手"] == "chapter-writer"
+    assert builtin_skills["章节策划师"] == "chapter-architect"
+    # 旧大师仍保留（deprecated=true）
     assert builtin_skills["创意大师"] == "creative-master"
     assert builtin_skills["情节转折大师"] == "plot-twister"
     assert builtin_skills["渲染大师"] == "sensory-renderer"
@@ -1327,7 +1331,9 @@ def test_full_pipeline_records_skill_pack_metadata():
     assert resp_generate.status_code == 200
     text = resp_generate.text
     assert "event: skill_pack" in text
-    assert '"skill_dir": "creative-master"' in text
+    # v2 workflow 使用 chapter-writer / chapter-architect 等 v2 skill_dir
+    assert '"skill_dir": "chapter-writer"' in text
+    assert '"skill_dir": "chapter-architect"' in text
     assert "event: generation_record" in text
 
     record_match = re.search(r'event: generation_record\s+data: (\{[^\n]+\})', text)
@@ -1338,8 +1344,8 @@ def test_full_pipeline_records_skill_pack_metadata():
     assert resp_detail.status_code == 200
     detail = resp_detail.json()
     packs = detail["request_params"]["skill_packs"]
-    assert any(pack["skill_dir"] == "creative-master" for pack in packs)
-    assert any(pack["skill_dir"] == "sensory-renderer" for pack in packs)
+    assert any(pack["skill_dir"] == "chapter-writer" for pack in packs)
+    assert any(pack["skill_dir"] == "chapter-architect" for pack in packs)
     assert all("token_estimate" in pack for pack in packs)
 
 
@@ -1377,6 +1383,9 @@ def test_full_pipeline_review_and_revise_cycle():
     )
     assert resp_revise.status_code == 200
     assert "工作流状态不存在或已过期" not in resp_revise.text
+    assert "event: editor_output" in resp_revise.text
+    editor_payloads = re.findall(r"event: editor_output\ndata: (.+?)\n\n", resp_revise.text)
+    assert any((json.loads(payload).get("content") or "").strip() for payload in editor_payloads)
     assert "等待人工审核" in resp_revise.text
 
 
@@ -1467,7 +1476,8 @@ def test_expert_test_sse():
 
     resp2 = client.get(f"/api/projects/{project_id}/experts", headers=headers)
     experts = resp2.json()
-    expert_id = experts[0]["id"]
+    # 选取旧 creative-master 专家（v2 + 旧并存）
+    expert_id = next(e["id"] for e in experts if e["skill_dir"] == "creative-master")
 
     resp3 = client.post(f"/api/projects/{project_id}/experts/{expert_id}/test", json={
         "test_text": "一段测试文本",
@@ -1523,7 +1533,10 @@ def test_generate_does_not_persist_content():
     }, headers=headers)
 
     resp3 = client.get(f"/api/projects/{project_id}/experts", headers=headers)
-    writer_expert_id = resp3.json()[0]["id"]
+    # 选取旧 creative-master 专家（v2 + 旧并存，不能靠下标取）
+    writer_expert_id = next(
+        e["id"] for e in resp3.json() if e["skill_dir"] == "creative-master"
+    )
 
     # Generate with writer expert
     resp4 = client.post(f"/api/projects/{project_id}/chapters/generate", json={
@@ -1558,7 +1571,10 @@ def test_critic_generate_does_not_persist():
     }, headers=headers)
 
     resp3 = client.get(f"/api/projects/{project_id}/experts", headers=headers)
-    critic_expert_id = resp3.json()[1]["id"]
+    # 选取旧 brutal-critic 专家（v2 + 旧并存，不能靠下标取）
+    critic_expert_id = next(
+        e["id"] for e in resp3.json() if e["skill_dir"] == "brutal-critic"
+    )
 
     resp4 = client.post(f"/api/projects/{project_id}/chapters/generate", json={
         "chapter_num": 1, "mode": "continue", "expert_id": critic_expert_id,
@@ -1677,7 +1693,8 @@ def test_continue_does_not_persist():
     assert resp4.status_code == 200
     assert "event: done" in resp4.text
     assert "event: skill_pack" in resp4.text
-    assert '"skill_dir": "creative-master"' in resp4.text
+    # v2 continue 使用 chapter-writer skill_dir
+    assert '"skill_dir": "chapter-writer"' in resp4.text
 
     # Content must stay original (no append)
     resp5 = client.get(f"/api/projects/{project_id}/chapters/1", headers=headers)
@@ -1710,7 +1727,8 @@ def test_generation_history_created_without_content_persist():
     }, headers=headers)
     assert resp_generate.status_code == 200
     assert "event: generation_record" in resp_generate.text
-    assert '"skill_dir": "creative-master"' in resp_generate.text
+    # v2 continue 使用 chapter-writer skill_dir
+    assert '"skill_dir": "chapter-writer"' in resp_generate.text
 
     resp_chapter = client.get(f"/api/projects/{project_id}/chapters/1", headers=headers)
     assert resp_chapter.json()["content"] == "当前章节原文。"
@@ -1736,7 +1754,7 @@ def test_generation_history_created_without_content_persist():
     assert detail["content"]
     assert detail["word_count"] > 0
     packs = detail["request_params"]["skill_packs"]
-    assert any(pack["skill_dir"] == "creative-master" for pack in packs)
+    assert any(pack["skill_dir"] == "chapter-writer" for pack in packs)
 
     resp_update = client.patch(f"/api/projects/{project_id}/generations/{record_id}", json={
         "status": "applied",
@@ -2310,6 +2328,29 @@ def test_article_request_params_accepted():
     assert req.content_goal == "种草推荐"
     assert req.tone == "活泼亲切"
     assert req.key_points == "成分、效果、价格"
+
+
+def test_generate_request_defaults_to_full_pipeline():
+    """Omitting mode should generate a chapter draft, not continue existing text."""
+    from schemas.api import GenerateRequest
+
+    assert GenerateRequest().mode == "full_pipeline"
+
+
+def test_writer_initial_prompt_is_chapter_generation_not_continue():
+    """Initial writer prompt should frame full_pipeline as chapter generation."""
+    from agents.workflow import _build_writer_user_prompt
+
+    prompt = _build_writer_user_prompt({
+        "context": "## 本章大纲\n根据资料写出本章事件。",
+        "draft": "已有片段",
+        "critiques": [],
+        "revision_count": 0,
+    })
+
+    assert "当前章节对应的完整正文" in prompt
+    assert "不是续写任务" in prompt
+    assert "不作为续写起点" in prompt
 
 
 def test_article_system_prompt_anti_novel():

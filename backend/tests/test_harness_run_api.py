@@ -173,6 +173,63 @@ def test_get_run_steps_cross_user_forbidden():
     assert resp.status_code == 404
 
 
+# ==================== GET /api/ai-runs/{run_id}/context ====================
+
+def test_get_run_context_extracts_context_snapshot():
+    """run context API 返回每次 LLM 调用的上下文段与快照摘要。"""
+    headers = _auth_headers("runctxuser", "runctxpass")
+    pid, run_id = _create_project_and_run(headers)
+    assert run_id is not None
+
+    async def _insert_log():
+        from models.llm_call_log import LlmCallLog
+
+        async with _test_session_factory() as s:
+            log = LlmCallLog(
+                run_id=uuid.UUID(run_id),
+                project_id=uuid.UUID(pid),
+                agent_name="chapter_writer",
+                provider="mock",
+                model="mock-1",
+                rendered_prompt_snapshot=(
+                    "[system]\n系统提示\n\n"
+                    "[user]\n## 上下文\n"
+                    "## 本章大纲\n主角醒来发现世界规则异常。\n\n"
+                    "## 角色资料\n- 程旌：穿越者。\n\n"
+                    "## 章节信息\n第1章，目标字数200\n"
+                ),
+                context_package_snapshot={"context_len": 42, "source": "test"},
+                request={"prompt_snapshot_truncated": True},
+            )
+            s.add(log)
+            await s.commit()
+
+    asyncio.run(_insert_log())
+
+    resp = client.get(f"/api/ai-runs/{run_id}/context", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["run_id"] == run_id
+    calls = [c for c in data["calls"] if c["agent_name"] == "chapter_writer" and c["context_snapshot"]]
+    assert calls
+    call = calls[-1]
+    assert call["context_snapshot"] == {"context_len": 42, "source": "test"}
+    assert "## 本章大纲" in call["context_text"]
+    assert "## 角色资料" in call["context_text"]
+    assert "## 章节信息" not in call["context_text"]
+    assert call["prompt_truncated"] is True
+
+
+def test_get_run_context_cross_user_forbidden():
+    """跨用户查 context 返回 404。"""
+    headers = _auth_headers("runctxowner", "runctxpass")
+    _pid, run_id = _create_project_and_run(headers)
+
+    other_headers = _auth_headers("runctxother", "runctxpass")
+    resp = client.get(f"/api/ai-runs/{run_id}/context", headers=other_headers)
+    assert resp.status_code == 404
+
+
 # ==================== GET /api/projects/{project_id}/ai-runs ====================
 
 def test_list_project_runs():
