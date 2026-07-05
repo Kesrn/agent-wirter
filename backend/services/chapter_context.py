@@ -903,6 +903,7 @@ def format_chapter_context_for_prompt(context: ChapterContext) -> str:
     输出 sections（按优先级排列）：
     ## 当前章节
     ## 本章大纲
+    ## 上章结尾锚点
     ## 明线推进
     ## 本章角色
     ## 本章角色事件
@@ -941,11 +942,7 @@ def format_chapter_context_for_prompt(context: ChapterContext) -> str:
             ol_text += f"\n转折点：{ol.turning_point}"
         parts.append(ol_text)
 
-    # 明线推进（复用 Outline.turning_point）
-    if context.outline and context.outline.turning_point:
-        parts.append(f"## 明线推进\n{context.outline.turning_point}")
-
-    # 上章结尾锚点（K-1: opening_anchor）
+    # 上章结尾锚点（K-1: opening_anchor）— 紧跟本章大纲，让 architect 先抓开篇承接
     if context.previous_chapter_ending:
         ending = context.previous_chapter_ending
         parts.append(
@@ -953,6 +950,10 @@ def format_chapter_context_for_prompt(context: ChapterContext) -> str:
             f"第{ending.sequence_number}章《{ending.title}》的结尾：\n"
             f"{ending.ending_text}"
         )
+
+    # 明线推进（复用 Outline.turning_point）
+    if context.outline and context.outline.turning_point:
+        parts.append(f"## 明线推进\n{context.outline.turning_point}")
 
     # 参考大纲（用户额外选中的其他章节大纲，不覆盖本章大纲）
     if context.selected_outlines:
