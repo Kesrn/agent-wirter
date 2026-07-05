@@ -127,6 +127,110 @@ class MockProvider(LLMProvider):
         if original_chapter and ("编辑" in prompt_lower or "润色" in prompt_lower or "editor" in prompt_lower):
             return self._mock_polish(original_chapter)
 
+        # ── Expert System v2 节点响应 ──
+        # ChapterTaskCard (architect)
+        if "chaptertaskcard" in prompt_lower:
+            return json.dumps({
+                "chapter_number": 1,
+                "chapter_title": "mock章节标题",
+                "core_task": "mock 核心任务：推进主线剧情",
+                "opening_anchor": "承接前文结尾",
+                "scenes": [
+                    {"title": "场景一", "location": "mock地点", "characters": [],
+                     "scene_goal": "mock场景目标", "conflict": "mock冲突",
+                     "must_include": [], "must_not_include": [], "word_budget": 1000}
+                ],
+                "character_goals": [],
+                "information_rules": {"may_reveal": [], "hint_only": [], "forbidden": []},
+                "tension_design": [],
+                "word_budget": 2000,
+                "forbidden": [],
+            }, ensure_ascii=False)
+
+        # StructuralCritique (critic)
+        if "structuralcritique" in prompt_lower:
+            return json.dumps({
+                "summary": "mock 审稿意见：整体结构合理",
+                "p0": [],
+                "p1": ["建议加强场景描写", "人物动机可更明确"],
+                "p2": ["部分对话可精简"],
+                "must_keep": ["开篇氛围"],
+                "edit_instructions": {
+                    "delete": [], "merge": [], "move_forward": [],
+                    "move_later": [], "rewrite": ["开篇段落"], "keep": ["结尾悬念"],
+                },
+            }, ensure_ascii=False)
+
+        # ClarificationResult (clarification-planner)
+        if "clarificationresult" in prompt_lower:
+            return json.dumps({
+                "needs_clarification": True,
+                "confidence": 0.6,
+                "missing_fields": ["chapter_goal", "pov"],
+                "questions": [
+                    {
+                        "id": "chapter_goal",
+                        "type": "single_choice",
+                        "question": "这一章最重要的推进目标是什么？",
+                        "options": [
+                            {"value": "adapt", "label": "适应新环境", "description": "重点写主角进入新环境"},
+                            {"value": "conflict", "label": "触发冲突", "description": "重点写主角与同学冲突"},
+                        ],
+                        "required": True,
+                        "reason": "章节目标决定 writer 的事件选择",
+                    },
+                ],
+                "assumptions_if_skipped": ["默认采用第三人称有限视角"],
+                "clarification_summary": "",
+            }, ensure_ascii=False)
+
+        # Story Record (story-recorder)
+        if "story record" in prompt_lower or "剧情记录员" in prompt_lower:
+            return json.dumps({
+                "summary": "mock 剧情摘要：主角在本章经历了关键事件",
+                "events": [
+                    {
+                        "title": "主角觉醒魔法",
+                        "description": "主角在危机中觉醒了雷系魔法能力",
+                        "character_names": ["程璇"],
+                        "evidence": "程璇感到体内涌起一股雷电之力",
+                    },
+                ],
+                "character_state_changes": [
+                    {
+                        "character_name": "程璇",
+                        "change": "从普通人变为觉醒者",
+                        "evidence": "程璇感到体内涌起一股雷电之力",
+                    },
+                ],
+                "relationship_changes": [],
+                "ability_changes": [
+                    {
+                        "character_name": "程璇",
+                        "ability": "雷系魔法",
+                        "change": "获得",
+                        "evidence": "程璇感到体内涌起一股雷电之力",
+                    },
+                ],
+                "foreshadowing_new": [
+                    {
+                        "title": "神秘组织观察",
+                        "description": "有人暗中观察主角的觉醒",
+                        "evidence": "暗处有人在记录着什么",
+                    },
+                ],
+                "foreshadowing_resolved": [],
+                "timeline": {"time_point": "觉醒日", "events": ["主角觉醒魔法"]},
+                "knowledge_state_changes": [],
+            }, ensure_ascii=False)
+
+        # EditedDraft (narrative-editor)：检测审稿指令 + 修订稿
+        if "审稿指令" in user_prompt and "修订稿" in prompt_lower:
+            draft_text = self._extract_marked_text(user_prompt, ("## 待修改正文",))
+            if draft_text:
+                return self._mock_polish(draft_text)
+            return "（mock 修订稿）打磨后的正文内容更加流畅。"
+
         original_article = self._extract_marked_text(user_prompt, ("## 原文案/文章", "## 当前稿件"))
         if is_article_request and original_article and ("改写" in prompt_lower or "优化" in prompt_lower or "编辑" in prompt_lower):
             return self._mock_article(original_article, rewrite=True)

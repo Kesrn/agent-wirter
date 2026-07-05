@@ -73,6 +73,8 @@ async def resolve_interrupt(
         InterruptDecision.REJECT: InterruptStatus.REJECTED,
         InterruptDecision.EDIT: InterruptStatus.EDITED,
         InterruptDecision.REGENERATE: InterruptStatus.REGENERATE,
+        InterruptDecision.SUBMIT_CLARIFICATION: InterruptStatus.ANSWERED,
+        InterruptDecision.SKIP_CLARIFICATION: InterruptStatus.SKIPPED,
     }
 
     interrupt.status = decision_to_status.get(decision, InterruptStatus.WAITING)

@@ -367,3 +367,111 @@ async def run_fact_extraction(
             "fact_extraction: environment error run=%s chapter_version=%s",
             run_id, chapter_version_id,
         )
+
+
+async def run_story_recorder_extraction(
+    *,
+    project_id: str,
+    chapter_id: str | None,
+    chapter_version_id: str | None,
+    chapter_sequence_number: int | None,
+    run_id: str,
+    content: str,
+    context: str,
+    llm_config: dict | None,
+) -> None:
+    """后台任务：用 story-recorder + memory-curator 抽取写作记忆并写入 staging。
+
+    v2 链路：approve 后触发，替换旧 run_fact_extraction。
+    用独立 session，失败不影响 approve。
+    失败时写 ai_run_step story_recorder FAILED，但 run 保持 COMPLETED。
+
+    与 run_fact_extraction 的区别：
+    - story-recorder 输出结构化 Story Record（events/state_changes/...）
+    - memory-curator 把 Story Record 转为 staging facts
+    - 复用 create_staging_from_extraction 的幂等逻辑
+    """
+    from db.session import get_engine
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    step_idempotency_key = f"{run_id}:story_recorder:{chapter_version_id}"
+
+    try:
+        engine = get_engine()
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+
+        async with sf() as session:
+            # 写 ai_run_step（story_recorder, step_order=5）
+            step = await start_step(
+                session,
+                run_id=run_id,
+                step_order=5,
+                step_name="story_recorder",
+                agent_name="story_recorder",
+                revision_round=0,
+                input_data={"chapter_version_id": chapter_version_id, "content_len": len(content)},
+            )
+            from models.harness_enums import RunStepStatus
+            if step.status not in (RunStepStatus.RUNNING, RunStepStatus.PENDING):
+                logger.info("story_recorder: step already %s, skip", step.status)
+                return
+
+            await session.commit()
+
+            try:
+                from agents.story_recorder import run_story_recorder
+                from agents.memory_curator import story_record_to_facts
+
+                # Step 1: story-recorder 提取 Story Record
+                story_record = await run_story_recorder(
+                    llm_config=llm_config,
+                    content=content,
+                    context=context,
+                    harness_run_id=run_id,
+                    harness_step_id=str(step.id),
+                )
+
+                # Step 2: memory-curator 转为 staging facts
+                facts = story_record_to_facts(story_record, chapter_seq=chapter_sequence_number)
+
+                # Step 3: 写入 staging（幂等 per chapter_version_id）
+                created = await create_staging_from_extraction(
+                    session,
+                    project_id=project_id,
+                    chapter_id=chapter_id,
+                    chapter_version_id=chapter_version_id,
+                    chapter_sequence_number=chapter_sequence_number,
+                    run_id=run_id,
+                    facts=facts,
+                )
+                await session.commit()
+
+                await finish_step(
+                    session, step,
+                    output={
+                        "story_record_summary": story_record.get("summary", ""),
+                        "fact_count": len(facts),
+                        "staging_count": len(created),
+                        "parse_error": story_record.get("parse_error", False),
+                    },
+                )
+                await session.commit()
+                logger.info(
+                    "story_recorder: run=%s chapter_version=%s facts=%d staging=%d",
+                    run_id, chapter_version_id, len(facts), len(created),
+                )
+            except Exception:
+                logger.exception(
+                    "story_recorder: failed run=%s chapter_version=%s",
+                    run_id, chapter_version_id,
+                )
+                await fail_step(
+                    session, step,
+                    error_message=f"StoryRecorder failed: {type(Exception).__name__}",
+                )
+                await session.commit()
+    except Exception:
+        logger.exception(
+            "story_recorder: environment error run=%s chapter_version=%s",
+            run_id, chapter_version_id,
+        )
