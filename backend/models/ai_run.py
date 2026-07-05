@@ -40,3 +40,9 @@ class AiRun(UUIDMixin, TimestampMixin, Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # ── Expert System v2 ── workflow / expert 快照
+    workflow_key: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    workflow_version: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    workflow_snapshot: Mapped[dict | None] = mapped_column(JSONValue(), nullable=True)  # 本次执行的节点定义快照
+    expert_snapshot: Mapped[dict | None] = mapped_column(JSONValue(), nullable=True)  # 每个专家 key/version/skill_dir 快照

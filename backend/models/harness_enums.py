@@ -31,6 +31,8 @@ class InterruptStatus(str, Enum):
     REJECTED = "REJECTED"
     REGENERATE = "REGENERATE"
     EXPIRED = "EXPIRED"
+    ANSWERED = "ANSWERED"          # Clarification Loop: 用户提交了回答
+    SKIPPED = "SKIPPED"            # Clarification Loop: 用户跳过澄清
 
 
 class InterruptDecision(str, Enum):
@@ -38,6 +40,8 @@ class InterruptDecision(str, Enum):
     REJECT = "REJECT"
     EDIT = "EDIT"
     REGENERATE = "REGENERATE"
+    SUBMIT_CLARIFICATION = "SUBMIT_CLARIFICATION"   # 提交澄清回答
+    SKIP_CLARIFICATION = "SKIP_CLARIFICATION"       # 跳过澄清
 
 
 class MemoryStagingStatus(str, Enum):

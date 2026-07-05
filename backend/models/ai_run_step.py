@@ -46,3 +46,9 @@ class AiRunStep(UUIDMixin, TimestampMixin, Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # ── Expert System v2 ── 本步骤对应的专家 / 节点快照
+    node_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    expert_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    expert_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    skill_dir: Mapped[str | None] = mapped_column(String(100), nullable=True)

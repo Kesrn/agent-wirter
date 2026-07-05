@@ -26,3 +26,10 @@ class Expert(UUIDMixin, TimestampMixin, Base):
     is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     color: Mapped[str] = mapped_column(String(20), default="blue")
+
+    # ── Expert System v2 ──
+    expert_key: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)  # 稳定机器名，如 chapter-writer
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # prompt 版本
+    deprecated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # 标记旧大师
+    input_schema: Mapped[dict | None] = mapped_column(JSONValue(), nullable=True)  # 专家输入契约
+    output_schema: Mapped[dict | None] = mapped_column(JSONValue(), nullable=True)  # 专家输出契约
