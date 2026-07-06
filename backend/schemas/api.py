@@ -412,6 +412,9 @@ class OutlineCreate(BaseModel):
     turning_point: str | None = Field(default=None, max_length=5000)
     story_arc_id: str | None = None
     arc_position: str | None = Field(default=None, pattern=r"^(SETUP|BUILDUP|TURNING_POINT|CLIMAX|AFTERMATH)$")
+    pacing: str | None = Field(default=None, pattern=r"^(SETUP|BUILDUP|REVERSAL|CLIMAX|AFTERMATH|TRANSITION|SLICE)$")
+    tension_level: int | None = Field(default=None, ge=1, le=5)
+    target_scene_count: int | None = Field(default=None, ge=1)
 
 
 class OutlineUpdate(BaseModel):
@@ -421,6 +424,9 @@ class OutlineUpdate(BaseModel):
     hidden_thread_ids: list[str] | None = None
     story_arc_id: str | None = None
     arc_position: str | None = Field(default=None, pattern=r"^(SETUP|BUILDUP|TURNING_POINT|CLIMAX|AFTERMATH)$")
+    pacing: str | None = Field(default=None, pattern=r"^(SETUP|BUILDUP|REVERSAL|CLIMAX|AFTERMATH|TRANSITION|SLICE)$")
+    tension_level: int | None = Field(default=None, ge=1, le=5)
+    target_scene_count: int | None = Field(default=None, ge=1)
 
 
 class OutlineResponse(BaseModel):
@@ -433,6 +439,9 @@ class OutlineResponse(BaseModel):
     hidden_thread_ids: list[str] | None
     story_arc_id: uuid.UUID | None = None
     arc_position: str | None = None
+    pacing: str | None = None
+    tension_level: int | None = None
+    target_scene_count: int | None = None
     created_at: datetime
     updated_at: datetime
 
