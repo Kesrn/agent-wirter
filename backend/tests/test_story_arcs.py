@@ -201,6 +201,47 @@ class TestStoryArcHierarchy:
         assert resp.status_code == 400
         assert "子级" in resp.json()["detail"]
 
+    def test_update_parent_to_self_returns_400(self):
+        """更新 parent_arc_id 指向自身应返回 400"""
+        pid = _create_project()
+        arc = _create_arc(pid, arc_type="VOLUME", name="第一卷")
+        resp = client.patch(
+            f"/api/projects/{pid}/story-arcs/{arc['id']}",
+            json={"parent_arc_id": arc["id"]},
+            headers=_auth(),
+        )
+        assert resp.status_code == 400, resp.text
+        assert "不能指向自身" in resp.text
+
+    def test_update_parent_to_unknown_returns_400(self):
+        """更新 parent_arc_id 到不存在的 arc 应返回 400"""
+        pid = _create_project()
+        arc = _create_arc(pid, arc_type="VOLUME", name="第一卷")
+        fake_parent_id = "00000000-0000-0000-0000-000000000003"
+        resp = client.patch(
+            f"/api/projects/{pid}/story-arcs/{arc['id']}",
+            json={"parent_arc_id": fake_parent_id},
+            headers=_auth(),
+        )
+        assert resp.status_code == 400, resp.text
+        assert "不存在或不属于该项目" in resp.text
+
+    def test_update_parent_to_cross_project_returns_400(self):
+        """更新 parent_arc_id 到其他项目的 arc 应返回 400"""
+        pid1 = _create_project("项目1", _auth("user1"))
+        pid2 = _create_project("项目2", _auth("user2"))
+        arc_in_pid1 = _create_arc(pid1, name="项目1的卷", headers=_auth("user1"))
+        arc_in_pid2 = _create_arc(pid2, name="项目2的卷", headers=_auth("user2"))
+
+        # user2 尝试把 arc_in_pid2 的父级设为 arc_in_pid1
+        resp = client.patch(
+            f"/api/projects/{pid2}/story-arcs/{arc_in_pid2['id']}",
+            json={"parent_arc_id": arc_in_pid1["id"]},
+            headers=_auth("user2"),
+        )
+        assert resp.status_code == 400, resp.text
+        assert "不存在或不属于该项目" in resp.text
+
 
 # ── 跨用户隔离 ────────────────────────────────────────
 
@@ -288,3 +329,52 @@ class TestOutlineStoryArcLink:
             headers=_auth(),
         )
         assert resp.status_code == 422
+
+    def test_outline_create_with_unknown_story_arc_id(self):
+        """创建大纲时，story_arc_id 不存在应返回 400"""
+        pid = _create_project()
+        fake_arc_id = "00000000-0000-0000-0000-000000000001"
+        resp = client.post(
+            f"/api/projects/{pid}/outlines",
+            json={
+                "sequence_number": 1,
+                "title": "第一章",
+                "story_arc_id": fake_arc_id,
+            },
+            headers=_auth(),
+        )
+        assert resp.status_code == 400, resp.text
+        assert "不存在或不属于该项目" in resp.text
+
+    def test_outline_create_with_cross_project_story_arc_id(self):
+        """创建大纲时，story_arc_id 属于其他项目应返回 400"""
+        pid1 = _create_project("项目1", _auth("user1"))
+        pid2 = _create_project("项目2", _auth("user2"))
+        arc_in_pid1 = _create_arc(pid1, name="项目1的卷", headers=_auth("user1"))
+
+        # user2 尝试在 pid2 的大纲中使用 pid1 的 arc
+        resp = client.post(
+            f"/api/projects/{pid2}/outlines",
+            json={
+                "sequence_number": 1,
+                "title": "第一章",
+                "story_arc_id": arc_in_pid1["id"],
+            },
+            headers=_auth("user2"),
+        )
+        assert resp.status_code == 400, resp.text
+        assert "不存在或不属于该项目" in resp.text
+
+    def test_outline_update_with_invalid_story_arc_id(self):
+        """更新大纲时，story_arc_id 无效应返回 400"""
+        pid = _create_project()
+        oid = _create_outline(pid, 1, "第一章")
+        fake_arc_id = "00000000-0000-0000-0000-000000000002"
+
+        resp = client.patch(
+            f"/api/projects/{pid}/outlines/{oid}",
+            json={"story_arc_id": fake_arc_id},
+            headers=_auth(),
+        )
+        assert resp.status_code == 400, resp.text
+        assert "不存在或不属于该项目" in resp.text
