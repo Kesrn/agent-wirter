@@ -245,6 +245,24 @@ export interface OutlineItem {
   summary: string
   turning_point: string | null
   hidden_thread_ids: string[]
+  story_arc_id: string | null
+  arc_position: string | null
+}
+
+/** 长线结构 (UI / store) — mapped from ApiStoryArc via apiStoryArcToStoryArc */
+export interface StoryArc {
+  id: string
+  project_id: string
+  parent_arc_id: string | null
+  arc_type: 'VOLUME' | 'ACT' | 'ARC'
+  name: string
+  summary: string
+  goal: string
+  main_conflict: string
+  start_chapter: number | null
+  end_chapter: number | null
+  order_index: number
+  status: string
 }
 
 /** 暗线 (UI / store) — mapped from ApiHiddenThread via apiHiddenThreadToHiddenThread */
@@ -405,6 +423,27 @@ export interface ApiOutline {
   summary: string | null
   turning_point: string | null
   hidden_thread_ids: string[]
+  story_arc_id: string | null
+  arc_position: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** Backend StoryArcResponse */
+export interface ApiStoryArc {
+  id: string
+  project_id: string
+  parent_arc_id: string | null
+  arc_type: string
+  name: string
+  summary: string | null
+  goal: string | null
+  main_conflict: string | null
+  start_chapter: number | null
+  end_chapter: number | null
+  order_index: number
+  status: string
+  metadata: Record<string, unknown> | null
   created_at: string
   updated_at: string
 }
@@ -593,6 +632,8 @@ export interface OutlineCreatePayload {
   title: string
   summary?: string
   turning_point?: string
+  story_arc_id?: string | null
+  arc_position?: string | null
 }
 
 export interface OutlineUpdatePayload {
@@ -600,6 +641,34 @@ export interface OutlineUpdatePayload {
   title?: string
   summary?: string
   turning_point?: string
+  story_arc_id?: string | null
+  arc_position?: string | null
+}
+
+export interface StoryArcCreatePayload {
+  arc_type: string
+  name: string
+  summary?: string
+  goal?: string
+  main_conflict?: string
+  parent_arc_id?: string | null
+  start_chapter?: number | null
+  end_chapter?: number | null
+  order_index?: number
+  status?: string
+}
+
+export interface StoryArcUpdatePayload {
+  arc_type?: string
+  name?: string
+  summary?: string
+  goal?: string
+  main_conflict?: string
+  parent_arc_id?: string | null
+  start_chapter?: number | null
+  end_chapter?: number | null
+  order_index?: number
+  status?: string
 }
 
 export interface HiddenThreadCreatePayload {

@@ -1,10 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Project, Chapter, DocumentUnit, Expert, WorkflowStep, ReviewComment, ChapterReviewNote, ChapterReviewNoteCreatePayload, CharacterRelation, CharacterEvent, ProjectMode, ExpertCreatePayload, WorldEntry, Character, OutlineItem, HiddenThread, ChapterVersion, DocumentRevision, DiffHunk, GenerationRecord, SkillPackPayload } from '../api/types'
-import type { ApiProject, ApiChapter, ApiDocument, ApiExpert, ApiWorldEntry, ApiCharacter, ApiCharacterRelation, ApiOutline, ApiHiddenThread, ApiChapterVersion, ApiDocumentVersion, ApiGenerationRecordListItem, ApiGenerationRecord } from '../api/types'
-import type { CharacterRelationCreatePayload, CharacterRelationUpdatePayload, CharacterEventUpsertPayload, OutlineUpdatePayload, HiddenThreadUpdatePayload, WorldEntryCreatePayload, WorldEntryUpdatePayload, CharacterCreatePayload, CharacterUpdatePayload, CharacterMergePayload, ProjectUpdatePayload } from '../api/types'
+import type { Project, Chapter, DocumentUnit, Expert, WorkflowStep, ReviewComment, ChapterReviewNote, ChapterReviewNoteCreatePayload, CharacterRelation, CharacterEvent, ProjectMode, ExpertCreatePayload, WorldEntry, Character, OutlineItem, HiddenThread, StoryArc, ChapterVersion, DocumentRevision, DiffHunk, GenerationRecord, SkillPackPayload } from '../api/types'
+import type { ApiProject, ApiChapter, ApiDocument, ApiExpert, ApiWorldEntry, ApiCharacter, ApiCharacterRelation, ApiOutline, ApiHiddenThread, ApiStoryArc, ApiChapterVersion, ApiDocumentVersion, ApiGenerationRecordListItem, ApiGenerationRecord } from '../api/types'
+import type { CharacterRelationCreatePayload, CharacterRelationUpdatePayload, CharacterEventUpsertPayload, OutlineUpdatePayload, HiddenThreadUpdatePayload, StoryArcCreatePayload, StoryArcUpdatePayload, WorldEntryCreatePayload, WorldEntryUpdatePayload, CharacterCreatePayload, CharacterUpdatePayload, CharacterMergePayload, ProjectUpdatePayload } from '../api/types'
 import { api, ApiError } from '../api/client'
-import { MOCK_PROJECTS, MOCK_CHAPTERS, DEFAULT_EXPERTS, MOCK_REVIEW_COMMENTS, MOCK_CHARACTER_RELATIONS, MOCK_WORLD_ENTRIES, MOCK_CHARACTERS, MOCK_OUTLINE, MOCK_HIDDEN_THREADS } from '../mock/data'
+import { MOCK_PROJECTS, MOCK_CHAPTERS, DEFAULT_EXPERTS, MOCK_REVIEW_COMMENTS, MOCK_CHARACTER_RELATIONS, MOCK_WORLD_ENTRIES, MOCK_CHARACTERS, MOCK_OUTLINE, MOCK_HIDDEN_THREADS, MOCK_STORY_ARCS } from '../mock/data'
 
 // ─── API → UI conversion helpers ───
 
@@ -982,6 +982,8 @@ function apiOutlineToOutlineItem(ao: ApiOutline): OutlineItem {
     summary: ao.summary ?? '',
     turning_point: ao.turning_point ?? null,
     hidden_thread_ids: ao.hidden_thread_ids ?? [],
+    story_arc_id: ao.story_arc_id ?? null,
+    arc_position: ao.arc_position ?? null,
   }
 }
 
@@ -1010,7 +1012,7 @@ export const useOutlineStore = defineStore('outline', () => {
     }
   }
 
-  async function createOutlineItem(projectId: string, payload: { sequence_number: number; title: string; summary?: string; turning_point?: string }): Promise<OutlineItem | null> {
+  async function createOutlineItem(projectId: string, payload: { sequence_number: number; title: string; summary?: string; turning_point?: string; story_arc_id?: string | null; arc_position?: string | null }): Promise<OutlineItem | null> {
     try {
       const ao = await api.createOutline(projectId, payload)
       const item = apiOutlineToOutlineItem(ao)
@@ -1129,6 +1131,92 @@ export const useHiddenThreadStore = defineStore('hiddenThread', () => {
   }
 
   return { hiddenThreads, loading, loadError, threadsForProject, loadHiddenThreads, createHiddenThreadItem, updateHiddenThreadItem, deleteHiddenThreadItem }
+})
+
+// ─── StoryArc store ───
+
+function apiStoryArcToStoryArc(a: ApiStoryArc): StoryArc {
+  return {
+    id: a.id,
+    project_id: a.project_id,
+    parent_arc_id: a.parent_arc_id ?? null,
+    arc_type: a.arc_type as StoryArc['arc_type'],
+    name: a.name,
+    summary: a.summary ?? '',
+    goal: a.goal ?? '',
+    main_conflict: a.main_conflict ?? '',
+    start_chapter: a.start_chapter ?? null,
+    end_chapter: a.end_chapter ?? null,
+    order_index: a.order_index,
+    status: a.status,
+  }
+}
+
+export const useStoryArcStore = defineStore('storyArc', () => {
+  const arcs = ref<StoryArc[]>([...MOCK_STORY_ARCS])
+  const loading = ref(false)
+  const loadError = ref('')
+
+  function arcsForProject(projectId: string): StoryArc[] {
+    return arcs.value
+      .filter(a => a.project_id === projectId)
+      .sort((a, b) => a.order_index - b.order_index)
+  }
+
+  async function loadStoryArcs(projectId: string) {
+    loading.value = true
+    loadError.value = ''
+    try {
+      const list = await api.listStoryArcs(projectId)
+      const other = arcs.value.filter(a => a.project_id !== projectId)
+      arcs.value = [...other, ...list.map(apiStoryArcToStoryArc)]
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载长线结构失败'
+      loadError.value = msg
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function createStoryArcItem(projectId: string, payload: StoryArcCreatePayload): Promise<StoryArc | null> {
+    try {
+      const a = await api.createStoryArc(projectId, payload)
+      const item = apiStoryArcToStoryArc(a)
+      arcs.value.push(item)
+      return item
+    } catch (e: unknown) {
+      const msg = e instanceof ApiError ? e.message : '创建长线结构失败'
+      loadError.value = msg
+      throw e
+    }
+  }
+
+  async function updateStoryArcItem(projectId: string, arcId: string, payload: StoryArcUpdatePayload) {
+    try {
+      const a = await api.updateStoryArc(projectId, arcId, payload)
+      const updated = apiStoryArcToStoryArc(a)
+      const idx = arcs.value.findIndex(item => item.id === arcId)
+      if (idx !== -1) arcs.value[idx] = updated
+      return updated
+    } catch (e: unknown) {
+      const msg = e instanceof ApiError ? e.message : '更新长线结构失败'
+      loadError.value = msg
+      throw e
+    }
+  }
+
+  async function deleteStoryArcItem(projectId: string, arcId: string) {
+    try {
+      await api.deleteStoryArc(projectId, arcId)
+      arcs.value = arcs.value.filter(a => a.id !== arcId)
+    } catch (e: unknown) {
+      const msg = e instanceof ApiError ? e.message : '删除长线结构失败'
+      loadError.value = msg
+      throw e
+    }
+  }
+
+  return { arcs, loading, loadError, arcsForProject, loadStoryArcs, createStoryArcItem, updateStoryArcItem, deleteStoryArcItem }
 })
 
 // ─── Chapter Version History store ───

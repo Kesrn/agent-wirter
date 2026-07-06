@@ -1,13 +1,14 @@
 import {
   API_BASE_URL,
   type ApiProject, type ApiChapter, type ApiDocument, type ApiDocumentVersion, type ApiExpert, type ApiWorldEntry, type ApiCharacter,
-  type ApiCharacterRelation, type ApiCharacterEvent, type ApiOutline, type ApiHiddenThread,
+  type ApiCharacterRelation, type ApiCharacterEvent, type ApiOutline, type ApiHiddenThread, type ApiStoryArc,
   type ProjectCreatePayload, type ProjectUpdatePayload, type ChapterCreatePayload, type DocumentCreatePayload, type DocumentUpdatePayload, type ExpertCreatePayload,
   type WorldEntryCreatePayload, type WorldEntryUpdatePayload,
   type CharacterCreatePayload, type CharacterUpdatePayload, type CharacterMergePayload,
   type CharacterRelationCreatePayload, type CharacterRelationUpdatePayload, type CharacterEventUpsertPayload,
   type OutlineCreatePayload, type OutlineUpdatePayload,
   type HiddenThreadCreatePayload, type HiddenThreadUpdatePayload,
+  type StoryArcCreatePayload, type StoryArcUpdatePayload,
   type GenerateRequest, type SSEEnvelope,
   type ExpertUpdatePayload, type ProjectMode,
   type LLMConfigCreatePayload, type ModelListRequest,
@@ -353,6 +354,15 @@ export const api = {
     request<ApiHiddenThread>(`/projects/${projectId}/hidden-threads/${threadId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteHiddenThread: (projectId: string, threadId: string) =>
     request<void>(`/projects/${projectId}/hidden-threads/${threadId}`, { method: 'DELETE' }),
+
+  // ─── Story Arcs ───
+  listStoryArcs: (projectId: string) => request<ApiStoryArc[]>(`/projects/${projectId}/story-arcs`),
+  createStoryArc: (projectId: string, data: StoryArcCreatePayload) =>
+    request<ApiStoryArc>(`/projects/${projectId}/story-arcs`, { method: 'POST', body: JSON.stringify(data) }),
+  updateStoryArc: (projectId: string, arcId: string, data: StoryArcUpdatePayload) =>
+    request<ApiStoryArc>(`/projects/${projectId}/story-arcs/${arcId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteStoryArc: (projectId: string, arcId: string) =>
+    request<void>(`/projects/${projectId}/story-arcs/${arcId}`, { method: 'DELETE' }),
 
   // ─── SSE ───
   resumeGeneration: (

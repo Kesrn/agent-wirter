@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useCharacterEventStore, useCharacterStore, useWorldEntryStore, useOutlineStore, useHiddenThreadStore, useUiStore, friendlyError } from '../stores'
+import { useCharacterEventStore, useCharacterStore, useWorldEntryStore, useOutlineStore, useHiddenThreadStore, useStoryArcStore, useUiStore, friendlyError } from '../stores'
 import type { CharacterEvent } from '../api/types'
 import BaseSelect from './BaseSelect.vue'
 const props = defineProps<{
@@ -19,6 +19,7 @@ const characterStore = useCharacterStore()
 const worldEntryStore = useWorldEntryStore()
 const outlineStore = useOutlineStore()
 const hiddenThreadStore = useHiddenThreadStore()
+const storyArcStore = useStoryArcStore()
 const ui = useUiStore()
 
 function resizeTextArea(el: HTMLTextAreaElement) {
@@ -47,12 +48,27 @@ const chapterOutline = computed(() =>
 const outlineTitle = ref('')
 const outlineSummary = ref('')
 const lightLine = ref('')
+const selectedArcId = ref<string | null>(null)
+const selectedArcPosition = ref<string | null>(null)
 const savingOutline = ref(false)
+
+const projectArcs = computed(() => storyArcStore.arcsForProject(props.projectId))
+
+const arcPositionOptions = [
+  { value: '', label: '（无）' },
+  { value: 'SETUP', label: '铺垫 SETUP' },
+  { value: 'BUILDUP', label: '升级 BUILDUP' },
+  { value: 'TURNING_POINT', label: '转折 TURNING_POINT' },
+  { value: 'CLIMAX', label: '高潮 CLIMAX' },
+  { value: 'AFTERMATH', label: '余波 AFTERMATH' },
+]
 
 watch(chapterOutline, (item) => {
   outlineTitle.value = item?.title ?? props.chapterTitle
   outlineSummary.value = item?.summary ?? ''
   lightLine.value = item?.turning_point ?? ''
+  selectedArcId.value = item?.story_arc_id ?? null
+  selectedArcPosition.value = item?.arc_position ?? null
 }, { immediate: true })
 
 watch(() => props.chapterTitle, (title) => {
@@ -80,6 +96,8 @@ async function saveChapterOutline() {
         title,
         summary: outlineSummary.value.trim(),
         turning_point: lightLine.value.trim(),
+        story_arc_id: selectedArcId.value || null,
+        arc_position: selectedArcPosition.value || null,
       })
     } else {
       await outlineStore.createOutlineItem(props.projectId, {
@@ -87,6 +105,8 @@ async function saveChapterOutline() {
         title,
         summary: outlineSummary.value.trim(),
         turning_point: lightLine.value.trim(),
+        story_arc_id: selectedArcId.value || null,
+        arc_position: selectedArcPosition.value || null,
       })
     }
     ui.showToast('章节大纲已保存', 'success')
@@ -287,6 +307,9 @@ onMounted(async () => {
   if (!hiddenThreadStore.hiddenThreads.length) {
     hiddenThreadStore.loadHiddenThreads(props.projectId).catch(() => {})
   }
+  if (!storyArcStore.arcs.length) {
+    storyArcStore.loadStoryArcs(props.projectId).catch(() => {})
+  }
 })
 </script>
 
@@ -317,6 +340,21 @@ onMounted(async () => {
         <div class="form-row">
           <label>明线推进</label>
           <textarea v-model="lightLine" v-auto-grow class="form-textarea" rows="2" placeholder="读者能直接看到的剧情目标、冲突或转折" @input="autoGrowTextArea"></textarea>
+        </div>
+        <div class="form-row" v-if="projectArcs.length">
+          <label>所属长线</label>
+          <select v-model="selectedArcId" class="form-input">
+            <option :value="null">（无）</option>
+            <option v-for="arc in projectArcs" :key="arc.id" :value="arc.id">
+              [{{ arc.arc_type }}] {{ arc.name }}
+            </option>
+          </select>
+        </div>
+        <div class="form-row" v-if="projectArcs.length">
+          <label>章节位置</label>
+          <select v-model="selectedArcPosition" class="form-input">
+            <option v-for="opt in arcPositionOptions" :key="opt.value" :value="opt.value || null">{{ opt.label }}</option>
+          </select>
         </div>
       </section>
 

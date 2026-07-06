@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
-import { useProjectStore, useChapterStore, useDocumentStore, useRelationStore, useWorldEntryStore, useCharacterStore, useCharacterEventStore, useOutlineStore, useHiddenThreadStore, useExpertStore, useUiStore, friendlyError } from '../stores'
-import { API_BASE_URL, type OutlineItem, type HiddenThread, type Character, type WorldEntry, type WritingUnit, type StructureExtractPayload } from '../api/types'
+import { useProjectStore, useChapterStore, useDocumentStore, useRelationStore, useWorldEntryStore, useCharacterStore, useCharacterEventStore, useOutlineStore, useHiddenThreadStore, useStoryArcStore, useExpertStore, useUiStore, friendlyError } from '../stores'
+import { API_BASE_URL, type OutlineItem, type HiddenThread, type StoryArc, type Character, type WorldEntry, type WritingUnit, type StructureExtractPayload } from '../api/types'
 import { api } from '../api/client'
 import WritingEditor from '../components/WritingEditor.vue'
 import ChapterConfig from "../components/ChapterConfig.vue"
@@ -24,6 +24,7 @@ const characterStore = useCharacterStore()
 const characterEventStore = useCharacterEventStore()
 const outlineStore = useOutlineStore()
 const hiddenThreadStore = useHiddenThreadStore()
+const storyArcStore = useStoryArcStore()
 const expertStore = useExpertStore()
 const ui = useUiStore()
 
@@ -95,6 +96,7 @@ watch(projectId, (id) => {
   relationStore.loadRelations(id)
   outlineStore.loadOutlines(id)
   hiddenThreadStore.loadHiddenThreads(id)
+  storyArcStore.loadStoryArcs(id)
 }, { immediate: true })
 
 async function ensureProjectsLoaded() {
@@ -134,6 +136,7 @@ const worldEntries = computed(() => {
     .sort((a, b) => order[a.scope_type] - order[b.scope_type] || a.category.localeCompare(b.category))
 })
 const hiddenThreads = computed(() => hiddenThreadStore.threadsForProject(projectId.value))
+const projectArcs = computed(() => storyArcStore.arcsForProject(projectId.value))
 const showChapterConfigModal = ref(false)
 const configChapterNum = ref(0)
 const configChapterTitle = ref('')
@@ -553,6 +556,7 @@ async function applyExtractedStructure(payload: StructureExtractPayload) {
       characterEventStore.loadCharacterEvents(projectId.value),
       worldEntryStore.loadWorldEntries(projectId.value),
       hiddenThreadStore.loadHiddenThreads(projectId.value),
+      storyArcStore.loadStoryArcs(projectId.value),
       relationStore.loadRelations(projectId.value),
     ])
     showStructurePreview.value = false
@@ -855,6 +859,52 @@ async function deleteHiddenThreadConfirm(ht: HiddenThread) {
     ui.showToast(`${hiddenThreadLabel.value}已删除`, 'success')
   } catch (e: unknown) {
     ui.showToast(friendlyError(e, `删除${hiddenThreadLabel.value}失败`), 'error')
+  }
+}
+
+// ─── Story Arc CRUD ───
+const showNewArcForm = ref(false)
+const newArcType = ref<'VOLUME' | 'ACT' | 'ARC'>('VOLUME')
+const newArcName = ref('')
+const newArcGoal = ref('')
+const newArcConflict = ref('')
+const newArcStart = ref<number | null>(null)
+const newArcEnd = ref<number | null>(null)
+const newArcError = ref('')
+
+async function submitNewArc() {
+  if (!newArcName.value.trim()) {
+    newArcError.value = '长线名称不能为空'
+    return
+  }
+  try {
+    await storyArcStore.createStoryArcItem(projectId.value, {
+      arc_type: newArcType.value,
+      name: newArcName.value.trim(),
+      goal: newArcGoal.value.trim() || undefined,
+      main_conflict: newArcConflict.value.trim() || undefined,
+      start_chapter: newArcStart.value ?? undefined,
+      end_chapter: newArcEnd.value ?? undefined,
+    })
+    showNewArcForm.value = false
+    newArcName.value = ''
+    newArcGoal.value = ''
+    newArcConflict.value = ''
+    newArcStart.value = null
+    newArcEnd.value = null
+    ui.showToast('长线结构创建成功', 'success')
+  } catch (e: unknown) {
+    newArcError.value = friendlyError(e, '创建长线结构失败')
+    ui.showToast(friendlyError(e, '创建长线结构失败'), 'error')
+  }
+}
+
+async function deleteArcConfirm(arc: StoryArc) {
+  try {
+    await storyArcStore.deleteStoryArcItem(projectId.value, arc.id)
+    ui.showToast('长线结构已删除', 'success')
+  } catch (e: unknown) {
+    ui.showToast(friendlyError(e, '删除长线结构失败'), 'error')
   }
 }
 
@@ -1284,6 +1334,61 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 <p v-if="ht.description" class="ht-desc">{{ ht.description }}</p>
               </div>
               <div v-if="!hiddenThreads.length && !showNewHiddenThread" class="empty-hint" style="padding: var(--sp-4) 0;">暂无{{ hiddenThreadLabel }}</div>
+            </div>
+
+            <!-- Story Arcs sub-section within outline tab -->
+            <div v-if="projectMode === 'novel'" class="hidden-thread-section">
+              <div class="section-header">
+                <span class="section-title">长线结构</span>
+                <button class="btn-add-inline" @click="showNewArcForm = !showNewArcForm">+ 添加长线</button>
+              </div>
+              <div v-if="showNewArcForm" class="unit-form">
+                <div class="form-row">
+                  <label>类型 <span class="required">*</span></label>
+                  <select v-model="newArcType" class="form-input">
+                    <option value="VOLUME">卷 VOLUME</option>
+                    <option value="ACT">幕 ACT</option>
+                    <option value="ARC">弧 ARC</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label>名称 <span class="required">*</span></label>
+                  <input v-model="newArcName" type="text" placeholder="如：第一卷：觉醒" class="form-input" />
+                </div>
+                <div class="form-row">
+                  <label>目标</label>
+                  <input v-model="newArcGoal" type="text" placeholder="可选" class="form-input" />
+                </div>
+                <div class="form-row">
+                  <label>主冲突</label>
+                  <input v-model="newArcConflict" type="text" placeholder="可选" class="form-input" />
+                </div>
+                <div class="form-row" style="display: flex; gap: var(--sp-2);">
+                  <div style="flex: 1;">
+                    <label>起始章</label>
+                    <input v-model.number="newArcStart" type="number" min="1" class="form-input form-input-sm" />
+                  </div>
+                  <div style="flex: 1;">
+                    <label>结束章</label>
+                    <input v-model.number="newArcEnd" type="number" min="1" class="form-input form-input-sm" />
+                  </div>
+                </div>
+                <div v-if="newArcError" class="form-error">{{ newArcError }}</div>
+                <div class="form-actions">
+                  <button class="btn-submit" @click="submitNewArc">确定</button>
+                  <button class="btn-cancel" @click="showNewArcForm = false">取消</button>
+                </div>
+              </div>
+              <div v-for="arc in projectArcs" :key="arc.id" class="ht-item">
+                <div class="ht-header">
+                  <span class="ht-name">[{{ arc.arc_type }}] {{ arc.name }}</span>
+                  <button class="icon-btn icon-btn-danger" title="删除" @click.stop="deleteArcConfirm(arc)">&#10005;</button>
+                </div>
+                <p v-if="arc.goal" class="ht-desc">目标：{{ arc.goal }}</p>
+                <p v-if="arc.main_conflict" class="ht-desc">冲突：{{ arc.main_conflict }}</p>
+                <p v-if="arc.start_chapter && arc.end_chapter" class="ht-desc">章节范围：{{ arc.start_chapter }}-{{ arc.end_chapter }}</p>
+              </div>
+              <div v-if="!projectArcs.length && !showNewArcForm" class="empty-hint" style="padding: var(--sp-4) 0;">暂无长线结构</div>
             </div>
           </div>
 

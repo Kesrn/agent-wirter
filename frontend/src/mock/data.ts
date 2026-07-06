@@ -1,4 +1,4 @@
-import type { Expert, Project, Chapter, OutlineItem, Character, CharacterRelation, WorldEntry, ReviewComment, HiddenThread } from '../api/types'
+import type { Expert, Project, Chapter, OutlineItem, Character, CharacterRelation, WorldEntry, ReviewComment, HiddenThread, StoryArc } from '../api/types'
 
 /** 6 个默认专家 */
 export const DEFAULT_EXPERTS: Expert[] = [
@@ -213,13 +213,19 @@ export const MOCK_HIDDEN_THREADS: HiddenThread[] = [
   { id: 'ht-2', project_id: 'proj-1', name: '建筑中的守卫AI', description: '外星建筑内沉睡的守卫AI', chapter_nums: [2, 3], created_at: '2026-05-01T10:00:00Z', updated_at: '2026-05-14T08:30:00Z' },
 ]
 
+/** Mock 长线结构 */
+export const MOCK_STORY_ARCS: StoryArc[] = [
+  { id: 'arc-1', project_id: 'proj-1', parent_arc_id: null, arc_type: 'VOLUME', name: '第一卷：启航', summary: '主角收到神秘信号并前往未知星域', goal: '建立世界观，引出主线', main_conflict: '人类对未知的恐惧 vs 探索欲', start_chapter: 1, end_chapter: 5, order_index: 1, status: 'ACTIVE' },
+  { id: 'arc-2', project_id: 'proj-1', parent_arc_id: 'arc-1', arc_type: 'ARC', name: '信号追踪', summary: '追踪信号源', goal: '找到信号源头', main_conflict: '环境危险与资源有限', start_chapter: 1, end_chapter: 3, order_index: 2, status: 'ACTIVE' },
+]
+
 /** Mock 大纲 */
 export const MOCK_OUTLINE: OutlineItem[] = [
-  { id: 'ol-1', project_id: 'proj-1', chapter_num: 1, title: '启航', summary: '主角收到神秘信号，决定前往未知星域', turning_point: '信号突然改变频率，暗示有意识', hidden_thread_ids: ['ht-1'] },
-  { id: 'ol-2', project_id: 'proj-1', chapter_num: 2, title: '信号源', summary: '追踪信号到达废弃行星，发现外星建筑', turning_point: '建筑仍在运转，不是废墟', hidden_thread_ids: ['ht-1', 'ht-2'] },
-  { id: 'ol-3', project_id: 'proj-1', chapter_num: 3, title: '第一接触', summary: '进入建筑，发现全息影像记录', turning_point: '影像中的文明与人类极其相似', hidden_thread_ids: ['ht-2'] },
-  { id: 'ol-4', project_id: 'proj-1', chapter_num: 4, title: '抉择', summary: '守卫AI苏醒，要求林远做出选择', turning_point: '选择将影响两个文明的命运', hidden_thread_ids: [] },
-  { id: 'ol-5', project_id: 'proj-1', chapter_num: 5, title: '归途', summary: '林远带着答案返回，但一切已不同', turning_point: '信号从未停止——它一直在等待回应', hidden_thread_ids: [] },
+  { id: 'ol-1', project_id: 'proj-1', chapter_num: 1, title: '启航', summary: '主角收到神秘信号，决定前往未知星域', turning_point: '信号突然改变频率，暗示有意识', hidden_thread_ids: ['ht-1'], story_arc_id: 'arc-2', arc_position: 'SETUP' },
+  { id: 'ol-2', project_id: 'proj-1', chapter_num: 2, title: '信号源', summary: '追踪信号到达废弃行星，发现外星建筑', turning_point: '建筑仍在运转，不是废墟', hidden_thread_ids: ['ht-1', 'ht-2'], story_arc_id: 'arc-2', arc_position: 'BUILDUP' },
+  { id: 'ol-3', project_id: 'proj-1', chapter_num: 3, title: '第一接触', summary: '进入建筑，发现全息影像记录', turning_point: '影像中的文明与人类极其相似', hidden_thread_ids: ['ht-2'], story_arc_id: 'arc-2', arc_position: 'CLIMAX' },
+  { id: 'ol-4', project_id: 'proj-1', chapter_num: 4, title: '抉择', summary: '守卫AI苏醒，要求林远做出选择', turning_point: '选择将影响两个文明的命运', hidden_thread_ids: [], story_arc_id: null, arc_position: null },
+  { id: 'ol-5', project_id: 'proj-1', chapter_num: 5, title: '归途', summary: '林远带着答案返回，但一切已不同', turning_point: '信号从未停止——它一直在等待回应', hidden_thread_ids: [], story_arc_id: null, arc_position: null },
 ]
 
 /** Mock 角色关系 */
