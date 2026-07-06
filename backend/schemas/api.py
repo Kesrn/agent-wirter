@@ -381,6 +381,29 @@ class CharacterEventResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# --- 角色弧线 (K-5) ---
+
+class CharacterArcItem(BaseModel):
+    """角色弧线中的单个事件"""
+    chapter_sequence_number: int | None
+    source_type: str  # CharacterEvent / WritingMemory
+    title: str
+    summary: str = ""
+    state_change: str | None = None
+    emotion: str | None = None
+    importance: int = 3
+    confidence: str = "confirmed"  # confirmed / ai_extracted
+
+
+class CharacterArcResponse(BaseModel):
+    """角色弧线聚合视图"""
+    character_id: uuid.UUID
+    character_name: str
+    role_type: str
+    items: list[CharacterArcItem]
+    chapter_range: str = ""
+
+
 # --- 大纲 ---
 class OutlineCreate(BaseModel):
     sequence_number: int = Field(ge=1)
