@@ -41,6 +41,8 @@ class OutlineInfo:
     title: str
     summary: str
     turning_point: str
+    story_arc_id: str | None = None
+    arc_position: str | None = None
 
 
 @dataclass
@@ -133,6 +135,20 @@ class PreviousChapterEndingInfo:
 
 
 @dataclass
+class StoryArcInfo:
+    """长线结构信息（K-2：分卷/分幕/弧）"""
+    id: str
+    arc_type: str               # VOLUME / ACT / ARC
+    name: str
+    summary: str = ""
+    goal: str = ""
+    main_conflict: str = ""
+    start_chapter: int | None = None
+    end_chapter: int | None = None
+    arc_position: str | None = None   # 本章在 arc 中的位置（来自 Outline.arc_position）
+
+
+@dataclass
 class ChapterContext:
     """build_chapter_context 的返回值"""
 
@@ -148,6 +164,7 @@ class ChapterContext:
     previous_chapters: list[ChapterInfo] = field(default_factory=list)
     confirmed_memories: list[ConfirmedMemoryInfo] = field(default_factory=list)
     previous_chapter_ending: PreviousChapterEndingInfo | None = None  # K-1: opening_anchor
+    story_arcs: list[StoryArcInfo] = field(default_factory=list)  # K-2: 当前长线结构
     stats: ContextStats = field(default_factory=ContextStats)
 
     def to_dict(self) -> dict:
@@ -315,6 +332,9 @@ async def build_chapter_context(
     # ── 本章大纲 ──
     await _load_outline(db, pid, seq, ctx)
 
+    # ── 长线结构（K-2: 需要本章 outline 的 story_arc_id）──
+    await _load_story_arcs(db, pid, seq, ctx)
+
     # ── 本章角色事件 + 角色 ──
     await _load_character_events(db, pid, seq, ctx, stats)
 
@@ -384,6 +404,76 @@ async def _load_outline(
             title=outline.title,
             summary=outline.summary or "",
             turning_point=outline.turning_point or "",
+            story_arc_id=str(outline.story_arc_id) if outline.story_arc_id else None,
+            arc_position=outline.arc_position,
+        )
+
+
+async def _load_story_arcs(
+    db: AsyncSession, project_id: str, seq: int, ctx: ChapterContext
+) -> None:
+    """加载与当前章节相关的长线结构（K-2）。
+
+    查找规则：
+    1. 如果本章 outline 有 story_arc_id，直接查该 arc
+    2. 同时查 start_chapter <= seq <= end_chapter 的 arc（范围覆盖）
+    3. 合并去重，按 order_index 排序
+    4. 如果本章 outline 有 arc_position，标记到对应 arc
+    """
+    from models.story_arc import StoryArc
+
+    arc_ids: set[str] = set()
+
+    # 1. 通过 outline.story_arc_id 查直接关联
+    outline_arc_position = None
+    outline_arc_id = None
+    if ctx.outline and ctx.outline.story_arc_id:
+        outline_arc_id = ctx.outline.story_arc_id
+        arc_ids.add(outline_arc_id)
+        outline_arc_position = ctx.outline.arc_position
+
+    # 2. 通过 start/end_chapter 范围查
+    range_result = await db.execute(
+        select(StoryArc).where(
+            StoryArc.project_id == project_id,
+            StoryArc.start_chapter.isnot(None),
+            StoryArc.end_chapter.isnot(None),
+            StoryArc.start_chapter <= seq,
+            StoryArc.end_chapter >= seq,
+        )
+    )
+    range_arcs = range_result.scalars().all()
+    for a in range_arcs:
+        arc_ids.add(str(a.id))
+
+    if not arc_ids:
+        return
+
+    # 3. 查询所有相关 arc，按 order_index 排序
+    import uuid as _uuid
+    all_result = await db.execute(
+        select(StoryArc)
+        .where(
+            StoryArc.project_id == project_id,
+            StoryArc.id.in_([_uuid.UUID(aid) for aid in arc_ids]),
+        )
+        .order_by(StoryArc.order_index.asc(), StoryArc.created_at.asc())
+    )
+    arcs = all_result.scalars().all()
+
+    for a in arcs:
+        ctx.story_arcs.append(
+            StoryArcInfo(
+                id=str(a.id),
+                arc_type=a.arc_type,
+                name=a.name,
+                summary=a.summary or "",
+                goal=a.goal or "",
+                main_conflict=a.main_conflict or "",
+                start_chapter=a.start_chapter,
+                end_chapter=a.end_chapter,
+                arc_position=outline_arc_position if outline_arc_id == str(a.id) else None,
+            )
         )
 
 
@@ -901,6 +991,7 @@ def format_chapter_context_for_prompt(context: ChapterContext) -> str:
     """将 ChapterContext 格式化为 LLM prompt 可用的文本。
 
     输出 sections（按优先级排列）：
+    ## 当前长线结构
     ## 当前章节
     ## 本章大纲
     ## 上章结尾锚点
@@ -914,6 +1005,20 @@ def format_chapter_context_for_prompt(context: ChapterContext) -> str:
     ## 检索资料
     """
     parts: list[str] = []
+
+    # 当前长线结构（K-2: 分卷/分幕/弧，放在最前给 architect 全局节奏感）
+    if context.story_arcs:
+        arc_lines = []
+        for arc in context.story_arcs:
+            line = f"- [{arc.arc_type}] {arc.name}"
+            if arc.goal:
+                line += f"\n  目标：{arc.goal}"
+            if arc.main_conflict:
+                line += f"\n  主冲突：{arc.main_conflict}"
+            if arc.arc_position:
+                line += f"\n  当前阶段：{arc.arc_position}"
+            arc_lines.append(line)
+        parts.append("## 当前长线结构\n" + "\n".join(arc_lines))
 
     # 当前章节
     if context.chapter:

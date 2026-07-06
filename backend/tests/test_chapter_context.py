@@ -635,3 +635,174 @@ class TestOpeningAnchor:
         prompt = format_chapter_context_for_prompt(ctx)
         assert "## 上章结尾锚点" in prompt
         assert "第3章" in prompt
+
+
+def _create_story_arc(project_id, *, arc_type="VOLUME", name="第一卷", summary="",
+                      goal="", main_conflict="", start_chapter=None, end_chapter=None,
+                      order_index=0):
+    """通过 API 创建长线结构"""
+    payload = {"arc_type": arc_type, "name": name, "order_index": order_index}
+    if summary:
+        payload["summary"] = summary
+    if goal:
+        payload["goal"] = goal
+    if main_conflict:
+        payload["main_conflict"] = main_conflict
+    if start_chapter is not None:
+        payload["start_chapter"] = start_chapter
+    if end_chapter is not None:
+        payload["end_chapter"] = end_chapter
+    resp = client.post(
+        f"/api/projects/{project_id}/story-arcs",
+        json=payload,
+        headers=_auth(),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["id"]
+
+
+class TestStoryArc:
+    """K-2: 长线结构 Context Builder 注入测试"""
+
+    def test_arc_in_range_injected(self):
+        """arc 覆盖当前章节时，应注入到 context。"""
+        pid = _create_project("长线结构测试")
+        _create_chapter(pid, "第三章", 3)
+        _create_story_arc(pid, arc_type="VOLUME", name="第一卷：觉醒", goal="主角觉醒",
+                          main_conflict="自我认知", start_chapter=1, end_chapter=5)
+
+        async def _run():
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(session, pid, 3)
+                return ctx
+
+        ctx = asyncio.new_event_loop().run_until_complete(_run())
+        assert len(ctx.story_arcs) == 1
+        arc = ctx.story_arcs[0]
+        assert arc.arc_type == "VOLUME"
+        assert arc.name == "第一卷：觉醒"
+        assert arc.goal == "主角觉醒"
+        assert arc.main_conflict == "自我认知"
+        assert arc.start_chapter == 1
+        assert arc.end_chapter == 5
+
+        prompt = format_chapter_context_for_prompt(ctx)
+        assert "## 当前长线结构" in prompt
+        assert "[VOLUME]" in prompt
+        assert "第一卷：觉醒" in prompt
+        assert "主角觉醒" in prompt
+
+    def test_arc_out_of_range_not_injected(self):
+        """arc 范围不覆盖当前章节时，不应注入。"""
+        pid = _create_project("范围外测试")
+        _create_chapter(pid, "第三章", 3)
+        _create_story_arc(pid, name="第二卷", start_chapter=6, end_chapter=10)
+
+        async def _run():
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(session, pid, 3)
+                return ctx
+
+        ctx = asyncio.new_event_loop().run_until_complete(_run())
+        assert len(ctx.story_arcs) == 0
+
+        prompt = format_chapter_context_for_prompt(ctx)
+        assert "## 当前长线结构" not in prompt
+
+    def test_arc_via_outline_story_arc_id(self):
+        """通过 outline.story_arc_id 关联的 arc 应注入，且 arc_position 正确。"""
+        pid = _create_project("大纲关联arc测试")
+        _create_chapter(pid, "第一章", 1)
+        arc_id = _create_story_arc(pid, arc_type="ARC", name="觉醒仪式",
+                                    start_chapter=1, end_chapter=3)
+
+        # 创建大纲并关联 arc
+        resp = client.post(
+            f"/api/projects/{pid}/outlines",
+            json={
+                "sequence_number": 1,
+                "title": "第一章",
+                "story_arc_id": arc_id,
+                "arc_position": "BUILDUP",
+            },
+            headers=_auth(),
+        )
+        assert resp.status_code == 200, resp.text
+
+        async def _run():
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(session, pid, 1)
+                return ctx
+
+        ctx = asyncio.new_event_loop().run_until_complete(_run())
+        assert len(ctx.story_arcs) == 1
+        arc = ctx.story_arcs[0]
+        assert arc.name == "觉醒仪式"
+        assert arc.arc_position == "BUILDUP"
+
+    def test_multiple_arcs_ordered(self):
+        """多个 arc 覆盖同一章节时，按 order_index 排序。"""
+        pid = _create_project("多arc排序测试")
+        _create_chapter(pid, "第三章", 3)
+        _create_story_arc(pid, arc_type="VOLUME", name="第二卷", order_index=2,
+                          start_chapter=1, end_chapter=10)
+        _create_story_arc(pid, arc_type="ARC", name="觉醒仪式", order_index=1,
+                          start_chapter=1, end_chapter=5)
+
+        async def _run():
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(session, pid, 3)
+                return ctx
+
+        ctx = asyncio.new_event_loop().run_until_complete(_run())
+        assert len(ctx.story_arcs) == 2
+        assert ctx.story_arcs[0].name == "觉醒仪式"
+        assert ctx.story_arcs[1].name == "第二卷"
+
+    def test_no_arcs_no_section(self):
+        """无 arc 时不应注入 section。"""
+        pid = _create_project("无arc测试")
+        _create_chapter(pid, "第一章", 1)
+
+        async def _run():
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(session, pid, 1)
+                return ctx
+
+        ctx = asyncio.new_event_loop().run_until_complete(_run())
+        assert len(ctx.story_arcs) == 0
+
+        prompt = format_chapter_context_for_prompt(ctx)
+        assert "## 当前长线结构" not in prompt
+
+    def test_arc_without_range_not_injected_unless_outline_linked(self):
+        """arc 无 start/end_chapter 时，不通过范围注入，但 outline 关联仍可注入。"""
+        pid = _create_project("无范围arc测试")
+        _create_chapter(pid, "第一章", 1)
+        arc_id = _create_story_arc(pid, name="无范围arc")  # 无 start/end_chapter
+
+        async def _run():
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(session, pid, 1)
+                return ctx
+
+        ctx = asyncio.new_event_loop().run_until_complete(_run())
+        # 无范围且无 outline 关联 → 不注入
+        assert len(ctx.story_arcs) == 0
+
+        # 创建大纲关联
+        resp = client.post(
+            f"/api/projects/{pid}/outlines",
+            json={"sequence_number": 1, "title": "第一章", "story_arc_id": arc_id},
+            headers=_auth(),
+        )
+        assert resp.status_code == 200
+
+        async def _run2():
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(session, pid, 1)
+                return ctx
+
+        ctx2 = asyncio.new_event_loop().run_until_complete(_run2())
+        assert len(ctx2.story_arcs) == 1
+        assert ctx2.story_arcs[0].name == "无范围arc"
