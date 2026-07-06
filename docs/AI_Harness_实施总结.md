@@ -2,7 +2,8 @@
 
 > 面向 Claude / Codex 的上下文文档：全部阶段已完成，架构决策、代码结构、已知限制。
 > 分支：`novel-extraction-mvp`，全部已提交。
-> 基线文档：`docs/AI_Harness_改造适配技术文档.md` + `docs/Expert_System_v2_改造开发文档.md` + `docs/Clarification_Loop_多轮澄清改造技术文档.md`
+> 基线文档：`docs/AI_Harness_改造适配技术文档.md` + `docs/Expert_System_v2_改造开发文档.md`
+> 后续规划：`docs/Novel_Harness_V2_计划模式与长篇能力开发计划.md`
 
 ---
 
@@ -262,7 +263,7 @@ confirm 写入 workbench 正式表 + Context Builder 注入 confirmed 记忆 + �
 
 ## 阶段 J：Clarification Loop 多轮澄清 ✅
 
-基线文档：`docs/Clarification_Loop_多轮澄清改造技术文档.md`
+原独立 Clarification 规划已合并进 `docs/Novel_Harness_V2_计划模式与长篇能力开发计划.md`。本节记录已经落地的 J-1~J-5 实施结果。
 
 在 chapter-architect 前增加"多轮澄清环节"，让 AI 在生成前判断输入是否足够明确，不足时问用户最多 3 个高价值问题。
 
