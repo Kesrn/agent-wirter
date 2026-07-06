@@ -2342,6 +2342,10 @@ async def create_hidden_thread(
         name=req.name,
         description=req.description,
         chapter_nums=req.chapter_nums,
+        status=req.status,
+        thread_type=req.thread_type,
+        planted_chapter=req.planted_chapter,
+        reveal_chapter=req.reveal_chapter,
     )
     db.add(hidden_thread)
     await db.commit()

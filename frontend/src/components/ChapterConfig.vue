@@ -82,6 +82,14 @@ const chapterHiddenThreads = computed(() =>
     .filter(thread => (thread.chapter_nums ?? []).includes(props.chapterNum))
 )
 
+const threadStatusLabel = (s: string) => {
+  const map: Record<string, string> = {
+    PLANNED: '计划', PLANTED: '已埋', ACTIVE: '进行',
+    REVEALED: '揭示', RESOLVED: '已回收', DROPPED: '废弃',
+  }
+  return map[s] ?? s
+}
+
 const showDarkLineForm = ref(false)
 const darkLineName = ref('')
 const darkLineDescription = ref('')
@@ -487,9 +495,12 @@ onMounted(async () => {
           <article v-for="thread in chapterHiddenThreads" :key="thread.id" class="dark-line-card">
             <div class="dark-line-head">
               <span class="dark-line-name">{{ thread.name }}</span>
+              <span class="dark-line-status" :class="'status-' + thread.status.toLowerCase()">{{ threadStatusLabel(thread.status) }}</span>
               <button class="icon-btn icon-btn-danger" title="从本章移除" @click="removeDarkLineFromChapter(thread.id)">&#10005;</button>
             </div>
             <p v-if="thread.description" class="dark-line-desc">{{ thread.description }}</p>
+            <p v-if="thread.planted_chapter" class="dark-line-meta">埋设章：第{{ thread.planted_chapter }}章</p>
+            <p v-if="thread.reveal_chapter" class="dark-line-meta">预计回收：第{{ thread.reveal_chapter }}章</p>
           </article>
         </div>
         <div v-else-if="!showDarkLineForm" class="empty-hint">本章暂无暗线</div>
@@ -815,6 +826,24 @@ onMounted(async () => {
   font-size: var(--text-xs);
   color: var(--text-secondary);
   line-height: 1.5;
+}
+.dark-line-status {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+.dark-line-status.status-planted { border-color: #3b82f6; color: #3b82f6; }
+.dark-line-status.status-active { border-color: #22c55e; color: #22c55e; }
+.dark-line-status.status-resolved { border-color: #94a3b8; color: #94a3b8; }
+.dark-line-status.status-dropped { border-color: #ef4444; color: #ef4444; }
+.dark-line-meta {
+  margin: var(--sp-1) 0 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
 }
 
 /* World entries */

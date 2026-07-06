@@ -586,8 +586,12 @@ async def _load_hidden_threads(
             continue
         candidates.append(t)
 
-    # 最多 20 条，按状态优先级排序（PLANTED > ACTIVE > REVEALED > RESOLVED）
-    candidates.sort(key=lambda t: STATUS_PRIORITY.get(t.status or "PLANNED", 50), reverse=True)
+    # 最多 20 条，按上下文优先级排序（PLANTED > ACTIVE > PLANNED > REVEALED > RESOLVED）
+    # 正在埋和推进中的优先展示，已回收的排在最后
+    CONTEXT_THREAD_PRIORITY = {
+        "PLANTED": 5, "ACTIVE": 4, "PLANNED": 3, "REVEALED": 2, "RESOLVED": 1, "DROPPED": 0,
+    }
+    candidates.sort(key=lambda t: CONTEXT_THREAD_PRIORITY.get(t.status or "PLANNED", 0), reverse=True)
     for t in candidates[:20]:
         ctx.hidden_threads.append(
             HiddenThreadInfo(

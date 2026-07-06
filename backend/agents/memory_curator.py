@@ -21,8 +21,8 @@ def story_record_to_facts(record: dict[str, Any], chapter_seq: int | None = None
     - character_state_changes → CHARACTER（角色状态变化）
     - relationship_changes → PLOT_FACT（关系变化是剧情事实）
     - ability_changes → EVENT（能力变化是角色事件）
-    - foreshadowing_new → FORESHADOWING
-    - foreshadowing_resolved → PLOT_FACT（伏笔回收是剧情事实）
+    - foreshadowing_new → FORESHADOWING + status_delta=PLANTED
+    - foreshadowing_resolved → FORESHADOWING + status_delta=RESOLVED (K-3)
     - knowledge_state_changes → PLOT_FACT（信息揭示是剧情事实）
 
     Args:
