@@ -43,6 +43,9 @@ class OutlineInfo:
     turning_point: str
     story_arc_id: str | None = None
     arc_position: str | None = None
+    pacing: str | None = None
+    tension_level: int | None = None
+    target_scene_count: int | None = None
 
 
 @dataclass
@@ -410,6 +413,9 @@ async def _load_outline(
             turning_point=outline.turning_point or "",
             story_arc_id=str(outline.story_arc_id) if outline.story_arc_id else None,
             arc_position=outline.arc_position,
+            pacing=outline.pacing,
+            tension_level=outline.tension_level,
+            target_scene_count=outline.target_scene_count,
         )
 
 
@@ -1076,6 +1082,16 @@ def format_chapter_context_for_prompt(context: ChapterContext) -> str:
             ol_text += f"\n概要：{ol.summary}"
         if ol.turning_point:
             ol_text += f"\n转折点：{ol.turning_point}"
+        # K-4: 节奏标记
+        pacing_parts = []
+        if ol.pacing:
+            pacing_parts.append(f"节奏：{ol.pacing}")
+        if ol.tension_level:
+            pacing_parts.append(f"张力等级：{ol.tension_level}/5")
+        if ol.target_scene_count:
+            pacing_parts.append(f"目标场景数：{ol.target_scene_count}")
+        if pacing_parts:
+            ol_text += "\n" + " | ".join(pacing_parts)
         parts.append(ol_text)
 
     # 上章结尾锚点（K-1: opening_anchor）— 紧跟本章大纲，让 architect 先抓开篇承接
