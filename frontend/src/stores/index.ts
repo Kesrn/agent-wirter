@@ -984,6 +984,9 @@ function apiOutlineToOutlineItem(ao: ApiOutline): OutlineItem {
     hidden_thread_ids: ao.hidden_thread_ids ?? [],
     story_arc_id: ao.story_arc_id ?? null,
     arc_position: ao.arc_position ?? null,
+    pacing: ao.pacing ?? null,
+    tension_level: ao.tension_level ?? null,
+    target_scene_count: ao.target_scene_count ?? null,
   }
 }
 
