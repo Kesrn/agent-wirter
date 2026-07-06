@@ -386,6 +386,8 @@ class OutlineCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     summary: str | None = Field(default=None, max_length=10000)
     turning_point: str | None = Field(default=None, max_length=5000)
+    story_arc_id: str | None = None
+    arc_position: str | None = Field(default=None, pattern=r"^(SETUP|BUILDUP|TURNING_POINT|CLIMAX|AFTERMATH)$")
 
 
 class OutlineUpdate(BaseModel):
@@ -393,6 +395,8 @@ class OutlineUpdate(BaseModel):
     summary: str | None = Field(default=None, max_length=10000)
     turning_point: str | None = Field(default=None, max_length=5000)
     hidden_thread_ids: list[str] | None = None
+    story_arc_id: str | None = None
+    arc_position: str | None = Field(default=None, pattern=r"^(SETUP|BUILDUP|TURNING_POINT|CLIMAX|AFTERMATH)$")
 
 
 class OutlineResponse(BaseModel):
@@ -403,6 +407,8 @@ class OutlineResponse(BaseModel):
     summary: str | None
     turning_point: str | None
     hidden_thread_ids: list[str] | None
+    story_arc_id: uuid.UUID | None = None
+    arc_position: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -432,6 +438,53 @@ class HiddenThreadResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# --- 长线结构 (Story Arc) ---
+class StoryArcCreate(BaseModel):
+    arc_type: str = Field(pattern=r"^(VOLUME|ACT|ARC)$")
+    name: str = Field(min_length=1, max_length=200)
+    summary: str | None = Field(default=None, max_length=10000)
+    goal: str | None = Field(default=None, max_length=10000)
+    main_conflict: str | None = Field(default=None, max_length=10000)
+    parent_arc_id: str | None = None
+    start_chapter: int | None = Field(default=None, ge=1)
+    end_chapter: int | None = Field(default=None, ge=1)
+    order_index: int = Field(default=0, ge=0)
+    status: str = Field(default="PLANNED", pattern=r"^(PLANNED|ACTIVE|COMPLETED|PAUSED|ARCHIVED)$")
+
+
+class StoryArcUpdate(BaseModel):
+    arc_type: str | None = Field(default=None, pattern=r"^(VOLUME|ACT|ARC)$")
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    summary: str | None = Field(default=None, max_length=10000)
+    goal: str | None = Field(default=None, max_length=10000)
+    main_conflict: str | None = Field(default=None, max_length=10000)
+    parent_arc_id: str | None = None
+    start_chapter: int | None = Field(default=None, ge=1)
+    end_chapter: int | None = Field(default=None, ge=1)
+    order_index: int | None = Field(default=None, ge=0)
+    status: str | None = Field(default=None, pattern=r"^(PLANNED|ACTIVE|COMPLETED|PAUSED|ARCHIVED)$")
+
+
+class StoryArcResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    parent_arc_id: uuid.UUID | None = None
+    arc_type: str
+    name: str
+    summary: str | None
+    goal: str | None
+    main_conflict: str | None
+    start_chapter: int | None
+    end_chapter: int | None
+    order_index: int
+    status: str
+    metadata_: dict | None = Field(default=None, serialization_alias="metadata")
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 # --- 角色关系 ---

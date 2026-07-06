@@ -35,6 +35,7 @@ from models.character_event import CharacterEvent
 from models.character_relation import CharacterRelation
 from models.outline import Outline
 from models.hidden_thread import HiddenThread
+from models.story_arc import StoryArc
 from models.project_source import ProjectSource
 from models.project_source_chunk import ProjectSourceChunk
 from models.project_knowledge_fact import ProjectKnowledgeFact
@@ -58,6 +59,7 @@ from schemas.api import (
     CharacterRelationCreate, CharacterRelationUpdate, CharacterRelationResponse,
     OutlineCreate, OutlineUpdate, OutlineResponse,
     HiddenThreadCreate, HiddenThreadUpdate, HiddenThreadResponse,
+    StoryArcCreate, StoryArcUpdate, StoryArcResponse,
     GenerateRequest, ExpertTestRequest,
     DocumentCreate, DocumentUpdate, DocumentResponse,
     DocumentVersionListItemResponse, DocumentVersionResponse,
@@ -2220,6 +2222,8 @@ async def create_outline(
         title=req.title,
         summary=req.summary,
         turning_point=req.turning_point,
+        story_arc_id=_to_uuid(req.story_arc_id) if req.story_arc_id else None,
+        arc_position=req.arc_position,
     )
     db.add(outline)
     await db.commit()
@@ -2246,6 +2250,12 @@ async def update_outline(
         raise HTTPException(status_code=404, detail="大纲条目不存在")
 
     update_data = req.model_dump(exclude_unset=True)
+    # story_arc_id 需要 UUID 转换
+    if "story_arc_id" in update_data:
+        if update_data["story_arc_id"]:
+            update_data["story_arc_id"] = _to_uuid(update_data["story_arc_id"])
+        else:
+            update_data["story_arc_id"] = None
     for field, value in update_data.items():
         setattr(outline, field, value)
 
@@ -2361,6 +2371,127 @@ async def delete_hidden_thread(
         raise HTTPException(status_code=404, detail="暗线不存在")
 
     await db.delete(hidden_thread)
+    await db.commit()
+    return None
+
+
+# ==================== 长线结构 (Story Arc) ====================
+
+@router.get("/projects/{project_id}/story-arcs", response_model=list[StoryArcResponse])
+async def list_story_arcs(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    result = await db.execute(
+        select(StoryArc)
+        .where(StoryArc.project_id == uid)
+        .order_by(StoryArc.order_index.asc(), StoryArc.created_at.asc())
+    )
+    return result.scalars().all()
+
+
+@router.post("/projects/{project_id}/story-arcs", response_model=StoryArcResponse)
+async def create_story_arc(
+    project_id: str,
+    req: StoryArcCreate,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    parent_arc_id = None
+    if req.parent_arc_id:
+        parent_arc_id = _to_uuid(req.parent_arc_id)
+        # 验证 parent arc 存在且属于同项目
+        parent_result = await db.execute(
+            select(StoryArc).where(StoryArc.id == parent_arc_id, StoryArc.project_id == uid)
+        )
+        if not parent_result.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="父级长线不存在或不属于该项目")
+
+    arc = StoryArc(
+        project_id=uid,
+        parent_arc_id=parent_arc_id,
+        arc_type=req.arc_type,
+        name=req.name,
+        summary=req.summary,
+        goal=req.goal,
+        main_conflict=req.main_conflict,
+        start_chapter=req.start_chapter,
+        end_chapter=req.end_chapter,
+        order_index=req.order_index,
+        status=req.status,
+    )
+    db.add(arc)
+    await db.commit()
+    await db.refresh(arc)
+    return arc
+
+
+@router.patch("/projects/{project_id}/story-arcs/{arc_id}", response_model=StoryArcResponse)
+async def update_story_arc(
+    project_id: str,
+    arc_id: str,
+    req: StoryArcUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    aid = _to_uuid(arc_id)
+    await _verify_project_owner(uid, user.id, db)
+    result = await db.execute(
+        select(StoryArc).where(StoryArc.id == aid, StoryArc.project_id == uid)
+    )
+    arc = result.scalar_one_or_none()
+    if not arc:
+        raise HTTPException(status_code=404, detail="长线不存在")
+
+    update_data = req.model_dump(exclude_unset=True)
+
+    # parent_arc_id 需要转 UUID
+    if "parent_arc_id" in update_data:
+        if update_data["parent_arc_id"]:
+            update_data["parent_arc_id"] = _to_uuid(update_data["parent_arc_id"])
+        else:
+            update_data["parent_arc_id"] = None
+
+    for field, value in update_data.items():
+        setattr(arc, field, value)
+
+    await db.commit()
+    await db.refresh(arc)
+    return arc
+
+
+@router.delete("/projects/{project_id}/story-arcs/{arc_id}", status_code=204)
+async def delete_story_arc(
+    project_id: str,
+    arc_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    aid = _to_uuid(arc_id)
+    await _verify_project_owner(uid, user.id, db)
+    result = await db.execute(
+        select(StoryArc).where(StoryArc.id == aid, StoryArc.project_id == uid)
+    )
+    arc = result.scalar_one_or_none()
+    if not arc:
+        raise HTTPException(status_code=404, detail="长线不存在")
+
+    # 检查是否有子 arc
+    child_result = await db.execute(
+        select(StoryArc.id).where(StoryArc.parent_arc_id == aid).limit(1)
+    )
+    if child_result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="该长线下有子级，请先删除子级")
+
+    await db.delete(arc)
     await db.commit()
     return None
 

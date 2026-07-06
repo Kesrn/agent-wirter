@@ -18,3 +18,5 @@ class Outline(UUIDMixin, TimestampMixin, Base):
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     turning_point: Mapped[str | None] = mapped_column(Text, nullable=True)  # 转折点
     hidden_thread_ids: Mapped[list | None] = mapped_column("hidden_thread_ids", JSONValue(), nullable=True)  # 关联暗线ID列表
+    story_arc_id: Mapped[str | None] = mapped_column(GUID(), nullable=True, index=True)  # 所属长线 arc
+    arc_position: Mapped[str | None] = mapped_column(String(30), nullable=True)  # SETUP / BUILDUP / TURNING_POINT / CLIMAX / AFTERMATH

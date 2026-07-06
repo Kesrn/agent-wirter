@@ -32,6 +32,7 @@ from .ai_run_step import AiRunStep
 from .llm_call_log import LlmCallLog
 from .human_interrupt import HumanInterrupt
 from .writing_memory_staging import WritingMemoryStaging
+from .story_arc import StoryArc
 
 __all__ = [
     "Base", "UUIDMixin", "TimestampMixin", "Project", "Chapter", "Document",
@@ -47,4 +48,5 @@ __all__ = [
     "RunStatus", "RunStepStatus", "InterruptStatus", "InterruptDecision",
     "AiRun", "AiRunStep", "LlmCallLog", "HumanInterrupt",
     "WritingMemoryStaging", "MemoryStagingStatus", "MemoryType",
+    "StoryArc",
 ]
