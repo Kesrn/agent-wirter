@@ -247,6 +247,9 @@ export interface OutlineItem {
   hidden_thread_ids: string[]
   story_arc_id: string | null
   arc_position: string | null
+  pacing: string | null
+  tension_level: number | null
+  target_scene_count: number | null
 }
 
 /** 长线结构 (UI / store) — mapped from ApiStoryArc via apiStoryArcToStoryArc */
@@ -421,6 +424,27 @@ export interface ApiCharacterEvent {
   updated_at: string
 }
 
+// ─── K-5: Character Arc ───
+
+export interface ApiCharacterArcItem {
+  chapter_sequence_number: number | null
+  source_type: string
+  title: string
+  summary: string
+  state_change: string | null
+  emotion: string | null
+  importance: number
+  confidence: string
+}
+
+export interface ApiCharacterArcResponse {
+  character_id: string
+  character_name: string
+  role_type: string
+  items: ApiCharacterArcItem[]
+  chapter_range: string
+}
+
 /** Backend OutlineResponse */
 export interface ApiOutline {
   id: string
@@ -432,6 +456,9 @@ export interface ApiOutline {
   hidden_thread_ids: string[]
   story_arc_id: string | null
   arc_position: string | null
+  pacing: string | null
+  tension_level: number | null
+  target_scene_count: number | null
   created_at: string
   updated_at: string
 }
@@ -648,6 +675,9 @@ export interface OutlineCreatePayload {
   turning_point?: string
   story_arc_id?: string | null
   arc_position?: string | null
+  pacing?: string | null
+  tension_level?: number | null
+  target_scene_count?: number | null
 }
 
 export interface OutlineUpdatePayload {
@@ -657,6 +687,9 @@ export interface OutlineUpdatePayload {
   turning_point?: string
   story_arc_id?: string | null
   arc_position?: string | null
+  pacing?: string | null
+  tension_level?: number | null
+  target_scene_count?: number | null
 }
 
 export interface StoryArcCreatePayload {

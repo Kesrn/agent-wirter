@@ -2,6 +2,7 @@ import {
   API_BASE_URL,
   type ApiProject, type ApiChapter, type ApiDocument, type ApiDocumentVersion, type ApiExpert, type ApiWorldEntry, type ApiCharacter,
   type ApiCharacterRelation, type ApiCharacterEvent, type ApiOutline, type ApiHiddenThread, type ApiStoryArc,
+  type ApiCharacterArcResponse,
   type ProjectCreatePayload, type ProjectUpdatePayload, type ChapterCreatePayload, type DocumentCreatePayload, type DocumentUpdatePayload, type ExpertCreatePayload,
   type WorldEntryCreatePayload, type WorldEntryUpdatePayload,
   type CharacterCreatePayload, type CharacterUpdatePayload, type CharacterMergePayload,
@@ -327,6 +328,10 @@ export const api = {
     request<ApiCharacterEvent>(`/projects/${projectId}/characters/${characterId}/chapter-events/${sequenceNumber}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteCharacterEvent: (projectId: string, characterId: string, sequenceNumber: number) =>
     request<void>(`/projects/${projectId}/characters/${characterId}/chapter-events/${sequenceNumber}`, { method: 'DELETE' }),
+
+  // ─── Character Arc (K-5) ───
+  getCharacterArc: (projectId: string, characterId: string, toChapter?: number) =>
+    request<ApiCharacterArcResponse>(`/projects/${projectId}/characters/${characterId}/arc${toChapter ? `?to_chapter=${toChapter}` : ''}`),
 
   // ─── Character Relations ───
   listCharacterRelations: (projectId: string) => request<ApiCharacterRelation[]>(`/projects/${projectId}/character-relations`),
