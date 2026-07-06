@@ -56,6 +56,7 @@ from schemas.api import (
     WorldEntryCreate, WorldEntryUpdate, WorldEntryResponse,
     CharacterCreate, CharacterUpdate, CharacterMergeRequest, CharacterResponse,
     CharacterEventUpsert, CharacterEventResponse,
+    CharacterArcResponse,
     CharacterRelationCreate, CharacterRelationUpdate, CharacterRelationResponse,
     OutlineCreate, OutlineUpdate, OutlineResponse,
     HiddenThreadCreate, HiddenThreadUpdate, HiddenThreadResponse,
@@ -2075,6 +2076,94 @@ async def _refresh_character_appearance_count(db: AsyncSession, character: Chara
         )
     )
     character.appearance_count = int(result.scalar_one() or 0)
+
+
+# ==================== 角色弧线 (K-5) ====================
+
+@router.get("/projects/{project_id}/characters/{character_id}/arc", response_model=CharacterArcResponse)
+async def get_character_arc(
+    project_id: str,
+    character_id: str,
+    to_chapter: int | None = Query(default=None, description="只返回到第N章为止的数据"),
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """获取角色弧线聚合视图。
+
+    聚合来源：
+    - CharacterEvent（手动录入 + AI 抽取确认）
+    - WritingMemoryStaging（已确认的 CHARACTER/EVENT 类型）
+    """
+    from schemas.api import CharacterArcItem
+    from models.harness_enums import MemoryStagingStatus
+
+    uid = _to_uuid(project_id)
+    cid = _to_uuid(character_id)
+    await _verify_project_owner(uid, user.id, db)
+
+    character = await _get_project_character(uid, cid, db)
+
+    items: list[CharacterArcItem] = []
+
+    # 1. CharacterEvent
+    event_result = await db.execute(
+        select(CharacterEvent).where(
+            CharacterEvent.project_id == uid,
+            CharacterEvent.character_id == cid,
+            CharacterEvent.appeared == True,  # noqa: E712
+        ).order_by(CharacterEvent.chapter_sequence_number.asc())
+    )
+    for evt in event_result.scalars().all():
+        if to_chapter and evt.chapter_sequence_number and evt.chapter_sequence_number > to_chapter:
+            continue
+        items.append(CharacterArcItem(
+            chapter_sequence_number=evt.chapter_sequence_number,
+            source_type="CharacterEvent",
+            title=evt.event_summary or f"第{evt.chapter_sequence_number}章出场",
+            summary=evt.event_summary or "",
+            state_change=evt.state_change,
+            emotion=evt.emotion,
+            importance=evt.importance or 3,
+            confidence="confirmed",
+        ))
+
+    # 2. WritingMemoryStaging
+    staging_result = await db.execute(
+        select(WritingMemoryStaging).where(
+            WritingMemoryStaging.project_id == uid,
+            WritingMemoryStaging.memory_type.in_(["CHARACTER", "EVENT"]),
+            WritingMemoryStaging.status == MemoryStagingStatus.CONFIRMED.value,
+        ).order_by(WritingMemoryStaging.chapter_sequence_number.asc().nulls_last())
+    )
+    for sm in staging_result.scalars().all():
+        if to_chapter and sm.chapter_sequence_number and sm.chapter_sequence_number > to_chapter:
+            continue
+        payload = sm.payload or {}
+        char_name = payload.get("character_name") or payload.get("name") or ""
+        if char_name.lower() != character.name.lower():
+            continue
+        items.append(CharacterArcItem(
+            chapter_sequence_number=sm.chapter_sequence_number,
+            source_type="WritingMemory",
+            title=sm.title,
+            summary=payload.get("description") or sm.title,
+            state_change=payload.get("state_change"),
+            importance=3,
+            confidence="ai_extracted",
+        ))
+
+    items.sort(key=lambda x: x.chapter_sequence_number or 0)
+
+    chapters = [i.chapter_sequence_number for i in items if i.chapter_sequence_number]
+    chapter_range = f"第{min(chapters)}-{max(chapters)}章" if chapters else ""
+
+    return CharacterArcResponse(
+        character_id=cid,
+        character_name=character.name,
+        role_type=character.role_type or "supporting",
+        items=items,
+        chapter_range=chapter_range,
+    )
 
 
 # ==================== 角色关系 ====================
