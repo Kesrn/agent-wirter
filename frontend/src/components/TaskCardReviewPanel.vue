@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import type { TaskCardPayload, TaskCardScene } from '../api/types'
+import type { TaskCardPayload } from '../api/types'
 
 const props = defineProps<{
   taskCard: TaskCardPayload

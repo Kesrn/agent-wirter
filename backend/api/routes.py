@@ -3644,6 +3644,10 @@ async def generate_chapter(
                 "structural_critique": {},
                 "edit_report": {},
                 "workflow_key": wf.workflow_key if wf else "",
+                # ── L-1: task card review ──
+                "planning_review": bool(req.planning_review),
+                "task_card_reviewed": False,
+                "modified_task_card": {},
             }
 
             config = {"configurable": {"thread_id": thread_id}}
@@ -4352,7 +4356,16 @@ async def resume_chapter_generation(
         await db.execute(select(AiRun).where(AiRun.thread_id == thread_id))
     ).scalar_one_or_none()
     if _resume_run_check and _resume_run_check.workflow_key:
-        app = get_creative_app_v2()
+        # L-1: 从 state 读取 planning_review 配置，保证 resume 图与生成时一致
+        _checkpoint_config = {"configurable": {"thread_id": thread_id}}
+        _planning = False
+        try:
+            _pre_state = await get_creative_app_v2().aget_state(_checkpoint_config)
+            if _pre_state and _pre_state.values:
+                _planning = bool(_pre_state.values.get("planning_review", False))
+        except Exception:
+            pass
+        app = get_creative_app_v2(planning_review=_planning)
     else:
         app = get_creative_app(enabled_experts=enabled_experts)
     config = {"configurable": {"thread_id": thread_id}}

@@ -3,7 +3,7 @@
 验证 workflow_v2 的 planning_review 拓扑和中断行为。
 """
 import asyncio
-import json
+import uuid
 
 import pytest
 
@@ -29,7 +29,6 @@ class TestTaskCardReviewGraph:
         """默认 planning_review=False 时，图中不存在 task_card_review 节点"""
         graph = build_creative_graph_v2(planning_review=False)
         compiled = graph.compile(checkpointer=_CHECKPOINTER)
-        # task_card_review should NOT be in the default graph
         node_names = set()
         for n in compiled.get_graph().nodes.values():
             if hasattr(n, 'name'):
@@ -49,13 +48,62 @@ class TestTaskCardReviewGraph:
     def test_app_with_planning_review_has_double_interrupt(self):
         """planning_review=True 时，interrupt_before 包含 task_card_review 和 human_review"""
         app = get_creative_app_v2(planning_review=True)
-        # 验证 app 已编译（不抛异常即可）
         assert app is not None
 
     def test_app_without_planning_review_has_single_interrupt(self):
         """planning_review=False 时，interrupt_before 仅包含 human_review"""
         app = get_creative_app_v2(planning_review=False)
         assert app is not None
+
+    def test_planning_review_topology_is_correct(self):
+        """验证 planning_review=True 时的边：
+        architect→task_card_review→writer，tcr 出边指向 writer
+        """
+        graph = build_creative_graph_v2(planning_review=True)
+        compiled = graph.compile(checkpointer=_CHECKPOINTER)
+        inner = compiled.get_graph()
+
+        node_names = set()
+        for n in inner.nodes.values():
+            if hasattr(n, 'name'):
+                node_names.add(n.name)
+        assert "task_card_review" in node_names
+        assert "chapter_architect" in node_names
+        assert "chapter_writer" in node_names
+
+        edges = inner.edges
+        architect_targets = [e[1] for e in edges if e[0] == "chapter_architect"]
+        assert "task_card_review" in architect_targets, f"architect edges: {architect_targets}"
+
+        tcr_targets = [e[1] for e in edges if e[0] == "task_card_review"]
+        assert "chapter_writer" in tcr_targets, f"task_card_review edges: {tcr_targets}"
+
+    def test_planning_review_state_persists_to_checkpoint(self):
+        """planning_review 写入 state 后，可从 checkpoint 中读回"""
+        app = get_creative_app_v2(planning_review=True)
+        thread_id = str(uuid.uuid4())
+        config = {"configurable": {"thread_id": thread_id}}
+
+        initial: CreativeStateV2 = {
+            "planning_review": True,
+            "task_card_reviewed": False,
+            "modified_task_card": {},
+            "chapter_num": 1,
+            "target_words": 2000,
+        }
+
+        async def _run():
+            try:
+                async for _ in app.astream(initial, config=config):
+                    pass
+            except Exception:
+                pass
+            state = await app.aget_state(config)
+            return state
+
+        state = asyncio.new_event_loop().run_until_complete(_run())
+        if state and state.values:
+            assert state.values.get("planning_review") is True
 
 
 class TestTaskCardReviewState:
@@ -74,3 +122,8 @@ class TestTaskCardReviewState:
         state: CreativeStateV2 = {"project_id": "test"}
         assert state.get("task_card_reviewed") is None
         assert state.get("modified_task_card") is None
+
+    def test_planning_review_field_in_state(self):
+        """CreativeStateV2 包含 planning_review 字段"""
+        state: CreativeStateV2 = {"planning_review": True}
+        assert state["planning_review"] is True

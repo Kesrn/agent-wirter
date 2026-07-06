@@ -74,8 +74,8 @@ const latestRunId = ref<string | null>(null)
 // 收到 clarification_required SSE 事件后暂存 payload，用于渲染 ClarificationPanel
 const clarificationState = ref<ClarificationRequiredPayload | null>(null)
 
-// L-1: 任务卡预览
-const planningReview = ref(false)
+// L-1: 任务卡预览 — full_pipeline 默认开启
+const planningReview = ref(true)
 const taskCardState = ref<TaskCardPayload | null>(null)
 const showTaskCardReview = ref(false)
 

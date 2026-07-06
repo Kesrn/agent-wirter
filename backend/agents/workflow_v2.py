@@ -80,6 +80,7 @@ class CreativeStateV2(TypedDict, total=False):
     edit_report: dict             # editor 输出
     workflow_key: str             # 本次 workflow 标识
     # ── L-1: task card review ──
+    planning_review: bool         # 是否启用任务卡预览（写入 state 供 resume 读取）
     task_card_reviewed: bool      # 任务卡是否已审核
     modified_task_card: dict      # 用户修改后的任务卡（覆盖 chapter_task_card）
 
@@ -386,7 +387,6 @@ def build_creative_graph_v2(planning_review: bool = False) -> StateGraph:
         graph.add_edge("task_card_review", "chapter_writer")
     else:
         graph.add_edge("chapter_architect", "chapter_writer")
-    graph.add_edge("chapter_writer", "structural_critic")
     graph.add_edge("chapter_writer", "structural_critic")
     graph.add_edge("structural_critic", "narrative_editor")
     graph.add_edge("narrative_editor", "continuity_checker")
