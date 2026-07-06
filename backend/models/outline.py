@@ -20,3 +20,11 @@ class Outline(UUIDMixin, TimestampMixin, Base):
     hidden_thread_ids: Mapped[list | None] = mapped_column("hidden_thread_ids", JSONValue(), nullable=True)  # 关联暗线ID列表
     story_arc_id: Mapped[str | None] = mapped_column(GUID(), nullable=True, index=True)  # 所属长线 arc
     arc_position: Mapped[str | None] = mapped_column(String(30), nullable=True)  # SETUP / BUILDUP / TURNING_POINT / CLIMAX / AFTERMATH
+
+    # ── K-4: 节奏标记 ──
+    pacing: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
+    # SETUP / BUILDUP / REVERSAL / CLIMAX / AFTERMATH / TRANSITION / SLICE
+    tension_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 1-5
+    target_scene_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 目标场景数
