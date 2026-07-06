@@ -209,8 +209,8 @@ export const MOCK_CHAPTERS: Chapter[] = [
 
 /** Mock 暗线 */
 export const MOCK_HIDDEN_THREADS: HiddenThread[] = [
-  { id: 'ht-1', project_id: 'proj-1', name: '外星文明的求救', description: '信号实际上是求救，而非威胁', chapter_nums: [1, 2], created_at: '2026-05-01T10:00:00Z', updated_at: '2026-05-14T08:30:00Z' },
-  { id: 'ht-2', project_id: 'proj-1', name: '建筑中的守卫AI', description: '外星建筑内沉睡的守卫AI', chapter_nums: [2, 3], created_at: '2026-05-01T10:00:00Z', updated_at: '2026-05-14T08:30:00Z' },
+  { id: 'ht-1', project_id: 'proj-1', name: '外星文明的求救', description: '信号实际上是求救，而非威胁', chapter_nums: [1, 2], status: 'PLANTED', thread_type: 'FORESHADOWING', planted_chapter: 1, reveal_chapter: 5, resolved_chapter: null, payoff_summary: null, risk_level: 'HIGH', created_at: '2026-05-01T10:00:00Z', updated_at: '2026-05-14T08:30:00Z' },
+  { id: 'ht-2', project_id: 'proj-1', name: '建筑中的守卫AI', description: '外星建筑内沉睡的守卫AI', chapter_nums: [2, 3], status: 'ACTIVE', thread_type: 'SECRET', planted_chapter: 2, reveal_chapter: 8, resolved_chapter: null, payoff_summary: null, risk_level: 'MEDIUM', created_at: '2026-05-01T10:00:00Z', updated_at: '2026-05-14T08:30:00Z' },
 ]
 
 /** Mock 长线结构 */

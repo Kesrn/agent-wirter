@@ -101,7 +101,7 @@ def story_record_to_facts(record: dict[str, Any], chapter_seq: int | None = None
             "evidence": ability.get("evidence"),
         })
 
-    # foreshadowing_new → FORESHADOWING
+    # foreshadowing_new → FORESHADOWING + status_delta=PLANTED
     for foreshadow in record.get("foreshadowing_new", []):
         title = foreshadow.get("title", "")
         if not title:
@@ -111,22 +111,29 @@ def story_record_to_facts(record: dict[str, Any], chapter_seq: int | None = None
             "title": title,
             "payload": {
                 "description": foreshadow.get("description", ""),
+                "status_delta": "PLANTED",
                 "chapter_nums": [chapter_seq] if chapter_seq else [],
             },
             "evidence": foreshadow.get("evidence"),
         })
 
-    # foreshadowing_resolved → PLOT_FACT
+    # K-3: foreshadowing_resolved → FORESHADOWING + status_delta=RESOLVED
+    # 优先用 thread_name 匹配原伏笔，fallback 到 title
     for resolved in record.get("foreshadowing_resolved", []):
-        title = resolved.get("title", "")
+        title = (
+            resolved.get("thread_name")
+            or resolved.get("name")
+            or resolved.get("title", "")
+        )
         if not title:
             continue
         facts.append({
-            "memory_type": "PLOT_FACT",
-            "title": f"伏笔回收：{title}",
+            "memory_type": "FORESHADOWING",
+            "title": title,
             "payload": {
                 "description": resolved.get("description", ""),
-                "chapter": seq_str,
+                "status_delta": "RESOLVED",
+                "chapter_nums": [chapter_seq] if chapter_seq else [],
             },
             "evidence": resolved.get("evidence"),
         })

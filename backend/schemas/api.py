@@ -421,12 +421,23 @@ class HiddenThreadCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=10000)
     chapter_nums: list[int] | None = None
+    status: str = Field(default="PLANNED", pattern=r"^(PLANNED|PLANTED|ACTIVE|REVEALED|RESOLVED|DROPPED)$")
+    thread_type: str | None = Field(default=None, pattern=r"^(FORESHADOWING|SECRET|RELATIONSHIP|WORLD_RULE)$")
+    planted_chapter: int | None = Field(default=None, ge=1)
+    reveal_chapter: int | None = Field(default=None, ge=1)
 
 
 class HiddenThreadUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=10000)
     chapter_nums: list[int] | None = None
+    status: str | None = Field(default=None, pattern=r"^(PLANNED|PLANTED|ACTIVE|REVEALED|RESOLVED|DROPPED)$")
+    thread_type: str | None = Field(default=None, pattern=r"^(FORESHADOWING|SECRET|RELATIONSHIP|WORLD_RULE)$")
+    planted_chapter: int | None = Field(default=None, ge=1)
+    reveal_chapter: int | None = Field(default=None, ge=1)
+    resolved_chapter: int | None = Field(default=None, ge=1)
+    payoff_summary: str | None = None
+    risk_level: str | None = Field(default=None, pattern=r"^(LOW|MEDIUM|HIGH)$")
 
 
 class HiddenThreadResponse(BaseModel):
@@ -435,6 +446,13 @@ class HiddenThreadResponse(BaseModel):
     name: str
     description: str | None
     chapter_nums: list[int] | None
+    status: str
+    thread_type: str | None = None
+    planted_chapter: int | None = None
+    reveal_chapter: int | None = None
+    resolved_chapter: int | None = None
+    payoff_summary: str | None = None
+    risk_level: str | None = None
     created_at: datetime
     updated_at: datetime
 

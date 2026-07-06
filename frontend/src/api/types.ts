@@ -272,6 +272,13 @@ export interface HiddenThread {
   name: string
   description: string
   chapter_nums: number[]
+  status: string
+  thread_type: string | null
+  planted_chapter: number | null
+  reveal_chapter: number | null
+  resolved_chapter: number | null
+  payoff_summary: string | null
+  risk_level: string | null
   created_at: string
   updated_at: string
 }
@@ -455,6 +462,13 @@ export interface ApiHiddenThread {
   name: string
   description: string | null
   chapter_nums: number[]
+  status: string
+  thread_type: string | null
+  planted_chapter: number | null
+  reveal_chapter: number | null
+  resolved_chapter: number | null
+  payoff_summary: string | null
+  risk_level: string | null
   created_at: string
   updated_at: string
 }
@@ -675,12 +689,23 @@ export interface HiddenThreadCreatePayload {
   name: string
   description?: string
   chapter_nums?: number[]
+  status?: string
+  thread_type?: string
+  planted_chapter?: number
+  reveal_chapter?: number
 }
 
 export interface HiddenThreadUpdatePayload {
   name?: string
   description?: string
   chapter_nums?: number[]
+  status?: string
+  thread_type?: string | null
+  planted_chapter?: number | null
+  reveal_chapter?: number | null
+  resolved_chapter?: number | null
+  payoff_summary?: string | null
+  risk_level?: string | null
 }
 
 export type StructureExtractMode = 'preview' | 'apply'

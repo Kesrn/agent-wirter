@@ -44,6 +44,12 @@ const turningPointLabel = computed(() => projectMode.value === 'article' ? '核�
 const hiddenThreadLabel = computed(() => projectMode.value === 'article' ? '内容策略' : '暗线')
 const characterLabel = computed(() => projectMode.value === 'article' ? '受众画像' : '角色')
 const worldLabel = computed(() => projectMode.value === 'article' ? '品牌/产品资料' : '世界观')
+
+// K-3: 伏笔状态标签映射
+const threadStatusLabel = (s: string) => ({
+  PLANNED: '计划', PLANTED: '已埋', ACTIVE: '进行',
+  REVEALED: '揭示', RESOLVED: '已回收', DROPPED: '废弃',
+} as Record<string, string>)[s] ?? s
 const worldEntryLabel = computed(() => projectMode.value === 'article' ? '资料' : '设定')
 const characterLibraryLabel = computed(() => characterLabel.value)
 const worldLibraryLabel = computed(() => worldLabel.value)
@@ -1329,6 +1335,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
               >
                 <div class="ht-header">
                   <span class="ht-name">{{ ht.name }}</span>
+                  <span class="ht-status" :class="'ht-status-' + ht.status.toLowerCase()">{{ threadStatusLabel(ht.status) }}</span>
                   <button class="icon-btn icon-btn-danger" title="删除" @click.stop="deleteHiddenThreadConfirm(ht)">&#10005;</button>
                 </div>
                 <p v-if="ht.description" class="ht-desc">{{ ht.description }}</p>

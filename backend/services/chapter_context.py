@@ -72,6 +72,10 @@ class HiddenThreadInfo:
     name: str
     description: str
     chapter_nums: list[int]
+    status: str = "PLANNED"
+    planted_chapter: int | None = None
+    reveal_chapter: int | None = None
+    resolved_chapter: int | None = None
 
 
 @dataclass
@@ -555,7 +559,8 @@ async def _load_character_events(
 async def _load_hidden_threads(
     db: AsyncSession, project_id: str, seq: int, ctx: ChapterContext, stats: ContextStats
 ) -> None:
-    from models.hidden_thread import HiddenThread
+    """K-3: 只注入当前章节相关的伏笔，限制数量。"""
+    from models.hidden_thread import HiddenThread, STATUS_PRIORITY
 
     all_threads = (
         await db.execute(
@@ -563,17 +568,39 @@ async def _load_hidden_threads(
         )
     ).scalars().all()
 
+    candidates: list[HiddenThread] = []
     for t in all_threads:
-        chapter_nums: list[int] = t.chapter_nums or []
-        if seq in chapter_nums:
-            ctx.hidden_threads.append(
-                HiddenThreadInfo(
-                    id=str(t.id),
-                    name=t.name,
-                    description=t.description or "",
-                    chapter_nums=chapter_nums,
-                )
+        # DROPPED 永不注入
+        if t.status == "DROPPED":
+            continue
+        # RESOLVED 只在当前章是 resolved_chapter 时注入
+        if t.status == "RESOLVED" and t.resolved_chapter != seq:
+            continue
+        # 本章相关：在 chapter_nums 中，或在 planted→reveal 范围内
+        in_chapter_nums = seq in (t.chapter_nums or [])
+        in_range = (
+            t.planted_chapter is not None and t.reveal_chapter is not None
+            and t.planted_chapter <= seq <= t.reveal_chapter
+        )
+        if not in_chapter_nums and not in_range:
+            continue
+        candidates.append(t)
+
+    # 最多 20 条，按状态优先级排序（PLANTED > ACTIVE > REVEALED > RESOLVED）
+    candidates.sort(key=lambda t: STATUS_PRIORITY.get(t.status or "PLANNED", 50), reverse=True)
+    for t in candidates[:20]:
+        ctx.hidden_threads.append(
+            HiddenThreadInfo(
+                id=str(t.id),
+                name=t.name,
+                description=t.description or "",
+                chapter_nums=t.chapter_nums or [],
+                status=t.status or "PLANNED",
+                planted_chapter=t.planted_chapter,
+                reveal_chapter=t.reveal_chapter,
+                resolved_chapter=t.resolved_chapter,
             )
+        )
     stats.hidden_threads = len(ctx.hidden_threads)
 
 
@@ -1091,11 +1118,21 @@ def format_chapter_context_for_prompt(context: ChapterContext) -> str:
             evt_lines.append(line)
         parts.append(f"## 本章角色事件\n" + "\n".join(evt_lines))
 
-    # 暗线
+    # 暗线（K-3: 状态区分）
     if context.hidden_threads:
         ht_lines = []
         for t in context.hidden_threads:
-            ht_lines.append(f"- {t.name}：{t.description}")
+            status_label = t.status
+            extra = ""
+            if t.status == "PLANTED" and t.planted_chapter:
+                status_label = f"PLANTED·第{t.planted_chapter}章"
+            elif t.status == "ACTIVE" and t.reveal_chapter:
+                extra = f" — 预计第{t.reveal_chapter}章回收"
+            elif t.status in ("REVEALED", "RESOLVED") and (t.reveal_chapter or t.resolved_chapter):
+                ch = t.resolved_chapter or t.reveal_chapter
+                status_label = f"{t.status}·第{ch}章"
+            line = f"- [{status_label}] {t.name}：{t.description}{extra}"
+            ht_lines.append(line)
         parts.append(f"## 暗线\n" + "\n".join(ht_lines))
 
     # 相关设定

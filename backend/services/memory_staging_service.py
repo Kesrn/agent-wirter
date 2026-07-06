@@ -189,8 +189,11 @@ async def _confirm_event(
 async def _confirm_hidden_thread(
     db: AsyncSession, pid, staging, payload: dict, seq: int | None
 ) -> tuple[str, str]:
-    """find-or-create HiddenThread by (project_id, name)。"""
-    from models.hidden_thread import HiddenThread
+    """find-or-create HiddenThread by (project_id, name)。
+
+    K-3: 合并 chapter_nums（不覆盖）+ 状态只进不退。
+    """
+    from models.hidden_thread import HiddenThread, STATUS_PRIORITY
 
     name = staging.title
     result = await db.execute(
@@ -200,8 +203,24 @@ async def _confirm_hidden_thread(
     if thread is None:
         thread = HiddenThread(project_id=pid, name=name)
         db.add(thread)
-    thread.description = payload.get("description")
-    thread.chapter_nums = payload.get("chapter_nums") or ([seq] if seq else [])
+
+    # 合并 chapter_nums（set union，不覆盖）
+    existing_nums = set(thread.chapter_nums or [])
+    incoming_nums = set(payload.get("chapter_nums") or [])
+    thread.chapter_nums = sorted(list(existing_nums | incoming_nums))
+
+    # 状态推进（只进不退）
+    status_delta = payload.get("status_delta")
+    if status_delta and STATUS_PRIORITY.get(status_delta, -1) > STATUS_PRIORITY.get(thread.status or "PLANNED", -1):
+        thread.status = status_delta
+        if status_delta == "PLANTED":
+            thread.planted_chapter = seq
+        elif status_delta == "RESOLVED":
+            thread.resolved_chapter = seq
+            thread.payoff_summary = payload.get("description")
+        # ACTIVE / REVEALED 由人工设置，不自动更新 chapter
+
+    thread.description = payload.get("description") or thread.description
     await db.flush()
 
     return "HiddenThread", str(thread.id)

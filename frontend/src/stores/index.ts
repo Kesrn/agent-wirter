@@ -1062,6 +1062,13 @@ function apiHiddenThreadToHiddenThread(aht: ApiHiddenThread): HiddenThread {
     name: aht.name,
     description: aht.description ?? '',
     chapter_nums: aht.chapter_nums ?? [],
+    status: aht.status ?? 'PLANNED',
+    thread_type: aht.thread_type ?? null,
+    planted_chapter: aht.planted_chapter ?? null,
+    reveal_chapter: aht.reveal_chapter ?? null,
+    resolved_chapter: aht.resolved_chapter ?? null,
+    payoff_summary: aht.payoff_summary ?? null,
+    risk_level: aht.risk_level ?? null,
     created_at: aht.created_at,
     updated_at: aht.updated_at,
   }
