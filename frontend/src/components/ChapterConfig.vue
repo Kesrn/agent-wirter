@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useCharacterEventStore, useCharacterStore, useWorldEntryStore, useOutlineStore, useHiddenThreadStore, useStoryArcStore, useUiStore, friendlyError } from '../stores'
 import type { CharacterEvent } from '../api/types'
 import BaseSelect from './BaseSelect.vue'
+import CharacterArcPanel from './CharacterArcPanel.vue'
 const props = defineProps<{
   projectId: string
   projectMode: 'novel' | 'article'
@@ -50,6 +51,10 @@ const outlineSummary = ref('')
 const lightLine = ref('')
 const selectedArcId = ref<string | null>(null)
 const selectedArcPosition = ref<string | null>(null)
+const selectedCharacterForArc = ref<{ id: string; name: string } | null>(null)
+const pacing = ref<string | null>(null)
+const tensionLevel = ref<number | null>(null)
+const targetSceneCount = ref<number | null>(null)
 const savingOutline = ref(false)
 
 const projectArcs = computed(() => storyArcStore.arcsForProject(props.projectId))
@@ -63,12 +68,26 @@ const arcPositionOptions = [
   { value: 'AFTERMATH', label: '余波 AFTERMATH' },
 ]
 
+const pacingOptions = [
+  { value: '', label: '（无）' },
+  { value: 'SETUP', label: '铺垫 SETUP' },
+  { value: 'BUILDUP', label: '升级 BUILDUP' },
+  { value: 'REVERSAL', label: '反转 REVERSAL' },
+  { value: 'CLIMAX', label: '高潮 CLIMAX' },
+  { value: 'AFTERMATH', label: '余波 AFTERMATH' },
+  { value: 'TRANSITION', label: '过渡 TRANSITION' },
+  { value: 'SLICE', label: '日常 SLICE' },
+]
+
 watch(chapterOutline, (item) => {
   outlineTitle.value = item?.title ?? props.chapterTitle
   outlineSummary.value = item?.summary ?? ''
   lightLine.value = item?.turning_point ?? ''
   selectedArcId.value = item?.story_arc_id ?? null
   selectedArcPosition.value = item?.arc_position ?? null
+  pacing.value = item?.pacing ?? null
+  tensionLevel.value = item?.tension_level ?? null
+  targetSceneCount.value = item?.target_scene_count ?? null
 }, { immediate: true })
 
 watch(() => props.chapterTitle, (title) => {
@@ -106,6 +125,9 @@ async function saveChapterOutline() {
         turning_point: lightLine.value.trim(),
         story_arc_id: selectedArcId.value || null,
         arc_position: selectedArcPosition.value || null,
+        pacing: pacing.value || null,
+        tension_level: tensionLevel.value,
+        target_scene_count: targetSceneCount.value,
       })
     } else {
       await outlineStore.createOutlineItem(props.projectId, {
@@ -115,6 +137,9 @@ async function saveChapterOutline() {
         turning_point: lightLine.value.trim(),
         story_arc_id: selectedArcId.value || null,
         arc_position: selectedArcPosition.value || null,
+        pacing: pacing.value || null,
+        tension_level: tensionLevel.value,
+        target_scene_count: targetSceneCount.value,
       })
     }
     ui.showToast('章节大纲已保存', 'success')
@@ -349,6 +374,22 @@ onMounted(async () => {
           <label>明线推进</label>
           <textarea v-model="lightLine" v-auto-grow class="form-textarea" rows="2" placeholder="读者能直接看到的剧情目标、冲突或转折" @input="autoGrowTextArea"></textarea>
         </div>
+        <div class="form-row">
+          <label>节奏类型</label>
+          <select v-model="pacing" class="form-input">
+            <option v-for="opt in pacingOptions" :key="opt.value" :value="opt.value || null">{{ opt.label }}</option>
+          </select>
+        </div>
+        <div class="form-row" style="display: flex; gap: var(--sp-2);">
+          <div style="flex: 1;">
+            <label>张力等级 (1-5)</label>
+            <input v-model.number="tensionLevel" type="number" min="1" max="5" class="form-input form-input-sm" />
+          </div>
+          <div style="flex: 1;">
+            <label>目标场景数</label>
+            <input v-model.number="targetSceneCount" type="number" min="1" class="form-input form-input-sm" />
+          </div>
+        </div>
         <div class="form-row" v-if="projectArcs.length">
           <label>所属长线</label>
           <select v-model="selectedArcId" class="form-input">
@@ -467,6 +508,24 @@ onMounted(async () => {
           </div>
         </div>
         <div v-else-if="!showEventForm" class="empty-hint">暂无角色事件，点击上方「添加事件」或通过 AI 自动提炼</div>
+
+        <!-- K-5: 角色弧线查看 -->
+        <div v-if="chapterCharacters.length" style="margin-top: var(--sp-3);">
+          <button
+            v-for="char in chapterCharacters"
+            :key="char.id"
+            class="btn-arc-toggle"
+            @click="selectedCharacterForArc = selectedCharacterForArc?.id === char.id ? null : { id: char.id, name: char.name }"
+          >
+            {{ char.name }} 弧线 {{ selectedCharacterForArc?.id === char.id ? '▼' : '▶' }}
+          </button>
+        </div>
+        <CharacterArcPanel
+          v-if="selectedCharacterForArc"
+          :project-id="projectId"
+          :character-id="selectedCharacterForArc.id"
+          :character-name="selectedCharacterForArc.name"
+        />
       </section>
 
       <!-- 暗线 -->
@@ -938,5 +997,16 @@ onMounted(async () => {
 .badge-appearance.absent {
   background: var(--bg-hover);
   color: var(--text-tertiary);
+}
+
+.btn-arc-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-right: var(--sp-2);
+  margin-bottom: var(--sp-1);
 }
 </style>
