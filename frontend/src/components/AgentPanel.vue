@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { useChapterStore, useDocumentStore, useExpertStore, useUiStore, useOutlineStore, useCharacterStore, useWorldEntryStore, useHiddenThreadStore, useGenerationHistoryStore, friendlyError } from '../stores'
 import type { WorkflowStep, SSEEnvelope, GenerateMode, ProjectMode, ArticleGenerateParams, WritingUnit } from '../api/types'
-import type { AgentStartPayload, AgentOutputPayload, AgentDonePayload, ProgressPayload, ErrorPayload, WriterOutputPayload, CriticOutputPayload, ConsistencyCheckPayload, EnhanceDirectionsPayload, TurnSuggestionsPayload, RevisionSuggestionsPayload, SkillPackPayload, ArticleReviewPayload, GenerationRecordPayload, RunCreatedPayload, ClarificationRequiredPayload } from '../api/types'
+import type { AgentStartPayload, AgentOutputPayload, AgentDonePayload, ProgressPayload, ErrorPayload, WriterOutputPayload, CriticOutputPayload, ConsistencyCheckPayload, EnhanceDirectionsPayload, TurnSuggestionsPayload, RevisionSuggestionsPayload, SkillPackPayload, ArticleReviewPayload, GenerationRecordPayload, RunCreatedPayload, ClarificationRequiredPayload, TaskCardPayload, TaskCardReviewRequiredPayload } from '../api/types'
 import { api } from '../api/client'
 import ApprovalModal from './ApprovalModal.vue'
 import AgentWorkflow from './AgentWorkflow.vue'
@@ -14,6 +14,7 @@ import ArticleParamsPicker from './ArticleParamsPicker.vue'
 import DirectionPicker from './DirectionPicker.vue'
 import MemoryStagingPanel from './MemoryStagingPanel.vue'
 import ClarificationPanel from './ClarificationPanel.vue'
+import TaskCardReviewPanel from './TaskCardReviewPanel.vue'
 
 const props = defineProps<{ projectId: string; mode: ProjectMode }>()
 const chapterStore = useChapterStore()
@@ -72,6 +73,11 @@ const latestRunId = ref<string | null>(null)
 // ─── Clarification Loop (生成前澄清) ───
 // 收到 clarification_required SSE 事件后暂存 payload，用于渲染 ClarificationPanel
 const clarificationState = ref<ClarificationRequiredPayload | null>(null)
+
+// L-1: 任务卡预览
+const planningReview = ref(false)
+const taskCardState = ref<TaskCardPayload | null>(null)
+const showTaskCardReview = ref(false)
 
 // ─── Chapter context stats ───
 interface ChapterContextStats {
@@ -606,6 +612,7 @@ async function runGenerateStream(
         turn_direction: turnDirection,
         user_note: userNote,
         selected_direction: selectedDirection,
+        planning_review: planningReview.value || undefined,
         ...(articleParams.value ?? {}),
       },
       (envelope: SSEEnvelope) => handleSSEEvent(envelope),
@@ -690,7 +697,23 @@ function handleSSEEvent(envelope: SSEEnvelope) {
       break
     }
     case 'architect_output': {
-      // v2 architect 产出章节任务卡，前端暂不展示细节，静默处理
+      // L-1: 任务卡预览 — 如果启用了 planning_review，展示 TaskCardReviewPanel
+      const taskCard = (data as Record<string, unknown>).task_card as TaskCardPayload | undefined
+      if (taskCard && planningReview.value) {
+        taskCardState.value = taskCard
+        showTaskCardReview.value = true
+      }
+      break
+    }
+    case 'task_card_review_required': {
+      // 兼容后端直接发送 task_card_review_required SSE 事件
+      const payload = data as unknown as TaskCardReviewRequiredPayload
+      if (payload.task_card) {
+        taskCardState.value = payload.task_card
+        showTaskCardReview.value = true
+      }
+      // thread_id 由 progress 事件携带，此处也可记录
+      if (payload.thread_id) hitlThreadId.value = payload.thread_id
       break
     }
     case 'critic_output': {
@@ -842,6 +865,56 @@ async function handleClarificationSkip() {
     expertStore.appendOutput(pid.value, `\n[错误] 跳过澄清失败：${friendlyError(e, '请重试')}`)
     ui.showToast(friendlyError(e, '跳过澄清失败'), 'error')
   }
+}
+
+// ─── L-1: Task Card Review ───
+
+async function handleTaskCardApproved(taskCard: TaskCardPayload) {
+  showTaskCardReview.value = false
+  const threadId = hitlThreadId.value
+  if (!threadId) {
+    ui.showToast('缺少 thread_id，无法继续生成', 'error')
+    return
+  }
+  hitlResuming = true
+  try {
+    await api.resumeGeneration(
+      pid.value,
+      threadId,
+      'approve_task_card',
+      (envelope: SSEEnvelope) => handleSSEEvent(envelope),
+      undefined,
+      undefined,
+      props.mode,
+      JSON.stringify(taskCard),
+    )
+  } catch (e: unknown) {
+    const msg = friendlyError(e, '任务卡确认失败')
+    expertStore.appendOutput(pid.value, `\n[错误] ${msg}`)
+    expertStore.stopGenerating(pid.value)
+    ui.showToast(msg, 'error')
+  } finally {
+    hitlResuming = false
+    taskCardState.value = null
+  }
+}
+
+async function handleTaskCardRejected() {
+  showTaskCardReview.value = false
+  const threadId = hitlThreadId.value
+  if (threadId) {
+    await api.resumeGeneration(
+      pid.value,
+      threadId,
+      'reject_task_card',
+      (envelope: SSEEnvelope) => handleSSEEvent(envelope),
+      undefined,
+      undefined,
+      props.mode,
+    )
+  }
+  expertStore.stopGenerating(pid.value)
+  taskCardState.value = null
 }
 
 async function handleDecision(decision: 'accept' | 'accept_with_mods' | 'reject') {
@@ -1025,6 +1098,16 @@ defineExpose({ testExpert, cancelStream })
       :assumptions-if-skipped="clarificationState.assumptions_if_skipped"
       @submit="handleClarificationSubmit"
       @skip="handleClarificationSkip"
+    />
+
+    <!-- L-1: 任务卡预览 -->
+    <TaskCardReviewPanel
+      v-if="showTaskCardReview && taskCardState"
+      :task-card="taskCardState"
+      :project-id="projectId"
+      :thread-id="hitlThreadId ?? ''"
+      @approved="handleTaskCardApproved"
+      @rejected="handleTaskCardRejected"
     />
 
     <!-- Review comments -->

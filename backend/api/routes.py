@@ -2216,13 +2216,26 @@ async def create_outline(
     if dup_result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="大纲序号已存在")
 
+    # 校验 story_arc_id 是否存在且属于当前项目
+    story_arc_id = None
+    if req.story_arc_id:
+        story_arc_id = _to_uuid(req.story_arc_id)
+        arc_check = await db.execute(
+            select(StoryArc).where(
+                StoryArc.id == story_arc_id,
+                StoryArc.project_id == uid
+            )
+        )
+        if not arc_check.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="story_arc_id 不存在或不属于该项目")
+
     outline = Outline(
         project_id=uid,
         sequence_number=req.sequence_number,
         title=req.title,
         summary=req.summary,
         turning_point=req.turning_point,
-        story_arc_id=_to_uuid(req.story_arc_id) if req.story_arc_id else None,
+        story_arc_id=story_arc_id,
         arc_position=req.arc_position,
     )
     db.add(outline)
@@ -2250,10 +2263,20 @@ async def update_outline(
         raise HTTPException(status_code=404, detail="大纲条目不存在")
 
     update_data = req.model_dump(exclude_unset=True)
-    # story_arc_id 需要 UUID 转换
+    # story_arc_id 需要 UUID 转换并校验
     if "story_arc_id" in update_data:
         if update_data["story_arc_id"]:
-            update_data["story_arc_id"] = _to_uuid(update_data["story_arc_id"])
+            story_arc_id = _to_uuid(update_data["story_arc_id"])
+            # 校验 story_arc_id 是否存在且属于当前项目
+            arc_check = await db.execute(
+                select(StoryArc).where(
+                    StoryArc.id == story_arc_id,
+                    StoryArc.project_id == uid
+                )
+            )
+            if not arc_check.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="story_arc_id 不存在或不属于该项目")
+            update_data["story_arc_id"] = story_arc_id
         else:
             update_data["story_arc_id"] = None
     for field, value in update_data.items():
@@ -2452,10 +2475,23 @@ async def update_story_arc(
 
     update_data = req.model_dump(exclude_unset=True)
 
-    # parent_arc_id 需要转 UUID
+    # parent_arc_id 需要转 UUID 并校验
     if "parent_arc_id" in update_data:
         if update_data["parent_arc_id"]:
-            update_data["parent_arc_id"] = _to_uuid(update_data["parent_arc_id"])
+            parent_arc_id = _to_uuid(update_data["parent_arc_id"])
+            # 禁止自引用
+            if str(parent_arc_id) == arc_id:
+                raise HTTPException(status_code=400, detail="parent_arc_id 不能指向自身")
+            # 校验父级是否存在且属于当前项目
+            parent_check = await db.execute(
+                select(StoryArc).where(
+                    StoryArc.id == parent_arc_id,
+                    StoryArc.project_id == uid
+                )
+            )
+            if not parent_check.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="parent_arc_id 不存在或不属于该项目")
+            update_data["parent_arc_id"] = parent_arc_id
         else:
             update_data["parent_arc_id"] = None
 
@@ -3527,7 +3563,7 @@ async def generate_chapter(
             )
             enabled_experts = exp_result.scalars().all()
 
-            app = get_creative_app_v2()
+            app = get_creative_app_v2(planning_review=bool(req.planning_review))
             thread_id = f"{uid}:{target_chapter_id or target_document_id or 'no-chapter'}:{uuid.uuid4().hex[:8]}"
 
             # ── Harness: 创建 AI Run ──
@@ -3731,6 +3767,24 @@ async def generate_chapter(
                     elif node_name == "chapter_architect":
                         card = output.get("chapter_task_card", {}) if isinstance(output, dict) else {}
                         yield f"event: architect_output\ndata: {json.dumps({'task_card': card}, ensure_ascii=False)}\n\n"
+
+                        # ── L-1: task_card_review — 任务卡预览中断 ──
+                        if req.planning_review:
+                            _tc_state = await app.aget_state(config)
+                            _tc_next = _tc_state.next if _tc_state else ()
+                            if "task_card_review" in _tc_next:
+                                await mark_waiting_human(db, ai_run, step_name="task_card_review", thread_id=thread_id)
+                                interrupt = await create_interrupt(
+                                    db,
+                                    run=ai_run,
+                                    thread_id=thread_id,
+                                    step_name="task_card_review",
+                                    payload={"task_card": card},
+                                )
+                                await db.commit()
+                                yield f"event: run_status\ndata: {json.dumps({'run_id': run_id_str, 'status': 'WAITING_HUMAN'}, ensure_ascii=False)}\n\n"
+                                yield f"event: task_card_review_required\ndata: {json.dumps({'task_card': card, 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
+                                return
 
                     elif node_name == "chapter_writer":
                         draft = output.get("draft", "") if isinstance(output, dict) else ""
@@ -4261,8 +4315,9 @@ async def resume_chapter_generation(
     request: Request,
     project_id: str,
     thread_id: str = Query(..., description="HITL 暂停时返回的 thread_id"),
-    action: str = Query(default="approve", pattern=r"^(approve|reject|review|revise)$"),
+    action: str = Query(default="approve", pattern=r"^(approve|reject|review|revise|approve_task_card|reject_task_card)$"),
     feedback: str | None = None,
+    task_card: str | None = Query(default=None, description="任务卡 JSON（approve_task_card 时传入）"),
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
@@ -4273,6 +4328,8 @@ async def resume_chapter_generation(
     - reject: 终止流程，不落库
     - review: 审核当前候选稿，返回可选修改方向
     - revise: 将用户选择的修改方向注入状态，重新从 Writer 开始
+    - approve_task_card: 用户确认/修改任务卡后继续执行（L-1）
+    - reject_task_card: 用户取消任务卡预览，终止流程（L-1）
     """
     # Rate limiting
     agent_limiter.check(f"generate:{user.id}")
@@ -4368,7 +4425,129 @@ async def resume_chapter_generation(
                 )
 
             if action == "reject":
+                # ── Harness E: reject 时解析 interrupt ──
+                if _resume_run:
+                    interrupt = await get_interrupt_by_thread(db, thread_id)
+                    if interrupt and not interrupt.resolved:
+                        await resolve_interrupt(db, interrupt, decision=InterruptDecision.REJECT, feedback=feedback)
+                        await db.commit()
                 yield f"event: done\ndata: {json.dumps({'message': '已拒绝，流程终止'}, ensure_ascii=False)}\n\n"
+                return
+
+            # ── L-1: reject_task_card — 用户取消任务卡预览 ──
+            if action == "reject_task_card":
+                if _resume_run:
+                    interrupt = await get_interrupt_by_thread(db, thread_id)
+                    if interrupt and not interrupt.resolved:
+                        await resolve_interrupt(db, interrupt, decision=InterruptDecision.REJECT, feedback="用户取消任务卡预览")
+                        await db.commit()
+                yield f"event: done\ndata: {json.dumps({'message': '已取消任务卡预览'}, ensure_ascii=False)}\n\n"
+                return
+
+            # ── L-1: approve_task_card — 用户确认/修改任务卡后继续执行 ──
+            if action == "approve_task_card":
+                current_values = state.values
+                modified_card = None
+                if task_card:
+                    try:
+                        modified_card = json.loads(task_card)
+                    except json.JSONDecodeError:
+                        yield f"event: error\ndata: {json.dumps({'message': 'task_card JSON 解析失败'}, ensure_ascii=False)}\n\n"
+                        return
+
+                update_state: dict = {
+                    "task_card_reviewed": True,
+                }
+                if modified_card:
+                    update_state["modified_task_card"] = modified_card
+                    update_state["chapter_task_card"] = modified_card  # 覆盖 architect 输出
+
+                await app.aupdate_state(config, update_state, as_node="task_card_review")
+
+                # 解析 interrupt
+                if _resume_run:
+                    interrupt = await get_interrupt_by_thread(db, thread_id)
+                    if interrupt and not interrupt.resolved:
+                        await resolve_interrupt(db, interrupt, decision=InterruptDecision.APPROVE,
+                                                feedback=f"任务卡已确认{', 已修改' if modified_card else ''}")
+                        await db.commit()
+
+                # 继续执行（从 chapter_writer 开始）
+                resumed_content = ""
+                resume_skill_packs = list(current_values.get("skill_packs") or [])
+                seen_skill_pack_keys = {
+                    (str(pack.get("expert", "")), str(pack.get("skill_dir", "")))
+                    for pack in resume_skill_packs
+                    if isinstance(pack, dict)
+                }
+
+                async for event in app.astream_events(None, config=config, version="v2"):
+                    if await request.is_disconnected():
+                        logger.info("客户端已断开连接，取消恢复生成")
+                        return
+                    kind = event.get("event")
+                    if kind == "on_chain_start":
+                        node_name = event.get("name", "")
+                        if node_name:
+                            yield f"event: agent_start\ndata: {json.dumps({'agent': node_name, 'step': 'running'}, ensure_ascii=False)}\n\n"
+                    elif kind == "on_chain_end":
+                        node_name = event.get("name", "")
+                        output = event.get("data", {}).get("output", {})
+                        if node_name:
+                            yield f"event: agent_done\ndata: {json.dumps({'agent': node_name, 'step': 'success'}, ensure_ascii=False)}\n\n"
+
+                        for pack in _new_skill_packs(output, seen_skill_pack_keys):
+                            resume_skill_packs.append(pack)
+                            yield _skill_pack_sse_event(pack, fallback_expert=node_name)
+
+                        if node_name in {"writer", "chapter_writer"}:
+                            draft = output.get("draft", "") if isinstance(output, dict) else ""
+                            if draft:
+                                resumed_content = draft
+                            yield f"event: writer_output\ndata: {json.dumps({'content': draft}, ensure_ascii=False)}\n\n"
+                        elif node_name in {"critic", "structural_critic"}:
+                            critiques = output.get("critiques", []) if isinstance(output, dict) else []
+                            yield f"event: critic_output\ndata: {json.dumps({'critiques': critiques}, ensure_ascii=False)}\n\n"
+                        elif node_name in {"consistency_checker", "continuity_checker"}:
+                            guardrail = output.get("consistency_report", {}) if isinstance(output, dict) else {}
+                            if not isinstance(guardrail, dict):
+                                guardrail = {}
+                            report_text = _guardrail_to_text(guardrail)
+                            yield f"event: consistency_check\ndata: {json.dumps({'report': report_text, 'guardrail_result': guardrail}, ensure_ascii=False)}\n\n"
+                        elif node_name in {"editor", "narrative_editor"}:
+                            edited = ""
+                            if isinstance(output, dict):
+                                edited = output.get("edited_draft", "") or output.get("draft", "")
+                            if edited:
+                                resumed_content = edited
+                            yield f"event: editor_output\ndata: {json.dumps({'content': edited}, ensure_ascii=False)}\n\n"
+                        elif node_name == "human_review":
+                            record_id = await _save_resume_generation_history(
+                                resumed_content,
+                                {**current_values, **update_state, "skill_packs": resume_skill_packs},
+                            )
+                            yield _generation_record_event(record_id)
+                            yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
+                            return
+
+                # 流程自然结束（无 human_review 中断）
+                workflow_state = await app.aget_state(config)
+                next_nodes = workflow_state.next if workflow_state else []
+                if "human_review" in next_nodes:
+                    record_id = await _save_resume_generation_history(
+                        resumed_content,
+                        {**current_values, **update_state, "skill_packs": resume_skill_packs},
+                    )
+                    yield _generation_record_event(record_id)
+                    yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
+                    return
+
+                record_id = await _save_resume_generation_history(
+                    resumed_content,
+                    {**current_values, **update_state, "skill_packs": resume_skill_packs},
+                )
+                yield _generation_record_event(record_id)
+                yield f"event: done\ndata: {json.dumps({'message': '任务卡确认，生成完成'}, ensure_ascii=False)}\n\n"
                 return
 
             if action == "review":

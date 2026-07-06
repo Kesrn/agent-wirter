@@ -265,6 +265,7 @@ class GenerateRequest(BaseModel):
     content_goal: str | None = Field(default=None, max_length=200)
     tone: str | None = Field(default=None, max_length=120)
     key_points: str | None = Field(default=None, max_length=2000)
+    planning_review: bool = False  # L-1: 是否启用任务卡预览
 
 
 # --- 专家测试请求 ---

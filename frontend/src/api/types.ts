@@ -787,6 +787,7 @@ export interface GenerateRequest {
   content_goal?: string
   tone?: string
   key_points?: string
+  planning_review?: boolean
 }
 
 export interface ArticleGenerateParams {
@@ -802,7 +803,7 @@ export interface ArticleGenerateParams {
 // ─── SSE types ───
 
 /** SSE event types emitted by the backend generate/test endpoints */
-export type SSEEventType = 'progress' | 'agent_start' | 'agent_output' | 'agent_done' | 'writer_output' | 'content_output' | 'editor_output' | 'architect_output' | 'critic_output' | 'consistency_check' | 'enhance_directions' | 'turn_suggestions' | 'content_suggestions' | 'article_review' | 'revision_suggestions' | 'skill_pack' | 'generation_record' | 'clarification_required' | 'done' | 'error' | 'run_created' | 'run_status' | 'run_step'
+export type SSEEventType = 'progress' | 'agent_start' | 'agent_output' | 'agent_done' | 'writer_output' | 'content_output' | 'editor_output' | 'architect_output' | 'critic_output' | 'consistency_check' | 'enhance_directions' | 'turn_suggestions' | 'content_suggestions' | 'article_review' | 'revision_suggestions' | 'skill_pack' | 'generation_record' | 'clarification_required' | 'task_card_review_required' | 'done' | 'error' | 'run_created' | 'run_status' | 'run_step'
 
 /** SSE envelope parsed from the backend stream */
 export interface SSEEnvelope {
@@ -989,6 +990,43 @@ export interface ClarificationRequiredPayload {
   max_rounds: number
   questions: ClarificationQuestion[]
   assumptions_if_skipped: string[]
+}
+
+// ─── L-1: Task Card Review ───
+
+export interface TaskCardScene {
+  title?: string
+  location?: string
+  characters?: string[]
+  scene_goal?: string
+  conflict?: string
+  must_include?: string[]
+  must_not_include?: string[]
+  word_budget?: number
+}
+
+export interface TaskCardInformationRules {
+  may_reveal?: string[]
+  hint_only?: string[]
+  forbidden?: string[]
+}
+
+export interface TaskCardPayload {
+  chapter_number?: number
+  chapter_title?: string
+  core_task?: string
+  opening_anchor?: string
+  scenes?: TaskCardScene[]
+  character_goals?: string[]
+  information_rules?: TaskCardInformationRules
+  tension_design?: string[]
+  word_budget?: number
+  forbidden?: string[]
+}
+
+export interface TaskCardReviewRequiredPayload {
+  task_card: TaskCardPayload
+  thread_id: string
 }
 
 // ─── Chapter Version History ───

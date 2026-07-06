@@ -79,6 +79,9 @@ class CreativeStateV2(TypedDict, total=False):
     structural_critique: dict     # critic 输出
     edit_report: dict             # editor 输出
     workflow_key: str             # 本次 workflow 标识
+    # ── L-1: task card review ──
+    task_card_reviewed: bool      # 任务卡是否已审核
+    modified_task_card: dict      # 用户修改后的任务卡（覆盖 chapter_task_card）
 
 
 # ── JSON 解析辅助 ──────────────────────────────────────
@@ -345,6 +348,11 @@ def route_after_review_v2(state: CreativeStateV2) -> str:
     return "chapter_writer"
 
 
+async def task_card_review_node(state: CreativeStateV2) -> dict:
+    """任务卡审核节点（interrupt_before 暂停，等待用户确认/修改任务卡）"""
+    return {}
+
+
 # ── 图构建 ─────────────────────────────────────────────
 
 
@@ -365,14 +373,20 @@ def build_creative_graph_v2(planning_review: bool = False) -> StateGraph:
     graph.add_node("continuity_checker", consistency_checker_node)  # 复用旧节点
     graph.add_node("human_review", human_review_node)  # 复用旧节点
 
-    # planning_review 预留（I-4 不实现）
+    # planning_review: 在 architect 和 writer 之间插入任务卡审核节点
     if planning_review:
-        logger.info("planning_review enabled but not yet implemented in I-4")
+        graph.add_node("task_card_review", task_card_review_node)
 
     # 边：标准链
     graph.set_entry_point("context_loader")
     graph.add_edge("context_loader", "chapter_architect")
-    graph.add_edge("chapter_architect", "chapter_writer")
+    if planning_review:
+        # architect → task_card_review → writer
+        graph.add_edge("chapter_architect", "task_card_review")
+        graph.add_edge("task_card_review", "chapter_writer")
+    else:
+        graph.add_edge("chapter_architect", "chapter_writer")
+    graph.add_edge("chapter_writer", "structural_critic")
     graph.add_edge("chapter_writer", "structural_critic")
     graph.add_edge("structural_critic", "narrative_editor")
     graph.add_edge("narrative_editor", "continuity_checker")
@@ -383,11 +397,15 @@ def build_creative_graph_v2(planning_review: bool = False) -> StateGraph:
 
 
 def get_creative_app_v2(planning_review: bool = False):
-    """获取编译后的 v2 工作流应用（带 checkpoint 和 HITL）。"""
+    """获取编译后的 v2 工作流应用（带 checkpoint 和 HITL）。
+
+    planning_review=True 时会在 architect 完成后暂停，等待用户审核任务卡。
+    """
     graph = build_creative_graph_v2(planning_review=planning_review)
+    interrupt_nodes = ["task_card_review", "human_review"] if planning_review else ["human_review"]
     app = graph.compile(
         checkpointer=_CHECKPOINTER,
-        interrupt_before=["human_review"],
+        interrupt_before=interrupt_nodes,
     )
     return app
 
