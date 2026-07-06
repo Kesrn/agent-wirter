@@ -22,14 +22,21 @@ const jsonText = ref(JSON.stringify(editableTaskCard.value, null, 2))
 const parseError = ref('')
 
 // L-2: 澄清
-const clarificationAnswers = ref<Record<string, string>>({})
+const clarificationAnswers = ref<Record<string, string | string[] | number>>({})
 const clarificationHidden = ref(false)
+
+function isAnswered(value: unknown): boolean {
+  if (value === undefined || value === null) return false
+  if (typeof value === 'string') return value.trim().length > 0
+  if (Array.isArray(value)) return value.length > 0
+  if (typeof value === 'number') return true
+  return false
+}
 
 const canSubmitClarification = computed(() => {
   const qs = props.clarification?.questions || []
   if (!qs.length) return false
-  // 必答题都需回答
-  return qs.every(q => !q.required || (clarificationAnswers.value[q.id] || '').trim())
+  return qs.every(q => !q.required || isAnswered(clarificationAnswers.value[q.id]))
 })
 
 watch(() => props.taskCard, (newCard) => {
@@ -83,7 +90,13 @@ function handleReject() {
 // L-2: 澄清
 function submitClarification() {
   const qs = props.clarification?.questions || []
-  emit('clarificationAnswered', { ...clarificationAnswers.value }, qs)
+  // 将所有值转为字符串（multi_choice 用逗号拼接，number 转字符串）
+  const stringAnswers: Record<string, string> = {}
+  for (const [key, val] of Object.entries(clarificationAnswers.value)) {
+    if (Array.isArray(val)) stringAnswers[key] = val.join(', ')
+    else if (val !== undefined && val !== null) stringAnswers[key] = String(val)
+  }
+  emit('clarificationAnswered', stringAnswers, qs)
 }
 
 function skipClarification() {

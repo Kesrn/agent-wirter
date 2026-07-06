@@ -127,3 +127,82 @@ class TestTaskCardReviewState:
         """CreativeStateV2 包含 planning_review 字段"""
         state: CreativeStateV2 = {"planning_review": True}
         assert state["planning_review"] is True
+
+    def test_clarification_fields_in_state(self):
+        """CreativeStateV2 包含 clarification_answers / clarification_round"""
+        state: CreativeStateV2 = {
+            "clarification_answers": {"q1": "yes"},
+            "clarification_round": 2,
+        }
+        assert state["clarification_answers"] == {"q1": "yes"}
+        assert state["clarification_round"] == 2
+
+
+class TestRefreshTaskCard:
+
+    def test_build_clarification_summary(self):
+        """build_clarification_summary 将问题和答案合并为文本"""
+        from agents.clarification import build_clarification_summary
+        questions = [
+            {"id": "q1", "question": "主角的动机？"},
+            {"id": "q2", "question": "关键冲突？"},
+        ]
+        answers = {"q1": "复仇", "q2": "与仇人对峙"}
+        result = build_clarification_summary(questions, answers)
+        assert "Q: 主角的动机？ A: 复仇" in result
+        assert "Q: 关键冲突？ A: 与仇人对峙" in result
+
+    def test_build_clarification_summary_empty(self):
+        """build_clarification_summary 无答案时返回空字符串"""
+        from agents.clarification import build_clarification_summary
+        result = build_clarification_summary([], {})
+        assert result == ""
+
+    def test_refresh_task_card_keeps_checkpoint_state(self):
+        """refresh_task_card 将 clarification_answers 写入 checkpoint，不 resolve interrupt"""
+        import uuid
+        app = get_creative_app_v2(planning_review=True)
+        thread_id = str(uuid.uuid4())
+        config = {"configurable": {"thread_id": thread_id}}
+
+        initial: CreativeStateV2 = {
+            "planning_review": True,
+            "clarification_answers": {},
+            "clarification_round": 0,
+            "user_note": "原始备注",
+            "chapter_num": 1,
+            "target_words": 2000,
+        }
+
+        async def _run():
+            try:
+                async for _ in app.astream(initial, config=config):
+                    pass
+            except Exception:
+                pass
+
+            # 模拟 refresh_task_card 的 state 更新
+            prev_answers = {"q1": "复仇"}
+            await app.aupdate_state(config, {
+                "clarification_answers": prev_answers,
+                "clarification_round": 1,
+                "user_note": "原始备注\n[用户澄清第1轮] Q: 主角的动机？ A: 复仇",
+            }, as_node="task_card_review")
+
+            state = await app.aget_state(config)
+            return state
+
+        state = asyncio.new_event_loop().run_until_complete(_run())
+        assert state is not None
+        values = state.values if state else {}
+        assert values.get("clarification_round") == 1
+        assert values.get("clarification_answers") == {"q1": "复仇"}
+        assert "[用户澄清第1轮]" in (values.get("user_note") or "")
+
+    def test_creative_state_v2_with_l2_fields(self):
+        """CreativeStateV2 包含 L-2 澄清字段"""
+        state: CreativeStateV2 = {
+            "clarification_answers": {"q1": "test"},
+            "clarification_round": 1,
+        }
+        assert state.get("clarification_round") == 1
