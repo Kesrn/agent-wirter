@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Project, Chapter, DocumentUnit, Expert, WorkflowStep, ReviewComment, ChapterReviewNote, ChapterReviewNoteCreatePayload, CharacterRelation, CharacterEvent, ProjectMode, ExpertCreatePayload, WorldEntry, Character, OutlineItem, HiddenThread, StoryArc, ChapterVersion, DocumentRevision, DiffHunk, GenerationRecord, SkillPackPayload } from '../api/types'
 import type { ApiProject, ApiChapter, ApiDocument, ApiExpert, ApiWorldEntry, ApiCharacter, ApiCharacterRelation, ApiOutline, ApiHiddenThread, ApiStoryArc, ApiChapterVersion, ApiDocumentVersion, ApiGenerationRecordListItem, ApiGenerationRecord } from '../api/types'
-import type { CharacterRelationCreatePayload, CharacterRelationUpdatePayload, CharacterEventUpsertPayload, OutlineUpdatePayload, HiddenThreadUpdatePayload, StoryArcCreatePayload, StoryArcUpdatePayload, WorldEntryCreatePayload, WorldEntryUpdatePayload, CharacterCreatePayload, CharacterUpdatePayload, CharacterMergePayload, ProjectUpdatePayload } from '../api/types'
+import type { CharacterRelationCreatePayload, CharacterRelationUpdatePayload, CharacterEventUpsertPayload, OutlineCreatePayload, OutlineUpdatePayload, HiddenThreadUpdatePayload, StoryArcCreatePayload, StoryArcUpdatePayload, WorldEntryCreatePayload, WorldEntryUpdatePayload, CharacterCreatePayload, CharacterUpdatePayload, CharacterMergePayload, ProjectUpdatePayload } from '../api/types'
 import { api, ApiError } from '../api/client'
 import { MOCK_PROJECTS, MOCK_CHAPTERS, DEFAULT_EXPERTS, MOCK_REVIEW_COMMENTS, MOCK_CHARACTER_RELATIONS, MOCK_WORLD_ENTRIES, MOCK_CHARACTERS, MOCK_OUTLINE, MOCK_HIDDEN_THREADS, MOCK_STORY_ARCS } from '../mock/data'
 
@@ -1015,7 +1015,7 @@ export const useOutlineStore = defineStore('outline', () => {
     }
   }
 
-  async function createOutlineItem(projectId: string, payload: { sequence_number: number; title: string; summary?: string; turning_point?: string; story_arc_id?: string | null; arc_position?: string | null }): Promise<OutlineItem | null> {
+  async function createOutlineItem(projectId: string, payload: OutlineCreatePayload): Promise<OutlineItem | null> {
     try {
       const ao = await api.createOutline(projectId, payload)
       const item = apiOutlineToOutlineItem(ao)

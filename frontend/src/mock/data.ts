@@ -221,11 +221,11 @@ export const MOCK_STORY_ARCS: StoryArc[] = [
 
 /** Mock 大纲 */
 export const MOCK_OUTLINE: OutlineItem[] = [
-  { id: 'ol-1', project_id: 'proj-1', chapter_num: 1, title: '启航', summary: '主角收到神秘信号，决定前往未知星域', turning_point: '信号突然改变频率，暗示有意识', hidden_thread_ids: ['ht-1'], story_arc_id: 'arc-2', arc_position: 'SETUP' },
-  { id: 'ol-2', project_id: 'proj-1', chapter_num: 2, title: '信号源', summary: '追踪信号到达废弃行星，发现外星建筑', turning_point: '建筑仍在运转，不是废墟', hidden_thread_ids: ['ht-1', 'ht-2'], story_arc_id: 'arc-2', arc_position: 'BUILDUP' },
-  { id: 'ol-3', project_id: 'proj-1', chapter_num: 3, title: '第一接触', summary: '进入建筑，发现全息影像记录', turning_point: '影像中的文明与人类极其相似', hidden_thread_ids: ['ht-2'], story_arc_id: 'arc-2', arc_position: 'CLIMAX' },
-  { id: 'ol-4', project_id: 'proj-1', chapter_num: 4, title: '抉择', summary: '守卫AI苏醒，要求林远做出选择', turning_point: '选择将影响两个文明的命运', hidden_thread_ids: [], story_arc_id: null, arc_position: null },
-  { id: 'ol-5', project_id: 'proj-1', chapter_num: 5, title: '归途', summary: '林远带着答案返回，但一切已不同', turning_point: '信号从未停止——它一直在等待回应', hidden_thread_ids: [], story_arc_id: null, arc_position: null },
+  { id: 'ol-1', project_id: 'proj-1', chapter_num: 1, title: '启航', summary: '主角收到神秘信号，决定前往未知星域', turning_point: '信号突然改变频率，暗示有意识', hidden_thread_ids: ['ht-1'], story_arc_id: 'arc-2', arc_position: 'SETUP', pacing: null, tension_level: null, target_scene_count: null },
+  { id: 'ol-2', project_id: 'proj-1', chapter_num: 2, title: '信号源', summary: '追踪信号到达废弃行星，发现外星建筑', turning_point: '建筑仍在运转，不是废墟', hidden_thread_ids: ['ht-1', 'ht-2'], story_arc_id: 'arc-2', arc_position: 'BUILDUP', pacing: null, tension_level: null, target_scene_count: null },
+  { id: 'ol-3', project_id: 'proj-1', chapter_num: 3, title: '第一接触', summary: '进入建筑，发现全息影像记录', turning_point: '影像中的文明与人类极其相似', hidden_thread_ids: ['ht-2'], story_arc_id: 'arc-2', arc_position: 'CLIMAX', pacing: null, tension_level: null, target_scene_count: null },
+  { id: 'ol-4', project_id: 'proj-1', chapter_num: 4, title: '抉择', summary: '守卫AI苏醒，要求林远做出选择', turning_point: '选择将影响两个文明的命运', hidden_thread_ids: [], story_arc_id: null, arc_position: null, pacing: null, tension_level: null, target_scene_count: null },
+  { id: 'ol-5', project_id: 'proj-1', chapter_num: 5, title: '归途', summary: '林远带着答案返回，但一切已不同', turning_point: '信号从未停止——它一直在等待回应', hidden_thread_ids: [], story_arc_id: null, arc_position: null, pacing: null, tension_level: null, target_scene_count: null },
 ]
 
 /** Mock 角色关系 */
