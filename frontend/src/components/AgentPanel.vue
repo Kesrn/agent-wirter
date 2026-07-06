@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { useChapterStore, useDocumentStore, useExpertStore, useUiStore, useOutlineStore, useCharacterStore, useWorldEntryStore, useHiddenThreadStore, useGenerationHistoryStore, friendlyError } from '../stores'
 import type { WorkflowStep, SSEEnvelope, GenerateMode, ProjectMode, ArticleGenerateParams, WritingUnit } from '../api/types'
-import type { AgentStartPayload, AgentOutputPayload, AgentDonePayload, ProgressPayload, ErrorPayload, WriterOutputPayload, CriticOutputPayload, ConsistencyCheckPayload, EnhanceDirectionsPayload, TurnSuggestionsPayload, RevisionSuggestionsPayload, SkillPackPayload, ArticleReviewPayload, GenerationRecordPayload, RunCreatedPayload, ClarificationRequiredPayload, TaskCardPayload, TaskCardReviewRequiredPayload } from '../api/types'
+import type { AgentStartPayload, AgentOutputPayload, AgentDonePayload, ProgressPayload, ErrorPayload, WriterOutputPayload, CriticOutputPayload, ConsistencyCheckPayload, EnhanceDirectionsPayload, TurnSuggestionsPayload, RevisionSuggestionsPayload, SkillPackPayload, ArticleReviewPayload, GenerationRecordPayload, RunCreatedPayload, ClarificationRequiredPayload, TaskCardPayload, TaskCardReviewRequiredPayload, ClarificationEmbedded, ClarificationQuestion } from '../api/types'
 import { api } from '../api/client'
 import ApprovalModal from './ApprovalModal.vue'
 import AgentWorkflow from './AgentWorkflow.vue'
@@ -78,6 +78,7 @@ const clarificationState = ref<ClarificationRequiredPayload | null>(null)
 const planningReview = ref(true)
 const taskCardState = ref<TaskCardPayload | null>(null)
 const showTaskCardReview = ref(false)
+const clarificationData = ref<ClarificationEmbedded | null>(null)
 
 // ─── Chapter context stats ───
 interface ChapterContextStats {
@@ -706,14 +707,14 @@ function handleSSEEvent(envelope: SSEEnvelope) {
       break
     }
     case 'task_card_review_required': {
-      // 兼容后端直接发送 task_card_review_required SSE 事件
+      // L-1/L-2: 后端发送 task_card_review_required，携带 clarification 字段
       const payload = data as unknown as TaskCardReviewRequiredPayload
       if (payload.task_card) {
         taskCardState.value = payload.task_card
         showTaskCardReview.value = true
       }
-      // thread_id 由 progress 事件携带，此处也可记录
       if (payload.thread_id) hitlThreadId.value = payload.thread_id
+      clarificationData.value = payload.clarification ?? null
       break
     }
     case 'critic_output': {
@@ -915,6 +916,37 @@ async function handleTaskCardRejected() {
   }
   expertStore.stopGenerating(pid.value)
   taskCardState.value = null
+  clarificationData.value = null
+}
+
+// L-2: 澄清回答 → refresh_task_card
+async function handleClarificationAnswered(answers: Record<string, string>, questions: ClarificationQuestion[]) {
+  const threadId = hitlThreadId.value
+  if (!threadId) {
+    ui.showToast('缺少 thread_id，无法刷新任务卡', 'error')
+    return
+  }
+  try {
+    await api.resumeGeneration(
+      pid.value,
+      threadId,
+      'refresh_task_card',
+      (envelope: SSEEnvelope) => handleSSEEvent(envelope),
+      undefined,
+      undefined,
+      props.mode,
+      undefined,
+      { clarification_answers: answers, clarification_questions: questions },
+    )
+  } catch (e: unknown) {
+    const msg = friendlyError(e, '刷新任务卡失败')
+    expertStore.appendOutput(pid.value, `\n[错误] ${msg}`)
+    ui.showToast(msg, 'error')
+  }
+}
+
+function handleClarificationSkipped() {
+  clarificationData.value = null
 }
 
 async function handleDecision(decision: 'accept' | 'accept_with_mods' | 'reject') {
@@ -1100,14 +1132,17 @@ defineExpose({ testExpert, cancelStream })
       @skip="handleClarificationSkip"
     />
 
-    <!-- L-1: 任务卡预览 -->
+    <!-- L-1/L-2: 任务卡预览 + 嵌入式澄清 -->
     <TaskCardReviewPanel
       v-if="showTaskCardReview && taskCardState"
       :task-card="taskCardState"
       :project-id="projectId"
       :thread-id="hitlThreadId ?? ''"
+      :clarification="clarificationData"
       @approved="handleTaskCardApproved"
       @rejected="handleTaskCardRejected"
+      @clarification-answered="handleClarificationAnswered"
+      @clarification-skipped="handleClarificationSkipped"
     />
 
     <!-- Review comments -->

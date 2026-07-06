@@ -368,23 +368,30 @@ export const api = {
   resumeGeneration: (
     projectId: string,
     threadId: string,
-    action: 'approve' | 'reject' | 'review' | 'revise' | 'approve_task_card' | 'reject_task_card',
+    action: 'approve' | 'reject' | 'review' | 'revise' | 'approve_task_card' | 'reject_task_card' | 'refresh_task_card',
     onEvent: (envelope: SSEEnvelope) => void,
     feedback?: string,
     signal?: AbortSignal,
     mode: ProjectMode = 'novel',
     taskCard?: string,
+    body?: Record<string, unknown>,
   ) => {
     const params = new URLSearchParams({ thread_id: threadId, action })
     if (feedback) params.set('feedback', feedback)
-    if (taskCard) params.set('task_card', taskCard)
+    if (taskCard && !body) params.set('task_card', taskCard)
     const unitPath = mode === 'article' ? 'documents' : 'chapters'
     const url = `${API_BASE_URL}/projects/${projectId}/${unitPath}/resume?${params.toString()}`
-    return fetch(url, {
+    const fetchOpts: RequestInit = {
       method: 'POST',
       headers: sseHeaders(),
       signal,
-    }).then(async (res) => {
+    }
+    if (body) {
+      if (taskCard) body.task_card = taskCard
+      fetchOpts.body = JSON.stringify(body)
+      fetchOpts.headers = { ...fetchOpts.headers, 'Content-Type': 'application/json' }
+    }
+    return fetch(url, fetchOpts).then(async (res) => {
       if (!res.ok) {
         const text = await res.text().catch(() => '')
         throw new ApiError(res.status, parseApiError(res.status, text))

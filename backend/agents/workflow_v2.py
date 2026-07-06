@@ -83,6 +83,9 @@ class CreativeStateV2(TypedDict, total=False):
     planning_review: bool         # 是否启用任务卡预览（写入 state 供 resume 读取）
     task_card_reviewed: bool      # 任务卡是否已审核
     modified_task_card: dict      # 用户修改后的任务卡（覆盖 chapter_task_card）
+    # ── L-2: 嵌入式澄清 ──
+    clarification_answers: dict   # 用户澄清答案 {question_id: answer}
+    clarification_round: int      # 澄清轮次
 
 
 # ── JSON 解析辅助 ──────────────────────────────────────

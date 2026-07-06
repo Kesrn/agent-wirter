@@ -1024,9 +1024,16 @@ export interface TaskCardPayload {
   forbidden?: string[]
 }
 
+export interface ClarificationEmbedded {
+  needs_clarification: boolean
+  questions: ClarificationQuestion[]
+  assumptions_if_skipped: string[]
+}
+
 export interface TaskCardReviewRequiredPayload {
   task_card: TaskCardPayload
   thread_id: string
+  clarification?: ClarificationEmbedded | null
 }
 
 // ─── Chapter Version History ───

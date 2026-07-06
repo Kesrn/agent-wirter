@@ -3648,6 +3648,9 @@ async def generate_chapter(
                 "planning_review": bool(req.planning_review),
                 "task_card_reviewed": False,
                 "modified_task_card": {},
+                # ── L-2: 嵌入式澄清 ──
+                "clarification_answers": {},
+                "clarification_round": 0,
             }
 
             config = {"configurable": {"thread_id": thread_id}}
@@ -3777,17 +3780,41 @@ async def generate_chapter(
                             _tc_state = await app.aget_state(config)
                             _tc_next = _tc_state.next if _tc_state else ()
                             if "task_card_review" in _tc_next:
+                                # ── L-2: 从 checkpoint state 读取上下文，调用澄清规划师 ──
+                                _tc_values = _tc_state.values if _tc_state else {}
+                                _tc_context = _tc_values.get("context", "")
+                                _tc_user_note = _tc_values.get("user_note", "")
+                                clarification = None
+                                try:
+                                    from agents.clarification import run_clarification_planner
+                                    _cr = await run_clarification_planner(
+                                        llm_config=llm_config_dict,
+                                        context=_tc_context,
+                                        chapter_num=chapter_num,
+                                        target_words=req.target_words or 2000,
+                                        user_note=_tc_user_note,
+                                        harness_run_id=run_id_str,
+                                    )
+                                    if _cr.get("needs_clarification"):
+                                        clarification = {
+                                            "needs_clarification": True,
+                                            "questions": _cr.get("questions", [])[:3],
+                                            "assumptions_if_skipped": _cr.get("assumptions_if_skipped", []),
+                                        }
+                                except Exception:
+                                    logger.warning("clarification_planner failed", exc_info=True)
+
                                 await mark_waiting_human(db, ai_run, step_name="task_card_review", thread_id=thread_id)
                                 interrupt = await create_interrupt(
                                     db,
                                     run=ai_run,
                                     thread_id=thread_id,
                                     step_name="task_card_review",
-                                    payload={"task_card": card},
+                                    payload={"task_card": card, "clarification": clarification},
                                 )
                                 await db.commit()
                                 yield f"event: run_status\ndata: {json.dumps({'run_id': run_id_str, 'status': 'WAITING_HUMAN'}, ensure_ascii=False)}\n\n"
-                                yield f"event: task_card_review_required\ndata: {json.dumps({'task_card': card, 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
+                                yield f"event: task_card_review_required\ndata: {json.dumps({'task_card': card, 'thread_id': thread_id, 'clarification': clarification}, ensure_ascii=False)}\n\n"
                                 return
 
                     elif node_name == "chapter_writer":
@@ -4319,7 +4346,7 @@ async def resume_chapter_generation(
     request: Request,
     project_id: str,
     thread_id: str = Query(..., description="HITL 暂停时返回的 thread_id"),
-    action: str = Query(default="approve", pattern=r"^(approve|reject|review|revise|approve_task_card|reject_task_card)$"),
+    action: str = Query(default="approve", pattern=r"^(approve|reject|review|revise|approve_task_card|reject_task_card|refresh_task_card)$"),
     feedback: str | None = None,
     task_card: str | None = Query(default=None, description="任务卡 JSON（approve_task_card 时传入）"),
     db: AsyncSession = Depends(get_db),
@@ -4455,6 +4482,58 @@ async def resume_chapter_generation(
                         await resolve_interrupt(db, interrupt, decision=InterruptDecision.REJECT, feedback="用户取消任务卡预览")
                         await db.commit()
                 yield f"event: done\ndata: {json.dumps({'message': '已取消任务卡预览'}, ensure_ascii=False)}\n\n"
+                return
+
+            # ── L-2: refresh_task_card — 回答澄清后重跑 architect，不 resolve interrupt ──
+            if action == "refresh_task_card":
+                body_data: dict = {}
+                try:
+                    body_raw = await request.body()
+                    if body_raw:
+                        body_data = json.loads(body_raw)
+                except Exception:
+                    pass
+                answers = body_data.get("clarification_answers", {}) if body_data else {}
+                questions = body_data.get("clarification_questions", []) if body_data else []
+
+                if not answers:
+                    yield f"event: error\ndata: {json.dumps({'message': '缺少澄清答案'}, ensure_ascii=False)}\n\n"
+                    return
+
+                current = state.values
+                prev_answers = dict(current.get("clarification_answers", {}) or {})
+                prev_answers.update(answers)
+                new_round = current.get("clarification_round", 0) + 1
+
+                # 构建澄清总结
+                from agents.clarification import build_clarification_summary
+                summary = build_clarification_summary(questions, prev_answers)
+                prev_note = current.get("user_note", "") or ""
+                updated_note = prev_note
+                if summary:
+                    updated_note = f"{prev_note}\n[用户澄清第{new_round}轮] {summary}".strip()
+
+                # 更新 checkpoint state（不 resolve interrupt）
+                await app.aupdate_state(config, {
+                    "clarification_answers": prev_answers,
+                    "clarification_round": new_round,
+                    "user_note": updated_note,
+                }, as_node="task_card_review")
+
+                # 直接调用 chapter_architect_node 重新生成任务卡
+                from agents.workflow_v2 import chapter_architect_node
+                updated_state = await app.aget_state(config)
+                architect_input = updated_state.values if updated_state else {}
+                architect_result = await chapter_architect_node(architect_input)
+                new_card = architect_result.get("chapter_task_card", {})
+
+                # 写入新任务卡到 checkpoint
+                await app.aupdate_state(config, {
+                    "chapter_task_card": new_card,
+                }, as_node="task_card_review")
+
+                yield f"event: task_card_review_required\ndata: {json.dumps({'task_card': new_card, 'thread_id': thread_id, 'clarification': None}, ensure_ascii=False)}\n\n"
+                yield f"event: done\ndata: {json.dumps({'message': '任务卡已刷新'}, ensure_ascii=False)}\n\n"
                 return
 
             # ── L-1: approve_task_card — 用户确认/修改任务卡后继续执行 ──

@@ -1,22 +1,45 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import type { TaskCardPayload } from '../api/types'
+import { ref, computed, watch } from 'vue'
+import type { TaskCardPayload, ClarificationEmbedded, ClarificationQuestion } from '../api/types'
 
 const props = defineProps<{
   taskCard: TaskCardPayload
   projectId: string
   threadId: string
+  clarification?: ClarificationEmbedded | null
 }>()
 
 const emit = defineEmits<{
   approved: [taskCard: TaskCardPayload]
   rejected: []
+  clarificationAnswered: [answers: Record<string, string>, questions: ClarificationQuestion[]]
+  clarificationSkipped: []
 }>()
 
 const editableTaskCard = ref<TaskCardPayload>(JSON.parse(JSON.stringify(props.taskCard)))
 const rawJsonEdit = ref(false)
 const jsonText = ref(JSON.stringify(editableTaskCard.value, null, 2))
 const parseError = ref('')
+
+// L-2: 澄清
+const clarificationAnswers = ref<Record<string, string>>({})
+const clarificationHidden = ref(false)
+
+const canSubmitClarification = computed(() => {
+  const qs = props.clarification?.questions || []
+  if (!qs.length) return false
+  // 必答题都需回答
+  return qs.every(q => !q.required || (clarificationAnswers.value[q.id] || '').trim())
+})
+
+watch(() => props.taskCard, (newCard) => {
+  editableTaskCard.value = JSON.parse(JSON.stringify(newCard))
+  jsonText.value = JSON.stringify(editableTaskCard.value, null, 2)
+  rawJsonEdit.value = false
+  parseError.value = ''
+  clarificationAnswers.value = {}
+  clarificationHidden.value = false
+})
 
 const infoRules = computed(() => editableTaskCard.value.information_rules || {})
 
@@ -55,6 +78,17 @@ function handleApprove() {
 
 function handleReject() {
   emit('rejected')
+}
+
+// L-2: 澄清
+function submitClarification() {
+  const qs = props.clarification?.questions || []
+  emit('clarificationAnswered', { ...clarificationAnswers.value }, qs)
+}
+
+function skipClarification() {
+  clarificationHidden.value = true
+  emit('clarificationSkipped')
 }
 </script>
 
@@ -150,6 +184,44 @@ function handleReject() {
         <textarea v-model="jsonText" rows="20" class="form-textarea json-area" spellcheck="false"></textarea>
         <div v-if="parseError" class="parse-error">{{ parseError }}</div>
         <button class="btn-toggle-json" @click="toggleJsonEdit">返回表单视图</button>
+      </div>
+    </div>
+
+    <!-- L-2: 澄清区 -->
+    <div v-if="clarification?.needs_clarification && !clarificationHidden" class="clarification-section">
+      <div class="section-divider"></div>
+      <h4>💡 以下问题可能影响本章方向</h4>
+      <p class="clarification-hint">回答后可刷新任务卡，也可直接跳过。</p>
+      <div v-for="q in (clarification?.questions || [])" :key="q.id" class="clarification-question">
+        <p class="q-text">
+          {{ q.question }} <span v-if="q.required" class="required-badge">必答</span>
+        </p>
+        <p v-if="q.reason" class="q-reason">原因：{{ q.reason }}</p>
+        <!-- single_choice -->
+        <div v-if="q.type === 'single_choice'" class="q-options">
+          <label v-for="opt in (q.options || [])" :key="opt.value" class="option-label">
+            <input type="radio" :value="opt.value" v-model="clarificationAnswers[q.id]" />
+            {{ opt.label }}
+            <span v-if="opt.description" class="option-desc"> — {{ opt.description }}</span>
+          </label>
+        </div>
+        <!-- multi_choice -->
+        <div v-else-if="q.type === 'multi_choice'" class="q-options">
+          <label v-for="opt in (q.options || [])" :key="opt.value" class="option-label">
+            <input type="checkbox" :value="opt.value" v-model="clarificationAnswers[q.id]" />
+            {{ opt.label }}
+          </label>
+        </div>
+        <!-- free_text -->
+        <textarea v-else-if="q.type === 'free_text'" v-model="clarificationAnswers[q.id]" rows="2" class="form-textarea" />
+        <!-- number -->
+        <input v-else-if="q.type === 'number'" v-model.number="clarificationAnswers[q.id]" type="number" class="form-input form-input-sm" />
+      </div>
+      <div class="clarification-actions">
+        <button class="btn-skip-clarification" @click="skipClarification">跳过澄清</button>
+        <button class="btn-refresh-card" :disabled="!canSubmitClarification" @click="submitClarification">
+          提交回答并刷新任务卡
+        </button>
       </div>
     </div>
 
@@ -295,5 +367,86 @@ function handleReject() {
   color: var(--color-danger);
   font-size: 12px;
   margin-top: var(--sp-1);
+}
+
+/* L-2: 澄清区 */
+.clarification-section {
+  padding: var(--sp-3) 0;
+}
+.section-divider {
+  border-top: 1px dashed var(--color-border);
+  margin-bottom: var(--sp-3);
+}
+.clarification-section h4 {
+  margin: 0 0 var(--sp-1) 0;
+  font-size: 14px;
+}
+.clarification-hint {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin: 0 0 var(--sp-3) 0;
+}
+.clarification-question {
+  margin-bottom: var(--sp-3);
+}
+.q-text {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0 0 var(--sp-1) 0;
+}
+.q-reason {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin: 0 0 var(--sp-1) 0;
+}
+.required-badge {
+  font-size: 10px;
+  background: var(--color-danger);
+  color: #fff;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.q-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.option-label {
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+.option-desc {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.clarification-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  padding-top: var(--sp-2);
+}
+.btn-skip-clarification {
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn-refresh-card {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 4px;
+  background: var(--color-primary);
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn-refresh-card:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>
