@@ -2326,6 +2326,9 @@ async def create_outline(
         turning_point=req.turning_point,
         story_arc_id=story_arc_id,
         arc_position=req.arc_position,
+        pacing=req.pacing,
+        tension_level=req.tension_level,
+        target_scene_count=req.target_scene_count,
     )
     db.add(outline)
     await db.commit()

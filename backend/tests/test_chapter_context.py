@@ -806,3 +806,85 @@ class TestStoryArc:
         ctx2 = asyncio.new_event_loop().run_until_complete(_run2())
         assert len(ctx2.story_arcs) == 1
         assert ctx2.story_arcs[0].name == "无范围arc"
+
+
+class TestOutlinePacing:
+    """K-4: outline pacing 字段测试"""
+
+    def test_create_outline_with_pacing_fields(self):
+        """POST /outlines 创建时 pacing 字段持久化"""
+        pid = _create_project("pacing测试")
+        resp = client.post(
+            f"/api/projects/{pid}/outlines",
+            json={
+                "sequence_number": 1,
+                "title": "第一章",
+                "pacing": "BUILDUP",
+                "tension_level": 3,
+                "target_scene_count": 4,
+            },
+            headers=_auth(),
+        )
+        assert resp.status_code == 200, resp.text
+        outline = resp.json()
+        assert outline["pacing"] == "BUILDUP"
+        assert outline["tension_level"] == 3
+        assert outline["target_scene_count"] == 4
+
+    def test_outline_pacing_in_prompt(self):
+        """format_chapter_context_for_prompt 包含 pacing 信息"""
+        pid = _create_project("pacing prompt测试")
+        _create_chapter(pid, "第一章", 1)
+
+        client.post(
+            f"/api/projects/{pid}/outlines",
+            json={
+                "sequence_number": 1,
+                "title": "第一章",
+                "pacing": "CLIMAX",
+                "tension_level": 5,
+                "target_scene_count": 3,
+            },
+            headers=_auth(),
+        )
+
+        async def _run():
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(session, pid, 1)
+                return format_chapter_context_for_prompt(ctx)
+
+        prompt = asyncio.new_event_loop().run_until_complete(_run())
+        assert "节奏：CLIMAX" in prompt
+        assert "张力等级：5/5" in prompt
+        assert "目标场景数：3" in prompt
+
+    def test_get_character_arc(self):
+        """GET /characters/{id}/arc 返回聚合数据"""
+        pid = _create_project("arc测试")
+        _create_chapter(pid, "第一章", 1)
+        char_id = _create_character(pid, "主角", "protagonist")
+        _create_character_event(pid, char_id, 1, "觉醒", importance=5)
+
+        headers = _auth()
+        resp = client.get(f"/api/projects/{pid}/characters/{char_id}/arc", headers=headers)
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["character_name"] == "主角"
+        assert len(data["items"]) >= 1
+        assert data["items"][0]["source_type"] == "CharacterEvent"
+
+    def test_get_character_arc_to_chapter_filter(self):
+        """GET /characters/{id}/arc?to_chapter=N 过滤未来章节"""
+        pid = _create_project("arc filter测试")
+        _create_chapter(pid, "第一章", 1)
+        _create_chapter(pid, "第五章", 5)
+        char_id = _create_character(pid, "配角", "supporting")
+        _create_character_event(pid, char_id, 1, "出场", importance=3)
+        _create_character_event(pid, char_id, 5, "退场", importance=3)
+
+        headers = _auth()
+        resp = client.get(f"/api/projects/{pid}/characters/{char_id}/arc?to_chapter=1", headers=headers)
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert len(data["items"]) == 1
+        assert data["items"][0]["chapter_sequence_number"] == 1
