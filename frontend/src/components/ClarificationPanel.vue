@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import type { ClarificationQuestion } from '../api/types'
+import type { ClarificationQuestion, PreGenerationMode } from '../api/types'
 
 const props = defineProps<{
   runId: string
@@ -8,6 +8,7 @@ const props = defineProps<{
   round: number
   maxRounds: number
   assumptionsIfSkipped: string[]
+  preGenerationMode?: PreGenerationMode
 }>()
 
 const emit = defineEmits<{
@@ -72,6 +73,12 @@ const canSubmit = computed(() => {
 })
 
 const hasQuestions = computed(() => props.questions.length > 0)
+const skipDisabled = computed(() => submitting.value || (props.preGenerationMode === 'STRICT' && props.round <= 1))
+const skipLabel = computed(() => {
+  if (submitting.value) return '提交中...'
+  if (props.preGenerationMode === 'STRICT' && props.round <= 1) return '严格模式首轮需回答'
+  return '跳过，使用默认假设'
+})
 
 function handleSubmit() {
   if (!canSubmit.value || submitting.value) return
@@ -88,7 +95,7 @@ function handleSubmit() {
 }
 
 function handleSkip() {
-  if (submitting.value) return
+  if (skipDisabled.value) return
   submitting.value = true
   emit('skip')
 }
@@ -204,10 +211,10 @@ function handleSkip() {
       <button
         type="button"
         class="btn-skip"
-        :disabled="submitting"
+        :disabled="skipDisabled"
         @click="handleSkip"
       >
-        {{ submitting ? '提交中...' : '跳过，使用默认假设' }}
+        {{ skipLabel }}
       </button>
       <button
         type="button"

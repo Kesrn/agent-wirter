@@ -1,4 +1,15 @@
-"""API 路由"""
+"""API 路由。
+
+这个文件承载主要业务 HTTP 接口：
+- 项目/章节/文档/素材/专家的 CRUD；
+- 章节生成、续写、润色、审校和 HITL 恢复；
+- 知识库上传、切片、抽取、搜索、问答；
+- AI Run、步骤日志、人工决策和写作记忆审核。
+
+普通 CRUD 基本遵循“校验项目归属 -> 查询/修改 ORM -> commit -> 返回 schema”。
+复杂逻辑被拆到 services/agents/harness 中，本文件主要负责 HTTP 参数、权限、
+事务边界、SSE 事件封装和前端兼容。
+"""
 
 import asyncio
 import json
@@ -42,6 +53,7 @@ from models.project_knowledge_fact import ProjectKnowledgeFact
 from models.knowledge_qa_session import KnowledgeQaSession
 from models.knowledge_qa_message import KnowledgeQaMessage
 from models.writing_memory_staging import WritingMemoryStaging
+from models.harness_enums import InterruptDecision, RunStatus
 from models.structured_knowledge import (
     CharacterProfile, AbilityProfile, EventTimeline, WorldRule, CharacterAppearance,
 )
@@ -49,7 +61,7 @@ from schemas.api import (
     ProjectCreate, ProjectUpdate, ProjectResponse,
     TxtImportResponse,
     ExpertCreate, ExpertUpdate, ExpertResponse,
-    ChapterCreate, ChapterResponse, ChapterUpdate,
+    ChapterCreate, ChapterResponse, ChapterUpdate, ChapterFinalizeRequest,
     ChapterReviewNoteCreate, ChapterReviewNoteUpdate, ChapterReviewNoteResponse,
     ChapterStructureExtractRequest, ChapterStructureExtractResponse,
     ChapterVersionResponse, ChapterVersionListItemResponse, ChapterVersionDiffRequest, ChapterVersionDiffResponse,
@@ -84,14 +96,20 @@ from agents.safety import validate_expert_safety
 from agents.expert_templates import ALL_BUILTIN_EXPERTS, BUILTIN_EXPERTS
 from agents.llm_provider import LLMConfigError, get_llm_provider
 from agents.workflow import get_creative_app, CreativeState
-from agents.workflow_v2 import get_creative_app_v2, get_creative_app_v2_continue, CreativeStateV2
+from agents.workflow_v2 import (
+    CreativeStateV2,
+    WorkflowGenerationError,
+    get_creative_app_v2,
+    get_creative_app_v2_continue,
+)
 from harness.run_manager import (
     create_run, mark_running, mark_waiting_human, mark_completed, mark_failed, mark_cancelled,
-    build_expert_snapshot, workflow_to_snapshot,
+    build_expert_snapshot, discard_run_artifacts, workflow_to_snapshot,
 )
 from harness.step_logger import start_step, finish_step, fail_step
 from harness.human_interrupt_service import (
-    create_interrupt, resolve_interrupt, get_interrupt_by_run, get_interrupt_by_thread, check_interrupt_resolved
+    create_interrupt, resolve_interrupt, get_interrupt_by_run, get_interrupt_by_thread,
+    get_unresolved_interrupt_by_thread_step, check_interrupt_resolved,
 )
 from skills.runner import ExpertSkillResult, build_expert_skill_pack, build_expert_system_prompt
 from api.auth import get_current_user
@@ -99,7 +117,7 @@ from api.llm_deps import get_user_llm_config
 from api.rate_limiter import agent_limiter
 from rag.embedding_service import generate_embedding, _update_embedding_bg
 from services.diff_service import compute_diff
-from services.chapter_save import save_chapter_content
+from services.chapter_save import finalize_chapter_content, save_chapter_content
 from agents.guardrail import guardrail_to_text as _guardrail_to_text, get_blocking_issues
 from services.document_save import save_document_content
 from services.skill_pack_planner import SkillPackPlan, plan_direct_skill_pack
@@ -127,7 +145,44 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
-WRITER_ROLES = ("writer",)  # 只有 writer 角色的输出会写入章节正文
+
+async def _discard_incomplete_generation_run(
+    db: AsyncSession,
+    *,
+    run_id: str | uuid.UUID | None,
+    thread_id: str | None,
+    reason: str,
+) -> None:
+    """失败/断连后清空本次生成已提交的运行痕迹与内存 checkpoint。"""
+    # 先丢弃当前 session 还没提交的半成品（例如刚写入的候选稿或版本），再开启
+    # 一个干净事务清除之前已经提交的 run/step/LLM 日志等关联记录。
+    try:
+        await db.rollback()
+    except Exception:
+        logger.warning("生成失败后的事务回滚失败", exc_info=True)
+
+    if run_id:
+        try:
+            await discard_run_artifacts(db, run_id=run_id)
+            await db.commit()
+            logger.info("已清理未完成生成 run_id=%s reason=%s", run_id, reason)
+        except Exception:
+            await db.rollback()
+            logger.exception("清理未完成生成失败 run_id=%s", run_id)
+
+    if thread_id:
+        try:
+            # MemorySaver 是内存级别；数据库已删时也必须删 checkpoint，防止旧
+            # thread_id 被再次 resume 后产生“幽灵流程”。
+            from agents.workflow import _CHECKPOINTER
+            await _CHECKPOINTER.adelete_thread(thread_id)
+        except Exception:
+            logger.warning("清理工作流 checkpoint 失败 thread_id=%s", thread_id, exc_info=True)
+
+# 只有 writer 角色的输出会写入章节正文。critic/editor/researcher 等专家输出
+# 一般用于审校、建议或中间状态，不应直接覆盖用户正文。
+WRITER_ROLES = ("writer",)
+# 润色输出字数限制根据全局 token 上限推导，避免用户一次润色超长章节导致模型截断。
 ENHANCE_MAX_OUTPUT_WORDS = min(5000, max(1000, int(settings.MAX_TOKENS_LIMIT * 0.65)))
 ENHANCE_MIN_OUTPUT_WORDS = 20
 ALLOWED_IMAGE_TYPES = {
@@ -139,6 +194,7 @@ ALLOWED_IMAGE_TYPES = {
 
 
 def _format_bytes_limit(size: int) -> str:
+    """把字节数格式化成用户可读的 KB/MB，用于上传限制错误提示。"""
     if size >= 1024 * 1024:
         return f"{size / 1024 / 1024:g}MB"
     if size >= 1024:
@@ -147,7 +203,11 @@ def _format_bytes_limit(size: int) -> str:
 
 
 def _parse_directions(text: str) -> list[str]:
-    """从容错解析 LLM 输出为字符串列表。尝试 JSON 数组，失败则按换行分割。"""
+    """从容错解析 LLM 输出为字符串列表。尝试 JSON 数组，失败则按换行分割。
+
+    用于“续写方向/润色方向/修改方向”这类接口。真实模型不一定严格输出 JSON，
+    所以这里做兼容，避免前端拿不到可选项。
+    """
     text = text.strip()
     # 尝试提取 JSON 数组
     try:
@@ -165,7 +225,11 @@ def _parse_directions(text: str) -> list[str]:
 
 
 def _skill_pack_sse_event(pack: dict | None, fallback_expert: str = "") -> str:
-    """Serialize a workflow skill pack summary without breaking old clients."""
+    """把 skill pack 摘要包装成 SSE 事件。
+
+    skill pack 可能包含本次专家节点注入了哪些 Skill/引用资料、是否截断等信息。
+    独立事件不影响旧客户端解析 writer_output/done。
+    """
     if not pack:
         return ""
     payload = {
@@ -182,7 +246,11 @@ def _skill_pack_sse_event(pack: dict | None, fallback_expert: str = "") -> str:
 
 
 def _new_skill_packs(output: dict, seen_keys: set[tuple[str, str]]) -> list[dict]:
-    """Return only newly emitted skill packs from a LangGraph node output."""
+    """从 LangGraph 节点输出中取新增 skill pack。
+
+    同一个 workflow 可能多次 resume，同一个 pack 也可能随 state 反复出现。
+    seen_keys 用于去重，避免前端展示重复的技能包。
+    """
     packs = output.get("skill_packs", []) if isinstance(output, dict) else []
     result = []
     for pack in packs:
@@ -196,6 +264,47 @@ def _new_skill_packs(output: dict, seen_keys: set[tuple[str, str]]) -> list[dict
     return result
 
 
+def _embedded_clarification_payload(values: dict) -> dict | None:
+    """构造随任务卡展示的 L-2 可选澄清 payload。"""
+    if not values.get("embedded_clarification"):
+        return None
+    # 用户提交回答后，问题列表为了审计仍保留在 State 中，但此时已被标记为完成。
+    # 不能仅因 questions 非空就再次下发，否则任务卡重新规划后会反复展示同一批问题。
+    if not values.get("needs_clarification"):
+        return None
+    questions = values.get("clarification_questions", []) or []
+    if not questions:
+        return None
+    mode = str(values.get("pre_generation_mode", "PLANNING")).upper()
+    round_num = int(values.get("clarification_round", 1) or 1)
+    return {
+        "needs_clarification": bool(values.get("needs_clarification", False)),
+        "questions": questions[:3],
+        "assumptions_if_skipped": values.get("clarification_assumptions", []) or [],
+        "round": round_num,
+        "max_rounds": int(values.get("max_clarification_rounds", 3) or 3),
+        "require_answer": mode == "STRICT" and round_num <= 1,
+    }
+
+
+def _task_card_clarification_status(values: dict) -> str:
+    """返回任务卡中展示的生成前澄清状态。
+
+    ``clarification_questions`` 会为了审计保留在 State，不能据此判断当前是否仍要
+    澄清。这里单独下发状态，避免前端把“无需澄清”“已回答”与“FAST 跳过”混为一谈。
+    """
+    mode = str(values.get("pre_generation_mode", "PLANNING")).upper()
+    if mode == "FAST" or not values.get("embedded_clarification"):
+        return "skipped"
+    if values.get("needs_clarification"):
+        return "pending"
+    if values.get("clarification_answers"):
+        return "answered"
+    if values.get("clarification_skipped"):
+        return "skipped"
+    return "not_needed"
+
+
 def _direct_skill_pack(
     role_type: str,
     *,
@@ -207,7 +316,11 @@ def _direct_skill_pack(
     context: str = "",
     mode: str = "",
 ) -> tuple[ExpertSkillResult, dict]:
-    """Build a direct-route skill pack and align its SSE key with UI steps."""
+    """为非 LangGraph 直连路径构建 skill pack。
+
+    continue/enhance/summarize 的部分分支不是完整工作流节点，但仍需要复用
+    Skill.md 和引用资料。这个 helper 会把摘要中的 expert 字段对齐到前端步骤名。
+    """
     pack = build_expert_skill_pack(
         role_type,
         skill_dir=skill_dir,
@@ -276,7 +389,11 @@ def _enhance_word_budget(chapter_content: str, requested_words: int | None) -> t
 
 
 def _article_brief(req: GenerateRequest) -> str:
-    """Build a compact article/copywriting brief for prompts."""
+    """把文章/文案生成参数压缩成 prompt brief。
+
+    小说项目依赖角色/世界观/大纲，文章项目则更依赖平台、受众、内容目标和语气。
+    这个 brief 会进入文章生成、续写、润色等分支。
+    """
     items = [
         ("内容类型", req.content_type or "通用文章/文案"),
         ("发布平台", req.platform or "未指定"),
@@ -291,6 +408,11 @@ def _article_brief(req: GenerateRequest) -> str:
 
 
 def _article_system_prompt(task: str) -> str:
+    """文章/文案项目统一 system prompt。
+
+    明确告诉模型“这不是小说创作”，防止复用小说项目的续写、角色行动、
+    世界观设定等表达方式。
+    """
     return (
         f"你是一位专业中文内容策划和文案编辑，当前任务是{task}。"
         "你服务的是文章/文案项目，不是小说创作。"
@@ -301,6 +423,7 @@ def _article_system_prompt(task: str) -> str:
 
 
 def _article_generate_prompt(req: GenerateRequest, creative_context: str, current_content: str) -> str:
+    """构建文章/文案正文生成 prompt。"""
     source = current_content.strip() or "（当前稿件为空，请根据 brief 生成完整内容）"
     return (
         f"## 内容 brief\n{_article_brief(req)}\n\n"
@@ -316,6 +439,10 @@ def _article_generate_prompt(req: GenerateRequest, creative_context: str, curren
 
 
 def _generation_list_item(record: GenerationRecord) -> GenerationRecordListItemResponse:
+    """把 GenerationRecord ORM 转成列表项响应。
+
+    列表页只需要摘要字段，详情内容通过单独接口读取，避免一次返回大量正文。
+    """
     return GenerationRecordListItemResponse(
         id=record.id,
         project_id=record.project_id,
@@ -373,6 +500,7 @@ def _extract_context_text_from_prompt(prompt: str | None) -> str | None:
 
 
 def _prompt_snapshot_was_truncated(request_meta: dict | None) -> bool:
+    """判断 LLM call log 中的 prompt 快照是否因长度限制被截断。"""
     return bool(isinstance(request_meta, dict) and request_meta.get("prompt_snapshot_truncated"))
 
 
@@ -413,6 +541,7 @@ def _evaluation_run_response(run: EvaluationRun, results: list[EvaluationResult]
 
 
 def _to_uuid(value: str) -> uuid.UUID:
+    """把路径参数中的字符串转换为 UUID，格式错误时返回 400。"""
     try:
         return uuid.UUID(value)
     except ValueError:
@@ -420,7 +549,11 @@ def _to_uuid(value: str) -> uuid.UUID:
 
 
 async def _verify_project_owner(project_id: uuid.UUID, user_id: str, db: AsyncSession) -> Project:
-    """校验项目存在且属于当前用户，否则 404。"""
+    """校验项目存在且属于当前用户，否则 404。
+
+    业务接口都以 project_id 为边界隔离数据。返回 404 而不是 403，可以避免暴露
+    “这个项目 ID 存在但不属于你”的信息。
+    """
     result = await db.execute(select(Project).where(Project.id == project_id, Project.owner_id == user_id))
     project = result.scalar_one_or_none()
     if not project:
@@ -429,7 +562,11 @@ async def _verify_project_owner(project_id: uuid.UUID, user_id: str, db: AsyncSe
 
 
 async def _delete_project_tree(project_id: uuid.UUID, db: AsyncSession) -> None:
-    """Delete a project and all project-scoped rows."""
+    """删除项目及其项目内所有关联数据。
+
+    这里显式删除而不是依赖数据库级 cascade，是为了兼容 PostgreSQL/SQLite
+    以及历史表结构，确保桌面端本地数据库也能完整清理。
+    """
     chapter_ids = select(Chapter.id).where(Chapter.project_id == project_id)
     document_ids = select(Document.id).where(Document.project_id == project_id)
 
@@ -1245,13 +1382,70 @@ async def update_chapter(
         chapter.title = req.title
     if "outline" in req.model_fields_set:
         chapter.outline = req.outline
-    if "content" in req.model_fields_set:
-        await save_chapter_content(db, chapter, req.content or "", source="manual")
-    if req.status is not None:
-        chapter.status = req.status
+    if req.status in {"final", "approved"}:
+        # 即使前端沿用 PATCH 保存，也必须创建定稿快照，不能只改状态。
+        try:
+            await finalize_chapter_content(
+                db,
+                chapter,
+                req.content if "content" in req.model_fields_set else None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    else:
+        content_changed = "content" in req.model_fields_set
+        if content_changed:
+            was_final = chapter.status in {"final", "approved"}
+            await save_chapter_content(db, chapter, req.content or "", source="manual")
+            # 已定稿章节再次编辑后，必须重新人工确认；不能让新的未确认文本
+            # 继续作为下一章的可信上文。
+            final_snapshot = await db.get(ChapterVersion, chapter.final_version_id) if chapter.final_version_id else None
+            if was_final and (final_snapshot is None or chapter.content != final_snapshot.content):
+                chapter.status = "draft"
+                chapter.final_version_id = None
+        if req.status is not None:
+            chapter.status = req.status
+            if req.status not in {"final", "approved"}:
+                chapter.final_version_id = None
 
     await db.commit()
     await db.refresh(chapter)
+    return chapter
+
+
+@router.post("/projects/{project_id}/chapters/{sequence_number}/finalize", response_model=ChapterResponse)
+async def finalize_chapter(
+    project_id: str,
+    sequence_number: int,
+    req: ChapterFinalizeRequest,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """在最后人工审核中确认章节定稿。
+
+    定稿会创建不可变版本并记录到 ``final_version_id``。后续章节生成只读取该快照，
+    因此编辑器里的候选/草稿不会污染创作上下文。
+    """
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    result = await db.execute(
+        select(Chapter).where(Chapter.project_id == uid, Chapter.sequence_number == sequence_number)
+    )
+    chapter = result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    try:
+        await finalize_chapter_content(db, chapter, req.content)
+        await db.commit()
+        await db.refresh(chapter)
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        await db.rollback()
+        logger.exception("章节定稿失败 project=%s chapter=%s", project_id, sequence_number)
+        raise HTTPException(status_code=500, detail="章节定稿失败，请重试")
     return chapter
 
 
@@ -2755,7 +2949,8 @@ async def generate_chapter(
     - reject/cancel/disconnect 时绝不 commit 章节正文或版本
     - summarize 不落库（只是反馈，不改原文）
     """
-    # Rate limiting
+    # Rate limiting：同一用户短时间内频繁发起生成会消耗大量模型资源，
+    # 因此统一用 agent_limiter 做接口级限流。
     agent_limiter.check(f"generate:{user.id}")
 
     uid = _to_uuid(project_id)
@@ -2767,6 +2962,8 @@ async def generate_chapter(
         raise HTTPException(status_code=400, detail="Document generation only available for article projects")
 
     # 章节/稿件定位：小说走 Chapter，文章走 Document。
+    # 同一个接口同时挂在 /chapters/generate 和 /documents/generate，
+    # 通过 project.mode 和 path 判断当前请求属于哪种内容对象。
     target_chapter_id = None
     target_document_id = None
     requested_content_id = req.document_id if is_article_project and req.document_id else req.chapter_id
@@ -2811,6 +3008,11 @@ async def generate_chapter(
             target_chapter_id = ch.id
 
     async def event_stream():
+        """SSE 生成器。
+
+        FastAPI 会边迭代边把字符串推给前端。这里不能把所有结果先存在内存再返回，
+        否则用户看不到实时进度，也无法通过断开 SSE 取消生成。
+        """
         langfuse_context = activate_langfuse_context(
             name="generate_content",
             user_id=str(user.id),
@@ -2825,7 +3027,11 @@ async def generate_chapter(
             },
         )
         try:
+            # 同一次生成只保存一条候选 GenerationRecord。
+            # 多个分支都可能调用 _save_generation_history，用 flag 防止重复落库。
             generation_record_saved = False
+            ai_run = None
+            workflow_thread_id: str | None = None
 
             async def _save_generation_history(
                 content: str,
@@ -2835,6 +3041,11 @@ async def generate_chapter(
                 skill_packs: list[dict] | None = None,
                 run_id: str | None = None,
             ) -> str | None:
+                """保存候选生成记录。
+
+                注意这里只保存“候选内容”，不修改 Chapter.content / Document.content。
+                用户批准或前端显式保存后，才会创建版本并更新正式正文。
+                """
                 nonlocal generation_record_saved
                 if generation_record_saved:
                     return None
@@ -2864,6 +3075,7 @@ async def generate_chapter(
                     return None
 
             def _generation_record_event(record_id: str | None) -> str:
+                """把候选记录 ID 发给前端，前端可展示生成历史或 diff。"""
                 if not record_id:
                     return ""
                 return (
@@ -2873,14 +3085,23 @@ async def generate_chapter(
 
             yield f"event: progress\ndata: {json.dumps({'message': '开始生成', 'mode': req.mode, 'chapter_num': req.chapter_num}, ensure_ascii=False)}\n\n"
 
-            # 检查客户端是否已断开连接（取消时前端会 abort SSE 连接）
+            # 检查客户端是否已断开连接（取消时前端会 abort SSE 连接）。
+            # 一旦断开，停止继续调用模型/写事件，避免用户取消后后端还在烧 token。
             async def _check_cancelled():
                 if await request.is_disconnected():
                     logger.info("客户端已断开连接，取消生成")
+                    await _discard_incomplete_generation_run(
+                        db,
+                        run_id=str(ai_run.id) if ai_run is not None else None,
+                        thread_id=workflow_thread_id,
+                        reason="客户端断开连接",
+                    )
                     return True
                 return False
 
-            # 获取当前章节/稿件内容（enhance/continue/summarize 都需要）
+            # 获取当前章节/稿件内容（enhance/continue/summarize 都需要）。
+            # continue 以当前内容为续写基础；enhance 以当前内容为改写对象；
+            # summarize 则只做反馈，不更新正文。
             chapter_content = ""
             if is_article_project and target_document_id:
                 doc_result = await db.execute(
@@ -2900,7 +3121,8 @@ async def generate_chapter(
             llm_config_dict = await get_user_llm_config(user.id, db)
             provider = get_llm_provider(llm_config_dict)
 
-            # 确定章节序号（供 ChapterContextService 按章加载上下文）
+            # 确定章节序号（供 ChapterContextService 按章加载上下文）。
+            # 如果请求只传 chapter_id/document_id，需要反查 sequence_number/position。
             chapter_num = req.chapter_num or 0
             if not chapter_num and not is_article_project and target_chapter_id:
                 ch_num_result = await db.execute(
@@ -2969,6 +3191,7 @@ async def generate_chapter(
                     workflow_snapshot=workflow_to_snapshot(_wf_enhance),
                     expert_snapshot=[],
                 )
+                ai_run = _enhance_run
                 await db.flush()
                 _enhance_run_id = str(_enhance_run.id)
                 yield f"event: run_created\ndata: {json.dumps({'run_id': _enhance_run_id, 'status': 'CREATED'}, ensure_ascii=False)}\n\n"
@@ -3249,6 +3472,7 @@ async def generate_chapter(
                     from services.novel_orchestrator import resolve_workflow as _resolve_wf_continue
                     wf_continue = _resolve_wf_continue(project_mode="novel", mode="continue")
                     thread_id = f"{uid}:{target_chapter_id or 'no-chapter'}:{uuid.uuid4().hex[:8]}"
+                    workflow_thread_id = thread_id
                     ai_run = await create_run(
                         db,
                         project_id=uid,
@@ -3276,7 +3500,9 @@ async def generate_chapter(
                         "chapter_num": chapter_num,
                         "mode": "continue",
                         "context": "",
+                        "context_summary": {},
                         "draft": chapter_content or "",
+                        "writer_draft": "",
                         "original_text": "",
                         "critiques": [],
                         "consistency_report": {},
@@ -3325,11 +3551,6 @@ async def generate_chapter(
                     try:
                         async for event in app.astream_events(initial_state, config=config, version="v2"):
                             if await _check_cancelled():
-                                try:
-                                    await mark_cancelled(db, ai_run)
-                                    await db.commit()
-                                except Exception:
-                                    logger.warning("harness mark_cancelled 失败", exc_info=True)
                                 return
                             kind = event.get("event")
                             if kind == "on_chain_start":
@@ -3377,7 +3598,11 @@ async def generate_chapter(
                                     draft = output.get("draft", "") if isinstance(output, dict) else ""
                                     writer_content = draft
                                     if draft:
-                                        yield f"event: writer_output\ndata: {json.dumps({'content': draft}, ensure_ascii=False)}\n\n"
+                                        writer_payload = {"content": draft}
+                                        initial_draft = output.get("writer_draft", "") if isinstance(output, dict) else ""
+                                        if initial_draft:
+                                            writer_payload["initial_draft"] = initial_draft
+                                        yield f"event: writer_output\ndata: {json.dumps(writer_payload, ensure_ascii=False)}\n\n"
                                 elif node_name == "continuity_checker":
                                     guardrail = output.get("consistency_report", {}) if isinstance(output, dict) else {}
                                     if not isinstance(guardrail, dict):
@@ -3408,13 +3633,23 @@ async def generate_chapter(
                         await db.commit()
                         yield f"event: run_status\ndata: {json.dumps({'run_id': run_id_str, 'status': 'COMPLETED'}, ensure_ascii=False)}\n\n"
                         yield f"event: done\ndata: {json.dumps({'message': '续写完成'}, ensure_ascii=False)}\n\n"
+                    except WorkflowGenerationError as e:
+                        logger.warning("continue v2 关键生成节点失败: %s", e)
+                        await _discard_incomplete_generation_run(
+                            db,
+                            run_id=run_id_str,
+                            thread_id=thread_id,
+                            reason=str(e),
+                        )
+                        yield f"event: error\ndata: {json.dumps({'message': str(e)}, ensure_ascii=False)}\n\n"
                     except Exception as e:
                         logger.exception("continue v2 生成失败")
-                        try:
-                            await mark_failed(db, ai_run, error_message=str(e))
-                            await db.commit()
-                        except Exception:
-                            logger.warning("harness mark_failed 失败", exc_info=True)
+                        await _discard_incomplete_generation_run(
+                            db,
+                            run_id=run_id_str,
+                            thread_id=thread_id,
+                            reason=str(e),
+                        )
                         yield f"event: error\ndata: {json.dumps({'message': f'生成失败: {str(e)}'}, ensure_ascii=False)}\n\n"
                     return
 
@@ -3505,6 +3740,7 @@ async def generate_chapter(
                     workflow_snapshot=workflow_to_snapshot(_wf_summarize),
                     expert_snapshot=[],
                 )
+                ai_run = _summarize_run
                 await db.flush()
                 _summarize_run_id = str(_summarize_run.id)
                 yield f"event: run_created\ndata: {json.dumps({'run_id': _summarize_run_id, 'status': 'CREATED'}, ensure_ascii=False)}\n\n"
@@ -3659,8 +3895,12 @@ async def generate_chapter(
             )
             enabled_experts = exp_result.scalars().all()
 
-            app = get_creative_app_v2(planning_review=bool(req.planning_review))
+            app = get_creative_app_v2(
+                planning_review=bool(req.planning_review),
+                pre_generation_mode=req.pre_generation_mode or "PLANNING",
+            )
             thread_id = f"{uid}:{target_chapter_id or target_document_id or 'no-chapter'}:{uuid.uuid4().hex[:8]}"
+            workflow_thread_id = thread_id
 
             # ── Harness: 创建 AI Run ──
             run_type = {
@@ -3712,7 +3952,9 @@ async def generate_chapter(
                 "chapter_num": chapter_num,
                 "mode": req.mode,
                 "context": "",
+                "context_summary": {},
                 "draft": "",
+                "writer_draft": "",
                 "original_text": "",
                 "critiques": [],
                 "consistency_report": {},
@@ -3728,6 +3970,7 @@ async def generate_chapter(
                 "selected_world_entry_ids": req.selected_world_entry_ids or [],
                 "selected_hidden_thread_ids": req.selected_hidden_thread_ids or [],
                 "include_knowledge_sources": req.include_knowledge_sources,
+                "excluded_context_keys": [],
                 "target_words": req.target_words or 0,
                 "selected_direction": req.selected_direction or "",
                 "user_note": req.user_note or "",
@@ -3747,6 +3990,19 @@ async def generate_chapter(
                 # ── L-2: 嵌入式澄清 ──
                 "clarification_answers": {},
                 "clarification_round": 0,
+                "embedded_clarification": True,
+                "task_card_refresh_requested": False,
+                "context_refresh_requested": False,
+                # ── M-1: 生成前交互模式 ──
+                "pre_generation_mode": req.pre_generation_mode or "PLANNING",
+                "max_clarification_rounds": req.max_clarification_rounds or 3,
+                # ── M-3: 澄清与任务卡解耦 ──
+                "clarification_questions": [],
+                "clarification_assumptions": [],
+                "clarification_summary": "",
+                "needs_clarification": False,
+                "clarification_skipped": False,
+                "requirements_complete": False,
             }
 
             config = {"configurable": {"thread_id": thread_id}}
@@ -3785,11 +4041,6 @@ async def generate_chapter(
             async for event in app.astream_events(initial_state, config=config, version="v2"):
                 # 客户端取消时立即停止，不继续跑后续节点
                 if await _check_cancelled():
-                    try:
-                        await mark_cancelled(db, ai_run)
-                        await db.commit()
-                    except Exception:
-                        logger.warning("harness mark_cancelled 失败", exc_info=True)
                     return
                 kind = event.get("event")
 
@@ -3867,57 +4118,93 @@ async def generate_chapter(
                     if node_name == "context_loader":
                         yield f"event: progress\ndata: {json.dumps({'message': '上下文加载完成'}, ensure_ascii=False)}\n\n"
 
+                    elif node_name == "clarification_planner":
+                        # M-3: planner 节点结束后，如果 graph 下一步是 human_clarification，
+                        # 立即发澄清事件。human_clarification 本身是 interrupt_before 节点，
+                        # 不会真的进入 on_chain_end。
+                        if req.planning_review:
+                            _hc_state = await app.aget_state(config)
+                            _hc_next = _hc_state.next if _hc_state else ()
+                            if "human_clarification" in _hc_next:
+                                _hc_values = _hc_state.values if _hc_state else {}
+                                _hc_mode = _hc_values.get("pre_generation_mode", "PLANNING")
+                                _hc_round = int(_hc_values.get("clarification_round", 1) or 1)
+                                _hc_max_rounds = int(_hc_values.get("max_clarification_rounds", 3) or 3)
+                                _hc_questions = _hc_values.get("clarification_questions", [])
+                                _hc_assumptions = _hc_values.get("clarification_assumptions", [])
+                                _hc_require_answer = (_hc_mode == "STRICT" and _hc_round <= 1)
+                                await mark_waiting_human(db, ai_run, step_name="human_clarification", thread_id=thread_id)
+                                interrupt = await create_interrupt(
+                                    db,
+                                    run=ai_run,
+                                    thread_id=thread_id,
+                                    step_name="human_clarification",
+                                    payload={
+                                        "type": "clarification_questions",
+                                        "questions": _hc_questions,
+                                        "round": _hc_round,
+                                        "max_rounds": _hc_max_rounds,
+                                        "assumptions_if_skipped": _hc_assumptions,
+                                        "pre_generation_mode": _hc_mode,
+                                        "require_answer": _hc_require_answer,
+                                    },
+                                )
+                                await db.commit()
+                                yield f"event: run_status\ndata: {json.dumps({'run_id': run_id_str, 'status': 'WAITING_HUMAN'}, ensure_ascii=False)}\n\n"
+                                _clar_payload = {
+                                    "run_id": run_id_str,
+                                    "interrupt_id": str(interrupt.id) if interrupt else None,
+                                    "thread_id": thread_id,
+                                    "round": _hc_round,
+                                    "max_rounds": _hc_max_rounds,
+                                    "questions": _hc_questions,
+                                    "assumptions_if_skipped": _hc_assumptions,
+                                    "pre_generation_mode": _hc_mode,
+                                    "require_answer": _hc_require_answer,
+                                }
+                                yield f"event: clarification_required\ndata: {json.dumps(_clar_payload, ensure_ascii=False)}\n\n"
+                                return
+
                     elif node_name == "chapter_architect":
                         card = output.get("chapter_task_card", {}) if isinstance(output, dict) else {}
                         yield f"event: architect_output\ndata: {json.dumps({'task_card': card}, ensure_ascii=False)}\n\n"
 
-                        # ── L-1: task_card_review — 任务卡预览中断 ──
+                        # ── L-1: task_card_review — 任务卡预览中断（M-3: 不再含 clarification） ──
                         if req.planning_review:
                             _tc_state = await app.aget_state(config)
                             _tc_next = _tc_state.next if _tc_state else ()
                             if "task_card_review" in _tc_next:
-                                # ── L-2: 从 checkpoint state 读取上下文，调用澄清规划师 ──
                                 _tc_values = _tc_state.values if _tc_state else {}
-                                _tc_context = _tc_values.get("context", "")
-                                _tc_user_note = _tc_values.get("user_note", "")
-                                clarification = None
-                                try:
-                                    from agents.clarification import run_clarification_planner
-                                    _cr = await run_clarification_planner(
-                                        llm_config=llm_config_dict,
-                                        context=_tc_context,
-                                        chapter_num=chapter_num,
-                                        target_words=req.target_words or 2000,
-                                        user_note=_tc_user_note,
-                                        harness_run_id=run_id_str,
-                                    )
-                                    if _cr.get("needs_clarification"):
-                                        clarification = {
-                                            "needs_clarification": True,
-                                            "questions": _cr.get("questions", [])[:3],
-                                            "assumptions_if_skipped": _cr.get("assumptions_if_skipped", []),
-                                        }
-                                except Exception:
-                                    logger.warning("clarification_planner failed", exc_info=True)
-
+                                _tc_mode = _tc_values.get("pre_generation_mode", "PLANNING")
+                                _embedded_payload = _embedded_clarification_payload(_tc_values)
+                                _clarification_status = _task_card_clarification_status(_tc_values)
                                 await mark_waiting_human(db, ai_run, step_name="task_card_review", thread_id=thread_id)
                                 interrupt = await create_interrupt(
                                     db,
                                     run=ai_run,
                                     thread_id=thread_id,
                                     step_name="task_card_review",
-                                    payload={"task_card": card, "clarification": clarification},
+                                    payload={
+                                        "task_card": card,
+                                        "clarification": _embedded_payload,
+                                        "clarification_status": _clarification_status,
+                                        "context_summary": _tc_values.get("context_summary", {}),
+                                    },
                                 )
                                 await db.commit()
                                 yield f"event: run_status\ndata: {json.dumps({'run_id': run_id_str, 'status': 'WAITING_HUMAN'}, ensure_ascii=False)}\n\n"
-                                yield f"event: task_card_review_required\ndata: {json.dumps({'task_card': card, 'thread_id': thread_id, 'clarification': clarification}, ensure_ascii=False)}\n\n"
+                                yield f"event: task_card_review_required\ndata: {json.dumps({'task_card': card, 'thread_id': thread_id, 'pre_generation_mode': _tc_mode, 'clarification': _embedded_payload, 'clarification_status': _clarification_status, 'context_summary': _tc_values.get('context_summary', {})}, ensure_ascii=False)}\n\n"
                                 return
 
                     elif node_name == "chapter_writer":
                         draft = output.get("draft", "") if isinstance(output, dict) else ""
                         writer_content = draft
                         if draft:
-                            yield f"event: writer_output\ndata: {json.dumps({'content': draft}, ensure_ascii=False)}\n\n"
+                            writer_payload = {"content": draft}
+                            initial_draft = output.get("writer_draft", "") if isinstance(output, dict) else ""
+                            if initial_draft:
+                                writer_payload["initial_draft"] = initial_draft
+                            yield f"event: writer_output\ndata: {json.dumps(writer_payload, ensure_ascii=False)}\n\n"
 
                     elif node_name == "structural_critic":
                         critiques = output.get("critiques", []) if isinstance(output, dict) else []
@@ -4021,13 +4308,23 @@ async def generate_chapter(
             yield f"event: run_status\ndata: {json.dumps({'run_id': run_id_str, 'status': 'COMPLETED'}, ensure_ascii=False)}\n\n"
             yield f"event: done\ndata: {json.dumps({'message': '生成完成'}, ensure_ascii=False)}\n\n"
 
+        except WorkflowGenerationError as e:
+            logger.warning("关键生成节点失败: %s", e)
+            await _discard_incomplete_generation_run(
+                db,
+                run_id=str(ai_run.id) if ai_run is not None else None,
+                thread_id=workflow_thread_id,
+                reason=str(e),
+            )
+            yield f"event: error\ndata: {json.dumps({'message': str(e)}, ensure_ascii=False)}\n\n"
         except Exception as e:
             logger.exception("生成失败")
-            try:
-                await mark_failed(db, ai_run, error_message=str(e))
-                await db.commit()
-            except Exception:
-                logger.warning("harness mark_failed 失败", exc_info=True)
+            await _discard_incomplete_generation_run(
+                db,
+                run_id=str(ai_run.id) if ai_run is not None else None,
+                thread_id=workflow_thread_id,
+                reason=str(e),
+            )
             yield f"event: error\ndata: {json.dumps({'message': f'生成失败: {str(e)}'}, ensure_ascii=False)}\n\n"
         finally:
             finish_langfuse_context(langfuse_context)
@@ -4299,8 +4596,6 @@ async def create_human_decision(
     Returns:
         决策响应，包含 run_id、interrupt_id、status、message
     """
-    from models.harness_enums import InterruptDecision
-
     rid = _to_uuid(run_id)
     run_result = await db.execute(select(AiRun).where(AiRun.id == rid))
     run = run_result.scalar_one_or_none()
@@ -4354,13 +4649,16 @@ async def create_human_decision(
 
 # ==================== Clarification Loop API ====================
 
-@router.get("/ai-runs/{run_id}/clarification", response_model=ClarificationResponse)
+@router.get("/ai-runs/{run_id}/clarification", response_model=ClarificationResponse, deprecated=True)
 async def get_clarification(
     run_id: str,
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """获取指定 run 的最新 clarification interrupt 状态。
+    """[N-1 deprecated] 获取指定 run 的最新 clarification interrupt 状态。
+
+    M-3 后澄清链路统一走 resume action=submit_clarification/skip_clarification，
+    本接口仅供历史 run 查询保留，不再用于主流程。
 
     返回问题列表、已有回答、轮次等信息。
     如果没有 clarification interrupt，返回 status="none"。
@@ -4385,14 +4683,17 @@ async def get_clarification(
     return ClarificationResponse(**data)
 
 
-@router.post("/ai-runs/{run_id}/clarification-answers", response_model=ClarificationResponse)
+@router.post("/ai-runs/{run_id}/clarification-answers", response_model=ClarificationResponse, deprecated=True)
 async def submit_clarification_answers(
     run_id: str,
     req: ClarificationAnswerRequest,
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """提交澄清回答或跳过澄清。
+    """[N-1 deprecated] 提交澄清回答或跳过澄清。
+
+    M-3 后澄清链路统一走 resume action=submit_clarification/skip_clarification，
+    本接口仅供历史 run 保留，不再用于主流程。
 
     action=submit: 把 answers 写入 payload，resolve interrupt
     action=skip: 标记跳过，resolve interrupt（使用 assumptions_if_skipped）
@@ -4442,13 +4743,13 @@ async def resume_chapter_generation(
     request: Request,
     project_id: str,
     thread_id: str = Query(..., description="HITL 暂停时返回的 thread_id"),
-    action: str = Query(default="approve", pattern=r"^(approve|reject|review|revise|approve_task_card|reject_task_card|refresh_task_card)$"),
+    action: str = Query(default="approve", pattern=r"^(approve|reject|review|revise|approve_task_card|reject_task_card|refresh_task_card|refresh_task_card_context|submit_clarification|skip_clarification)$"),
     feedback: str | None = None,
     task_card: str | None = Query(default=None, description="任务卡 JSON（approve_task_card 时传入）"),
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """恢复 HITL 暂停的工作流
+    """恢复 HITL 暂停的工作流。
 
     用户对 Editor 输出做出决策后，恢复工作流执行：
     - approve: 结束流程，落库最终内容
@@ -4457,6 +4758,13 @@ async def resume_chapter_generation(
     - revise: 将用户选择的修改方向注入状态，重新从 Writer 开始
     - approve_task_card: 用户确认/修改任务卡后继续执行（L-1）
     - reject_task_card: 用户取消任务卡预览，终止流程（L-1）
+    - refresh_task_card: 提交内嵌澄清回答，重新生成任务卡（L-2）
+    - refresh_task_card_context: 应用上下文排除列表，重新构建上下文和任务卡（L-3）
+    - submit_clarification: 提交生成前澄清答案，继续 v2 规划
+    - skip_clarification: 跳过澄清，按默认假设继续 v2 规划
+
+    这个接口和 generate_chapter 配套：generate 遇到 interrupt_before 节点时返回
+    thread_id；resume 用 thread_id 从 LangGraph checkpointer 取回状态并继续执行。
     """
     # Rate limiting
     agent_limiter.check(f"generate:{user.id}")
@@ -4468,32 +4776,80 @@ async def resume_chapter_generation(
     if "/documents/" in request.url.path and project.mode != "article":
         raise HTTPException(status_code=400, detail="Document generation only available for article projects")
 
-    # 查询项目启用的专家，用于 HITL 恢复时构建正确的图
+    # 查询项目启用的专家，用于 HITL 恢复时构建正确的图。
+    # 旧 workflow 的图结构依赖 enabled_experts；resume 时必须用同一套专家配置。
     exp_result = await db.execute(
         select(Expert).where(Expert.project_id == uid, Expert.is_enabled == True)
     )
     enabled_experts = exp_result.scalars().all()
 
     # ── v2 判断：按 AiRun.workflow_key 决定走 v2 还是旧 workflow ──
+    # 旧 workflow 没有 workflow_key，v2 run 会写 workflow_key。
+    # 不能只靠 action 判断，因为 approve/revise 两套流程都有。
     _resume_run_check = (
-        await db.execute(select(AiRun).where(AiRun.thread_id == thread_id))
+        await db.execute(select(AiRun).where(AiRun.thread_id == thread_id, AiRun.project_id == uid))
     ).scalar_one_or_none()
     if _resume_run_check and _resume_run_check.workflow_key:
-        # L-1: 从 state 读取 planning_review 配置，保证 resume 图与生成时一致
+        # L-1: 从 state 读取 planning_review 配置，保证 resume 图与生成时一致。
+        # 如果 generate 时图里有 task_card_review/human_clarification，
+        # resume 时也必须编译出相同 interrupt 节点，否则 LangGraph 下一跳会错位。
         _checkpoint_config = {"configurable": {"thread_id": thread_id}}
-        _planning = False
+        _planning_actions = {"approve_task_card", "reject_task_card", "refresh_task_card", "refresh_task_card_context", "submit_clarification", "skip_clarification"}
+        _planning = action in _planning_actions
+        _pre_generation_mode = "PLANNING"
+        _embedded_clarification = True
         try:
-            _pre_state = await get_creative_app_v2().aget_state(_checkpoint_config)
+            _pre_state = await get_creative_app_v2(planning_review=True, pre_generation_mode="PLANNING").aget_state(_checkpoint_config)
             if _pre_state and _pre_state.values:
-                _planning = bool(_pre_state.values.get("planning_review", False))
+                _planning = bool(_pre_state.values.get("planning_review", False)) or _planning
+                _pre_generation_mode = _pre_state.values.get("pre_generation_mode", "PLANNING") or "PLANNING"
+                if "embedded_clarification" in _pre_state.values:
+                    _embedded_clarification = bool(_pre_state.values.get("embedded_clarification"))
+                else:
+                    # 兼容早期 L-2 run：如果 checkpoint 已停在 task_card_review，
+                    # 说明它原本就是嵌入式澄清拓扑；旧 human_clarification run
+                    # 则继续按旧图恢复。
+                    _embedded_clarification = "task_card_review" in set(_pre_state.next or ())
         except Exception:
             pass
-        app = get_creative_app_v2(planning_review=_planning)
+        app = get_creative_app_v2(
+            planning_review=_planning,
+            pre_generation_mode=_pre_generation_mode,
+            embedded_clarification=_embedded_clarification,
+        )
     else:
         app = get_creative_app(enabled_experts=enabled_experts)
     config = {"configurable": {"thread_id": thread_id}}
 
+    # 兼容两种传参方式：老前端可能用 query 参数 feedback/task_card，
+    # 新前端可能把它们放在 JSON body。
+    body_data: dict = {}
+    try:
+        body_raw = await request.body()
+        if body_raw:
+            parsed_body = json.loads(body_raw)
+            if isinstance(parsed_body, dict):
+                body_data = parsed_body
+    except Exception:
+        body_data = {}
+
+    resume_feedback = feedback
+    body_feedback = body_data.get("feedback")
+    if resume_feedback is None and isinstance(body_feedback, str):
+        resume_feedback = body_feedback
+
+    resume_task_card: str | dict | None = task_card
+    body_task_card = body_data.get("task_card")
+    if resume_task_card is None and isinstance(body_task_card, (str, dict)):
+        resume_task_card = body_task_card
+
     async def event_stream():
+        """resume 的 SSE 生成器。
+
+        它会根据 action 修改 LangGraph state，然后继续 astream_events。
+        如果 action=approve，则直接把当前候选稿落库；如果 action=revise，
+        则把反馈写入 critiques 并重新跑 writer/editor/checker。
+        """
         langfuse_context = activate_langfuse_context(
             name="resume_generation",
             user_id=str(user.id),
@@ -4506,20 +4862,65 @@ async def resume_chapter_generation(
                 "endpoint": request.url.path,
             },
         )
+        _resume_run_id: str | None = None
         try:
-            # 获取当前状态
+            # 获取当前状态。MemorySaver 中没有 thread_id 时，说明服务重启或状态过期。
             state = await app.aget_state(config)
             if not state or not state.values:
                 yield f"event: error\ndata: {json.dumps({'message': '工作流状态不存在或已过期'}, ensure_ascii=False)}\n\n"
                 return
 
+            state_project_id = state.values.get("project_id")
+            if state_project_id and str(state_project_id) != str(uid):
+                logger.warning(
+                    "拒绝跨项目恢复工作流: thread_id=%s requested_project=%s state_project=%s",
+                    thread_id,
+                    uid,
+                    state_project_id,
+                )
+                yield f"event: error\ndata: {json.dumps({'message': '工作流不属于当前项目'}, ensure_ascii=False)}\n\n"
+                return
+
+            # 规划阶段的恢复动作只能在其对应的 interrupt 前执行。否则调用方可以
+            # 越过澄清或任务卡审核，强行把状态写入错误的图节点，破坏后续恢复语义。
+            expected_interrupts = {
+                "approve": "human_review",
+                "reject": "human_review",
+                "review": "human_review",
+                "revise": "human_review",
+                "approve_task_card": "task_card_review",
+                "reject_task_card": "task_card_review",
+                "refresh_task_card": "task_card_review",
+                "refresh_task_card_context": "task_card_review",
+                "submit_clarification": "human_clarification",
+                "skip_clarification": "human_clarification",
+            }
+            expected_interrupt = expected_interrupts.get(action)
+            if expected_interrupt and expected_interrupt not in set(state.next or ()):
+                yield f"event: error\ndata: {json.dumps({'message': f'当前工作流不在 {expected_interrupt} 审核点，不能执行 {action}'}, ensure_ascii=False)}\n\n"
+                return
+
             # ── Harness: 按 thread_id 反查 run_id（resume 路径关联 run）──
+            # 这样 approve/revise 后的 GenerationRecord、版本和 LLM 日志都能串回同一次 AiRun。
             _resume_run = (
-                await db.execute(select(AiRun).where(AiRun.thread_id == thread_id))
+                await db.execute(select(AiRun).where(AiRun.thread_id == thread_id, AiRun.project_id == uid))
             ).scalar_one_or_none()
             _resume_run_id = str(_resume_run.id) if _resume_run else None
 
+            async def _discard_resume_run(reason: str) -> None:
+                await _discard_incomplete_generation_run(
+                    db,
+                    run_id=_resume_run_id,
+                    thread_id=thread_id,
+                    reason=reason,
+                )
+
+            if _resume_run and str(_resume_run.status) in {"CANCELLED", "COMPLETED", "FAILED"}:
+                yield f"event: error\ndata: {json.dumps({'message': f'该 AI 任务已处于 {_resume_run.status} 状态，不能重复恢复'}, ensure_ascii=False)}\n\n"
+                return
+
             # ── Harness E: 幂等性检查 - 防止重复 approve ──
+            # approve 会产生正式版本和写作记忆抽取，重复执行会造成重复版本。
             if _resume_run and action == "approve":
                 interrupt = await get_interrupt_by_thread(db, thread_id)
                 if interrupt and interrupt.resolved:
@@ -4560,101 +4961,392 @@ async def resume_chapter_generation(
                     f"data: {json.dumps({'id': record_id, 'status': 'candidate', 'langfuse_trace_id': current_langfuse_trace_id()}, ensure_ascii=False)}\n\n"
                 )
 
+            def _append_note_once(existing: str, segment: str) -> str:
+                """Append a user-facing note segment without duplicating it across task-card refreshes."""
+                existing = (existing or "").strip()
+                segment = (segment or "").strip()
+                if not segment:
+                    return existing
+                if segment in existing:
+                    return existing
+                return f"{existing}\n{segment}".strip() if existing else segment
+
+            async def _stream_planning_resume():
+                """Continue the planning graph until the next human-facing checkpoint.
+
+                Used by M-3 clarification submit/skip. It resumes the graph from
+                human_clarification, then stops at either another clarification
+                checkpoint or the task-card review checkpoint.
+                """
+                if _resume_run:
+                    await mark_running(db, _resume_run)
+                    await db.commit()
+                    yield f"event: run_status\ndata: {json.dumps({'run_id': _resume_run_id, 'status': 'RUNNING'}, ensure_ascii=False)}\n\n"
+
+                resume_stream = app.astream_events(None, config=config, version="v2")
+                resume_iter = resume_stream.__aiter__()
+                while True:
+                    try:
+                        event = await asyncio.wait_for(resume_iter.__anext__(), timeout=180)
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        aclose = getattr(resume_stream, "aclose", None)
+                        if aclose:
+                            await aclose()
+                        await _discard_resume_run("规划阶段超时")
+                        yield f"event: error\ndata: {json.dumps({'message': '规划阶段超过 180 秒没有响应，请稍后重试或检查模型服务'}, ensure_ascii=False)}\n\n"
+                        return
+                    if await request.is_disconnected():
+                        logger.info("客户端已断开连接，取消规划恢复")
+                        await _discard_resume_run("客户端断开连接")
+                        return
+
+                    kind = event.get("event")
+                    if kind == "on_chain_start":
+                        node_name = event.get("name", "")
+                        if node_name:
+                            yield f"event: agent_start\ndata: {json.dumps({'agent': node_name, 'step': 'running'}, ensure_ascii=False)}\n\n"
+                    elif kind == "on_chain_end":
+                        node_name = event.get("name", "")
+                        output = event.get("data", {}).get("output", {})
+                        if node_name:
+                            yield f"event: agent_done\ndata: {json.dumps({'agent': node_name, 'step': 'success'}, ensure_ascii=False)}\n\n"
+
+                        if node_name == "clarification_planner":
+                            _hc_state = await app.aget_state(config)
+                            _hc_next = _hc_state.next if _hc_state else ()
+                            if "human_clarification" in _hc_next:
+                                _hc_values = _hc_state.values if _hc_state else {}
+                                _hc_mode = _hc_values.get("pre_generation_mode", "PLANNING")
+                                _hc_round = int(_hc_values.get("clarification_round", 1) or 1)
+                                _hc_max_rounds = int(_hc_values.get("max_clarification_rounds", 3) or 3)
+                                _hc_questions = _hc_values.get("clarification_questions", [])
+                                _hc_assumptions = _hc_values.get("clarification_assumptions", [])
+                                _hc_require_answer = (_hc_mode == "STRICT" and _hc_round <= 1)
+                                if _resume_run:
+                                    await mark_waiting_human(db, _resume_run, step_name="human_clarification", thread_id=thread_id)
+                                    interrupt = await create_interrupt(
+                                        db,
+                                        run=_resume_run,
+                                        thread_id=thread_id,
+                                        step_name="human_clarification",
+                                        payload={
+                                            "type": "clarification_questions",
+                                            "questions": _hc_questions,
+                                            "round": _hc_round,
+                                            "max_rounds": _hc_max_rounds,
+                                            "assumptions_if_skipped": _hc_assumptions,
+                                            "pre_generation_mode": _hc_mode,
+                                            "require_answer": _hc_require_answer,
+                                        },
+                                    )
+                                    await db.commit()
+                                else:
+                                    interrupt = None
+                                yield f"event: run_status\ndata: {json.dumps({'run_id': _resume_run_id, 'status': 'WAITING_HUMAN'}, ensure_ascii=False)}\n\n"
+                                _clar_payload = {
+                                    "run_id": _resume_run_id,
+                                    "interrupt_id": str(interrupt.id) if interrupt else None,
+                                    "thread_id": thread_id,
+                                    "round": _hc_round,
+                                    "max_rounds": _hc_max_rounds,
+                                    "questions": _hc_questions,
+                                    "assumptions_if_skipped": _hc_assumptions,
+                                    "pre_generation_mode": _hc_mode,
+                                    "require_answer": _hc_require_answer,
+                                }
+                                yield f"event: clarification_required\ndata: {json.dumps(_clar_payload, ensure_ascii=False)}\n\n"
+                                return
+
+                        elif node_name == "chapter_architect":
+                            card = output.get("chapter_task_card", {}) if isinstance(output, dict) else {}
+                            yield f"event: architect_output\ndata: {json.dumps({'task_card': card}, ensure_ascii=False)}\n\n"
+                            _tc_state = await app.aget_state(config)
+                            _tc_next = _tc_state.next if _tc_state else ()
+                            if "task_card_review" in _tc_next:
+                                _tc_values = _tc_state.values if _tc_state else {}
+                                _tc_mode = _tc_values.get("pre_generation_mode", "PLANNING")
+                                _embedded_payload = _embedded_clarification_payload(_tc_values)
+                                _clarification_status = _task_card_clarification_status(_tc_values)
+                                if _tc_values.get("task_card_refresh_requested"):
+                                    # workflow_v2 的路由依据该 flag 选择 architect；
+                                    # architect 完成后清掉它，确保下一次确认进入 writer。
+                                    await app.aupdate_state(
+                                        config,
+                                        {"task_card_refresh_requested": False, "task_card_reviewed": False},
+                                        as_node="chapter_architect",
+                                    )
+                                if _resume_run:
+                                    await mark_waiting_human(db, _resume_run, step_name="task_card_review", thread_id=thread_id)
+                                _task_card_payload = {
+                                    "task_card": card,
+                                    "clarification": _embedded_payload,
+                                    "clarification_status": _clarification_status,
+                                    "context_summary": _tc_values.get("context_summary", {}),
+                                }
+                                interrupt = await create_interrupt(
+                                    db,
+                                    run=_resume_run,
+                                    thread_id=thread_id,
+                                    step_name="task_card_review",
+                                    payload=_task_card_payload,
+                                )
+                                await db.commit()
+                                yield f"event: run_status\ndata: {json.dumps({'run_id': _resume_run_id, 'status': 'WAITING_HUMAN'}, ensure_ascii=False)}\n\n"
+                                yield f"event: task_card_review_required\ndata: {json.dumps({'task_card': card, 'thread_id': thread_id, 'pre_generation_mode': _tc_mode, 'clarification': _embedded_payload, 'clarification_status': _clarification_status, 'context_summary': _tc_values.get('context_summary', {})}, ensure_ascii=False)}\n\n"
+                                return
+
+                yield f"event: done\ndata: {json.dumps({'message': '规划阶段已完成'}, ensure_ascii=False)}\n\n"
+
             if action == "reject":
                 # ── Harness E: reject 时解析 interrupt ──
                 if _resume_run:
                     interrupt = await get_interrupt_by_thread(db, thread_id)
                     if interrupt and not interrupt.resolved:
-                        await resolve_interrupt(db, interrupt, decision=InterruptDecision.REJECT, feedback=feedback)
+                        await resolve_interrupt(db, interrupt, decision=InterruptDecision.REJECT, feedback=resume_feedback)
                         await db.commit()
                 yield f"event: done\ndata: {json.dumps({'message': '已拒绝，流程终止'}, ensure_ascii=False)}\n\n"
                 return
 
+            if action == "refresh_task_card_context":
+                raw_keys = body_data.get("excluded_context_keys", [])
+                if not isinstance(raw_keys, list) or any(not isinstance(value, str) for value in raw_keys):
+                    yield f"event: error\ndata: {json.dumps({'message': 'excluded_context_keys 必须是字符串数组'}, ensure_ascii=False)}\n\n"
+                    return
+                excluded_keys = sorted({value.strip() for value in raw_keys if value.strip()})
+                if len(excluded_keys) > 200:
+                    yield f"event: error\ndata: {json.dumps({'message': '上下文排除项不能超过 200 条'}, ensure_ascii=False)}\n\n"
+                    return
+
+                await app.aupdate_state(config, {
+                    "excluded_context_keys": excluded_keys,
+                    "context_refresh_requested": True,
+                    "task_card_refresh_requested": False,
+                    "task_card_reviewed": False,
+                }, as_node="task_card_review")
+                if _resume_run:
+                    await mark_running(db, _resume_run)
+                    await db.commit()
+                async for chunk in _stream_planning_resume():
+                    yield chunk
+                return
+
             # ── L-1: reject_task_card — 用户取消任务卡预览 ──
+            if action == "refresh_task_card":
+                # L-2：任务卡上的澄清回答只允许从 task_card_review 回环到 architect。
+                current = state.values
+                raw_answers = body_data.get("clarification_answers", {})
+                user_note_from_body = str(body_data.get("user_note", "") or "").strip()
+                if not isinstance(raw_answers, dict):
+                    yield f"event: error\ndata: {json.dumps({'message': 'clarification_answers 必须是 JSON 对象'}, ensure_ascii=False)}\n\n"
+                    return
+
+                answers = {
+                    str(key): str(value).strip()
+                    for key, value in raw_answers.items()
+                    if value is not None and str(value).strip()
+                }
+                if not answers and not user_note_from_body:
+                    yield f"event: error\ndata: {json.dumps({'message': '请至少回答一个澄清问题或填写补充要求'}, ensure_ascii=False)}\n\n"
+                    return
+
+                current_round = int(current.get("clarification_round", 0) or 0)
+                max_rounds = max(1, int(current.get("max_clarification_rounds", 3) or 3))
+                if current_round >= max_rounds:
+                    yield f"event: error\ndata: {json.dumps({'message': f'澄清已达到最大轮数 {max_rounds}，请直接确认当前任务卡'}, ensure_ascii=False)}\n\n"
+                    return
+
+                merged_answers = dict(current.get("clarification_answers", {}) or {})
+                merged_answers.update(answers)
+                from agents.clarification import build_clarification_summary
+
+                summary = build_clarification_summary(
+                    current.get("clarification_questions", []) or [],
+                    merged_answers,
+                )
+                updated_note = _append_note_once(
+                    current.get("user_note", "") or "",
+                    f"[用户补充] {user_note_from_body}" if user_note_from_body else "",
+                )
+                update_state = {
+                    "clarification_answers": merged_answers,
+                    "clarification_summary": _append_note_once(
+                        current.get("clarification_summary", "") or "", summary,
+                    ),
+                    "clarification_round": current_round + 1,
+                    "user_note": updated_note,
+                    "requirements_complete": True,
+                    "needs_clarification": False,
+                    "clarification_skipped": False,
+                    "task_card_reviewed": False,
+                    "task_card_refresh_requested": True,
+                }
+                await app.aupdate_state(config, update_state, as_node="task_card_review")
+
+                if _resume_run:
+                    await mark_running(db, _resume_run)
+                    await db.commit()
+                # 故意不 resolve task_card_review interrupt：后续 architect 再次停在同一
+                # 审核点时，create_interrupt 会复用这条未解决记录并替换 payload。
+                async for chunk in _stream_planning_resume():
+                    yield chunk
+                return
+
             if action == "reject_task_card":
                 if _resume_run:
-                    interrupt = await get_interrupt_by_thread(db, thread_id)
+                    interrupt = await get_unresolved_interrupt_by_thread_step(db, thread_id, "task_card_review")
                     if interrupt and not interrupt.resolved:
                         await resolve_interrupt(db, interrupt, decision=InterruptDecision.REJECT, feedback="用户取消任务卡预览")
-                        await db.commit()
+                    await mark_cancelled(db, _resume_run)
+                    await db.commit()
                 yield f"event: done\ndata: {json.dumps({'message': '已取消任务卡预览'}, ensure_ascii=False)}\n\n"
                 return
 
-            # ── L-2: refresh_task_card — 回答澄清后重跑 architect，不 resolve interrupt ──
-            if action == "refresh_task_card":
-                body_data: dict = {}
-                try:
-                    body_raw = await request.body()
-                    if body_raw:
-                        body_data = json.loads(body_raw)
-                except Exception:
-                    pass
+            # ── M-3: submit_clarification — 用户回答澄清后继续 graph ──
+            if action == "submit_clarification":
+                current = state.values
                 answers = body_data.get("clarification_answers", {}) if body_data else {}
-                questions = body_data.get("clarification_questions", []) if body_data else []
+                user_note_from_body = (body_data.get("user_note", "") if body_data else "") or ""
+                if not isinstance(answers, dict):
+                    answers = {}
 
-                if not answers:
-                    yield f"event: error\ndata: {json.dumps({'message': '缺少澄清答案'}, ensure_ascii=False)}\n\n"
+                mode = current.get("pre_generation_mode", "PLANNING")
+                current_round = int(current.get("clarification_round", 1) or 1)
+                if mode == "STRICT" and current_round <= 1 and not answers and not user_note_from_body:
+                    yield f"event: error\ndata: {json.dumps({'message': '严格模式首轮请至少回答一个问题或填写补充要求'}, ensure_ascii=False)}\n\n"
                     return
 
-                current = state.values
                 prev_answers = dict(current.get("clarification_answers", {}) or {})
-                prev_answers.update(answers)
-                new_round = current.get("clarification_round", 0) + 1
+                prev_answers.update({str(k): str(v) for k, v in answers.items() if v is not None})
 
-                # 构建澄清总结
                 from agents.clarification import build_clarification_summary
+                questions = current.get("clarification_questions", []) or []
                 summary = build_clarification_summary(questions, prev_answers)
-                prev_note = current.get("user_note", "") or ""
-                updated_note = prev_note
-                if summary:
-                    updated_note = f"{prev_note}\n[用户澄清第{new_round}轮] {summary}".strip()
+                updated_summary = _append_note_once(current.get("clarification_summary", "") or "", summary)
+                updated_note = _append_note_once(
+                    current.get("user_note", "") or "",
+                    f"[用户补充] {user_note_from_body}" if user_note_from_body else "",
+                )
 
-                # 更新 checkpoint state（不 resolve interrupt）
                 await app.aupdate_state(config, {
                     "clarification_answers": prev_answers,
-                    "clarification_round": new_round,
+                    "clarification_summary": updated_summary,
                     "user_note": updated_note,
-                }, as_node="task_card_review")
+                    "requirements_complete": False,
+                    "needs_clarification": False,
+                    "clarification_skipped": False,
+                }, as_node="human_clarification")
 
-                # 直接调用 chapter_architect_node 重新生成任务卡
-                from agents.workflow_v2 import chapter_architect_node
-                updated_state = await app.aget_state(config)
-                architect_input = updated_state.values if updated_state else {}
-                architect_result = await chapter_architect_node(architect_input)
-                new_card = architect_result.get("chapter_task_card", {})
+                if _resume_run:
+                    interrupt = await get_interrupt_by_thread(db, thread_id)
+                    if interrupt and not interrupt.resolved:
+                        await resolve_interrupt(db, interrupt, decision=InterruptDecision.SUBMIT_CLARIFICATION, feedback=summary)
+                        await db.commit()
 
-                # 写入新任务卡到 checkpoint
+                async for chunk in _stream_planning_resume():
+                    yield chunk
+                return
+
+            # ── M-3: skip_clarification — 非 STRICT 首轮可跳过澄清，继续进入任务卡 ──
+            if action == "skip_clarification":
+                current = state.values
+                mode = current.get("pre_generation_mode", "PLANNING")
+                current_round = int(current.get("clarification_round", 1) or 1)
+                if mode == "STRICT" and current_round <= 1:
+                    yield f"event: error\ndata: {json.dumps({'message': '严格模式首轮需要先回答澄清问题'}, ensure_ascii=False)}\n\n"
+                    return
+
                 await app.aupdate_state(config, {
-                    "chapter_task_card": new_card,
-                }, as_node="task_card_review")
+                    "requirements_complete": True,
+                    "needs_clarification": False,
+                    "clarification_skipped": True,
+                    "clarification_questions": [],
+                }, as_node="human_clarification")
 
-                yield f"event: task_card_review_required\ndata: {json.dumps({'task_card': new_card, 'thread_id': thread_id, 'clarification': None}, ensure_ascii=False)}\n\n"
-                yield f"event: done\ndata: {json.dumps({'message': '任务卡已刷新'}, ensure_ascii=False)}\n\n"
+                if _resume_run:
+                    interrupt = await get_interrupt_by_thread(db, thread_id)
+                    if interrupt and not interrupt.resolved:
+                        await resolve_interrupt(db, interrupt, decision=InterruptDecision.SKIP_CLARIFICATION, feedback="用户跳过生成前澄清")
+                        await db.commit()
+
+                async for chunk in _stream_planning_resume():
+                    yield chunk
                 return
 
             # ── L-1: approve_task_card — 用户确认/修改任务卡后继续执行 ──
             if action == "approve_task_card":
                 current_values = state.values
+                logger.info(
+                    "task_card approve requested: thread_id=%s current_next=%s",
+                    thread_id,
+                    tuple(state.next or ()),
+                )
                 modified_card = None
-                if task_card:
+                if resume_task_card:
                     try:
-                        modified_card = json.loads(task_card)
-                    except json.JSONDecodeError:
+                        modified_card = (
+                            json.loads(resume_task_card)
+                            if isinstance(resume_task_card, str)
+                            else resume_task_card
+                        )
+                    except (TypeError, json.JSONDecodeError):
                         yield f"event: error\ndata: {json.dumps({'message': 'task_card JSON 解析失败'}, ensure_ascii=False)}\n\n"
+                        return
+                    if not isinstance(modified_card, dict):
+                        yield f"event: error\ndata: {json.dumps({'message': 'task_card 必须是 JSON 对象'}, ensure_ascii=False)}\n\n"
                         return
 
                 update_state: dict = {
                     "task_card_reviewed": True,
+                    "task_card_refresh_requested": False,
+                    "context_refresh_requested": False,
                 }
                 if modified_card:
                     update_state["modified_task_card"] = modified_card
                     update_state["chapter_task_card"] = modified_card  # 覆盖 architect 输出
 
-                await app.aupdate_state(config, update_state, as_node="task_card_review")
+                # 从 body_data 读取用户补充要求
+                user_note = (body_data.get("user_note", "") or "").strip()
+                if user_note:
+                    update_state["user_note"] = _append_note_once(
+                        current_values.get("user_note", "") or "",
+                        f"[用户补充] {user_note}",
+                    )
+
+                try:
+                    await asyncio.wait_for(
+                        app.aupdate_state(config, update_state, as_node="task_card_review"),
+                        timeout=30,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "task_card approve aupdate_state timed out: thread_id=%s current_next=%s",
+                        thread_id,
+                        tuple(state.next or ()),
+                    )
+                    yield f"event: error\ndata: {json.dumps({'message': '任务卡确认状态写入超时，请刷新后重试'}, ensure_ascii=False)}\n\n"
+                    return
+                post_state = await app.aget_state(config)
+                post_next = tuple(post_state.next or ()) if post_state else ()
+                logger.info(
+                    "task_card approve resume checkpoint: thread_id=%s next=%s",
+                    thread_id,
+                    post_next,
+                )
+                yield f"event: progress\ndata: {json.dumps({'message': '任务卡已确认，开始创作正文'}, ensure_ascii=False)}\n\n"
+                if not post_next:
+                    await _discard_resume_run("任务卡确认后没有可继续执行的节点")
+                    yield f"event: error\ndata: {json.dumps({'message': '任务卡已确认，但工作流没有可继续执行的节点，请重新生成'}, ensure_ascii=False)}\n\n"
+                    return
+                if "chapter_writer" not in post_next:
+                    await _discard_resume_run("任务卡确认后下一步不是正文创作节点")
+                    yield f"event: error\ndata: {json.dumps({'message': f'任务卡已确认，但下一步不是正文创作节点：{list(post_next)}'}, ensure_ascii=False)}\n\n"
+                    return
 
                 # 解析 interrupt
                 if _resume_run:
-                    interrupt = await get_interrupt_by_thread(db, thread_id)
+                    interrupt = await get_unresolved_interrupt_by_thread_step(db, thread_id, "task_card_review")
                     if interrupt and not interrupt.resolved:
                         await resolve_interrupt(db, interrupt, decision=InterruptDecision.APPROVE,
                                                 feedback=f"任务卡已确认{', 已修改' if modified_card else ''}")
@@ -4669,15 +5361,36 @@ async def resume_chapter_generation(
                     if isinstance(pack, dict)
                 }
 
-                async for event in app.astream_events(None, config=config, version="v2"):
+                resume_stream = app.astream_events(None, config=config, version="v2")
+                resume_iter = resume_stream.__aiter__()
+                while True:
+                    try:
+                        event = await asyncio.wait_for(resume_iter.__anext__(), timeout=180)
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "task_card approve resume timed out waiting for workflow event: thread_id=%s next=%s",
+                            thread_id,
+                            post_next,
+                        )
+                        aclose = getattr(resume_stream, "aclose", None)
+                        if aclose:
+                            await aclose()
+                        await _discard_resume_run("正文创作阶段超时")
+                        yield f"event: error\ndata: {json.dumps({'message': '正文创作节点超过 180 秒没有响应，请稍后重试或检查模型服务'}, ensure_ascii=False)}\n\n"
+                        return
                     if await request.is_disconnected():
                         logger.info("客户端已断开连接，取消恢复生成")
+                        await _discard_resume_run("客户端断开连接")
                         return
                     kind = event.get("event")
                     if kind == "on_chain_start":
                         node_name = event.get("name", "")
                         if node_name:
                             yield f"event: agent_start\ndata: {json.dumps({'agent': node_name, 'step': 'running'}, ensure_ascii=False)}\n\n"
+                            if node_name == "chapter_writer":
+                                yield f"event: progress\ndata: {json.dumps({'message': '写手正在生成正文，通常需要 1-3 分钟'}, ensure_ascii=False)}\n\n"
                     elif kind == "on_chain_end":
                         node_name = event.get("name", "")
                         output = event.get("data", {}).get("output", {})
@@ -4692,7 +5405,11 @@ async def resume_chapter_generation(
                             draft = output.get("draft", "") if isinstance(output, dict) else ""
                             if draft:
                                 resumed_content = draft
-                            yield f"event: writer_output\ndata: {json.dumps({'content': draft}, ensure_ascii=False)}\n\n"
+                            writer_payload = {"content": draft}
+                            initial_draft = output.get("writer_draft", "") if isinstance(output, dict) else ""
+                            if initial_draft:
+                                writer_payload["initial_draft"] = initial_draft
+                            yield f"event: writer_output\ndata: {json.dumps(writer_payload, ensure_ascii=False)}\n\n"
                         elif node_name in {"critic", "structural_critic"}:
                             critiques = output.get("critiques", []) if isinstance(output, dict) else []
                             yield f"event: critic_output\ndata: {json.dumps({'critiques': critiques}, ensure_ascii=False)}\n\n"
@@ -4785,8 +5502,8 @@ async def resume_chapter_generation(
                 update_state = {
                     "revision_count": revision_count,
                 }
-                if feedback:
-                    update_state["critiques"] = [f"[用户选择的修改方向] {feedback}"]
+                if resume_feedback:
+                    update_state["critiques"] = [f"[用户选择的修改方向] {resume_feedback}"]
 
                 await app.aupdate_state(config, update_state, as_node="human_review")
 
@@ -4802,6 +5519,7 @@ async def resume_chapter_generation(
                 async for event in app.astream_events(None, config=config, version="v2"):
                     if await request.is_disconnected():
                         logger.info("客户端已断开连接，取消恢复生成")
+                        await _discard_resume_run("客户端断开连接")
                         return
                     kind = event.get("event")
                     if kind == "on_chain_start":
@@ -4822,7 +5540,11 @@ async def resume_chapter_generation(
                             draft = output.get("draft", "") if isinstance(output, dict) else ""
                             if draft:
                                 revised_content = draft
-                            yield f"event: writer_output\ndata: {json.dumps({'content': draft}, ensure_ascii=False)}\n\n"
+                            writer_payload = {"content": draft}
+                            initial_draft = output.get("writer_draft", "") if isinstance(output, dict) else ""
+                            if initial_draft:
+                                writer_payload["initial_draft"] = initial_draft
+                            yield f"event: writer_output\ndata: {json.dumps(writer_payload, ensure_ascii=False)}\n\n"
                         elif node_name in {"critic", "structural_critic"}:
                             critiques = output.get("critiques", []) if isinstance(output, dict) else []
                             yield f"event: critic_output\ndata: {json.dumps({'critiques': critiques}, ensure_ascii=False)}\n\n"
@@ -4870,20 +5592,15 @@ async def resume_chapter_generation(
             # approve: 恢复执行到结束
             await app.aupdate_state(config, {}, as_node="human_review")
 
-            # ── Harness E: approve 时解析 interrupt ──
-            if _resume_run:
-                from models.harness_enums import InterruptDecision
-                interrupt = await get_interrupt_by_thread(db, thread_id)
-                if interrupt and not interrupt.resolved:
-                    await resolve_interrupt(db, interrupt, decision=InterruptDecision.APPROVE, feedback=feedback)
-                    await db.commit()
-
             current_values = state.values
             # 优先使用 edited_draft（经编辑润色），若无则使用 draft（原始创作）
             raw_content = current_values.get("edited_draft", "") or current_values.get("draft", "")
             target_content_id = current_values.get("chapter_id", "")
+            content_written = False
+            memory_extraction_payload: dict | None = None
 
-            # 落库：小说写 Chapter，文章写 Document。
+            # 落库：小说写 Chapter，文章写 Document。这里故意不提前 commit：正文、
+            # 版本、GenerationRecord 状态和 AiRun 完成状态必须作为一个原子事务提交。
             if raw_content and target_content_id:
                 try:
                     content_id = _to_uuid(target_content_id)
@@ -4894,7 +5611,7 @@ async def resume_chapter_generation(
                         document = doc_result.scalar_one_or_none()
                         if document:
                             await save_document_content(db, document, raw_content, source="ai_approve", set_status="draft")
-                            await db.commit()
+                            content_written = True
                     else:
                         ch_result = await db.execute(
                             select(Chapter).where(Chapter.id == content_id, Chapter.project_id == uid)
@@ -4905,8 +5622,10 @@ async def resume_chapter_generation(
                                 db, chapter, raw_content, source="ai_approve",
                                 set_status="draft", run_id=_resume_run_id,
                             )
-                            await db.commit()
+                            content_written = True
                             # ── Phase F: 联动 GenerationRecord.accepted_version_id ──
+                            _ver = None
+                            _gr = None
                             if _resume_run_id:
                                 _gr = (
                                     await db.execute(
@@ -4916,11 +5635,14 @@ async def resume_chapter_generation(
                                     )
                                 ).scalar_one_or_none()
                                 if _gr:
-                                    # 查刚创建的版本（最新）
+                                    # 只查本次 Run 创建的版本，避免正文未变化时误绑定旧版本。
                                     _ver = (
                                         await db.execute(
                                             select(ChapterVersion)
-                                            .where(ChapterVersion.chapter_id == chapter.id)
+                                            .where(
+                                                ChapterVersion.chapter_id == chapter.id,
+                                                ChapterVersion.run_id == _to_uuid(_resume_run_id),
+                                            )
                                             .order_by(ChapterVersion.version_number.desc())
                                             .limit(1)
                                         )
@@ -4930,7 +5652,6 @@ async def resume_chapter_generation(
                                             db, _gr, "applied",
                                             accepted_version_id=str(_ver.id),
                                         )
-                                        await db.commit()
                             # ── Phase I-6 / H2: 后台抽取写作记忆 ──
                             # v2 run（有 workflow_key）用 story-recorder + memory-curator
                             # 旧 run / 无 workflow_key 用旧 FactExtractionAgent
@@ -4943,40 +5664,77 @@ async def resume_chapter_generation(
                                     else (str(_ver.id) if _ver else None)
                                 )
                                 if _accepted_vid:
-                                    _use_story_recorder = (
-                                        _resume_run and _resume_run.workflow_key
-                                    )
-                                    if _use_story_recorder:
-                                        asyncio.create_task(run_story_recorder_extraction(
-                                            project_id=str(uid),
-                                            chapter_id=str(chapter.id),
-                                            chapter_version_id=_accepted_vid,
-                                            chapter_sequence_number=chapter.sequence_number,
-                                            run_id=_resume_run_id,
-                                            content=raw_content,
-                                            context=current_values.get("context", ""),
-                                            llm_config=current_values.get("llm_config"),
-                                        ))
-                                    else:
-                                        asyncio.create_task(run_fact_extraction(
-                                            project_id=str(uid),
-                                            chapter_id=str(chapter.id),
-                                            chapter_version_id=_accepted_vid,
-                                            chapter_sequence_number=chapter.sequence_number,
-                                            run_id=_resume_run_id,
-                                            content=raw_content,
-                                            context=current_values.get("context", ""),
-                                            llm_config=current_values.get("llm_config"),
-                                        ))
+                                    memory_extraction_payload = {
+                                        "use_story_recorder": bool(_resume_run and _resume_run.workflow_key),
+                                        "project_id": str(uid),
+                                        "chapter_id": str(chapter.id),
+                                        "chapter_version_id": _accepted_vid,
+                                        "chapter_sequence_number": chapter.sequence_number,
+                                        "run_id": _resume_run_id,
+                                        "content": raw_content,
+                                        "context": current_values.get("context", ""),
+                                        "llm_config": current_values.get("llm_config"),
+                                    }
                 except Exception:
                     logger.exception("落库失败")
+                    await _discard_resume_run("正式内容保存失败")
                     yield f"event: error\ndata: {json.dumps({'message': '保存失败'}, ensure_ascii=False)}\n\n"
                     return
 
+            # 只有正文/版本、审计关联和运行状态都准备就绪，才一次性提交。
+            if _resume_run:
+                interrupt = await get_unresolved_interrupt_by_thread_step(db, thread_id, "human_review")
+                if interrupt and not interrupt.resolved:
+                    await resolve_interrupt(db, interrupt, decision=InterruptDecision.APPROVE, feedback=resume_feedback)
+                await mark_completed(db, _resume_run)
+                await db.commit()
+            elif content_written:
+                await db.commit()
+
+            # commit 成功后再启动独立 session 的记忆抽取，避免后台任务读取到未提交版本。
+            if memory_extraction_payload:
+                if memory_extraction_payload["use_story_recorder"]:
+                    asyncio.create_task(run_story_recorder_extraction(
+                        project_id=memory_extraction_payload["project_id"],
+                        chapter_id=memory_extraction_payload["chapter_id"],
+                        chapter_version_id=memory_extraction_payload["chapter_version_id"],
+                        chapter_sequence_number=memory_extraction_payload["chapter_sequence_number"],
+                        run_id=memory_extraction_payload["run_id"],
+                        content=memory_extraction_payload["content"],
+                        context=memory_extraction_payload["context"],
+                        llm_config=memory_extraction_payload["llm_config"],
+                    ))
+                else:
+                    asyncio.create_task(run_fact_extraction(
+                        project_id=memory_extraction_payload["project_id"],
+                        chapter_id=memory_extraction_payload["chapter_id"],
+                        chapter_version_id=memory_extraction_payload["chapter_version_id"],
+                        chapter_sequence_number=memory_extraction_payload["chapter_sequence_number"],
+                        run_id=memory_extraction_payload["run_id"],
+                        content=memory_extraction_payload["content"],
+                        context=memory_extraction_payload["context"],
+                        llm_config=memory_extraction_payload["llm_config"],
+                    ))
+
             yield f"event: done\ndata: {json.dumps({'message': '已批准，内容已保存'}, ensure_ascii=False)}\n\n"
 
+        except WorkflowGenerationError as e:
+            logger.warning("恢复时关键生成节点失败: %s", e)
+            await _discard_incomplete_generation_run(
+                db,
+                run_id=_resume_run_id,
+                thread_id=thread_id,
+                reason=str(e),
+            )
+            yield f"event: error\ndata: {json.dumps({'message': str(e)}, ensure_ascii=False)}\n\n"
         except Exception as e:
             logger.exception("恢复工作流失败")
+            await _discard_incomplete_generation_run(
+                db,
+                run_id=_resume_run_id,
+                thread_id=thread_id,
+                reason=str(e),
+            )
             yield f"event: error\ndata: {json.dumps({'message': f'恢复失败: {str(e)}'}, ensure_ascii=False)}\n\n"
         finally:
             finish_langfuse_context(langfuse_context)
@@ -5639,7 +6397,11 @@ async def list_knowledge_sources(
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """列出项目的所有资料库条目。支持 source_type 过滤、q 关键词搜索、sort 排序。"""
+    """列出项目的所有资料库条目。支持 source_type 过滤、q 关键词搜索、sort 排序。
+
+    列表接口只返回 content_preview，不返回完整 content，避免资料很大时拖慢页面。
+    点开详情再通过 sources/{source_id} 读取全文。
+    """
     uid = _to_uuid(project_id)
     await _verify_project_owner(uid, user.id, db)
 
@@ -5713,7 +6475,14 @@ async def create_knowledge_source(
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """新建资料库条目。同人规则默认 always_inject=True。"""
+    """新建资料库条目。同人规则默认 always_inject=True。
+
+    写入 ProjectSource 后会立即：
+    1. chunk_and_save 生成检索切片；
+    2. rebuild_source_facts 重建规则事实索引。
+
+    这样用户上传资料后可以马上检索/问答，不需要手动点重建。
+    """
     uid = _to_uuid(project_id)
     await _verify_project_owner(uid, user.id, db)
 
@@ -5721,7 +6490,8 @@ async def create_knowledge_source(
     if req.source_type == "fanfic_rule" and not req.always_inject:
         always_inject = True
 
-    # novel 类型：genre/canon_level 存入 metadata_，供抽取阶段读取
+    # novel 类型：genre/canon_level 存入 metadata_，供抽取阶段读取。
+    # 例如魔法幻想类资料会走对应的结构化抽取 schema/规则。
     metadata_ = req.metadata_ or {}
     if req.source_type == "novel":
         if req.genre:
@@ -5744,11 +6514,13 @@ async def create_knowledge_source(
     db.add(source)
     await db.commit()
 
-    # 自动切片（短资料也能保底存一个 chunk）
+    # 自动切片（短资料也能保底存一个 chunk）。
+    # chunk 是后续 search/ask 的最小证据单位。
     from services.knowledge_source import chunk_and_save
     await chunk_and_save(db, uid, str(source.id))
 
-    # 上传后自动重建事实索引，不让用户必须手动点 reindex
+    # 上传后自动重建事实索引，不让用户必须手动点 reindex。
+    # 事实索引用于人物-能力等高频问题的本地短路回答。
     from services.knowledge_fact_index import rebuild_source_facts
     await rebuild_source_facts(db, uid, str(source.id))
 
@@ -6848,7 +7620,11 @@ async def search_knowledge(
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """纯检索：在资料库中搜索匹配片段。不调用 LLM。"""
+    """纯检索：在资料库中搜索匹配片段。不调用 LLM。
+
+    这个接口适合调试知识库召回质量：如果 search 找不到证据，
+    ask 基本也很难给出可靠回答。
+    """
     uid = _to_uuid(project_id)
     await _verify_project_owner(uid, user.id, db)
 
@@ -6872,6 +7648,7 @@ async def summarize_knowledge_source(
     """对资料条目进行 AI 摘要（chunk + 源级）。
 
     原文永远保存。摘要失败时只返回错误，不清空已有数据。
+    摘要和关键词是检索增强字段，不是原文替代品。
     """
     uid = _to_uuid(project_id)
     await _verify_project_owner(uid, user.id, db)
@@ -6892,7 +7669,11 @@ async def ask_knowledge(
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """资料问答：检索资料库 + 结构化表，调用 LLM 生成带引用的回答。"""
+    """资料问答：检索资料库 + 结构化表，调用 LLM 生成带引用的回答。
+
+    具体检索、证据分类、prompt 预算和会话保存都在 services.knowledge_source
+    的 ask_knowledge_question 中完成。路由层只做权限校验和参数透传。
+    """
     uid = _to_uuid(project_id)
     await _verify_project_owner(uid, user.id, db)
 

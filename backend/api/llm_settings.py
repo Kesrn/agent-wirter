@@ -1,4 +1,14 @@
-"""LLM 设置路由"""
+"""LLM 设置路由。
+
+用户可以在设置页保存自己的模型供应商、base_url、model_id 和 API Key。
+运行生成任务时，api/llm_deps.py 会优先读取用户配置；如果用户未配置，
+再回退到 config/settings.py 中的全局默认值。
+
+安全策略：
+- API Key 使用 Fernet 加密后存库；
+- 任何 GET/status 接口只返回 api_key_set/has_api_key 布尔值；
+- 不把明文或密文 API Key 返回给前端。
+"""
 
 import json
 import logging
@@ -25,6 +35,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
 PROVIDER_BASE_URLS = {
+    # 这些厂商都提供 OpenAI 兼容接口，因此后端可以复用同一套 OpenAI SDK 调用逻辑。
+    # custom 场景由用户手动填写 base_url，不放在这里。
     "openai": "https://api.openai.com/v1",
     "deepseek": "https://api.deepseek.com/v1",
     "siliconflow": "https://api.siliconflow.cn/v1",
@@ -37,6 +49,11 @@ PROVIDER_BASE_URLS = {
 
 
 def _api_key_is_available(encrypted_key: str | None) -> bool:
+    """判断数据库里的加密 API Key 是否可用。
+
+    解密失败时返回 False，而不是把异常抛到前端。常见原因是 JWT_SECRET 变了，
+    旧密文无法用新的派生密钥解密。
+    """
     if not encrypted_key:
         return False
     try:
@@ -47,6 +64,7 @@ def _api_key_is_available(encrypted_key: str | None) -> bool:
 
 
 def _user_uuid(user: AuthUser) -> uuid.UUID:
+    """AuthUser 为接口响应友好的 str，这里转回数据库使用的 UUID。"""
     return uuid.UUID(user.id)
 
 
@@ -55,6 +73,11 @@ async def get_llm_settings(
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
+    """读取当前用户的 LLM 配置。
+
+    有用户级配置时返回配置摘要；没有时返回环境变量默认值，让前端仍能展示
+    “当前将使用哪个 provider/model”。
+    """
     auth_limiter.check(f"llm_settings:{user.id}")
     result = await db.execute(
         select(LLMConfig).where(LLMConfig.user_id == _user_uuid(user))
@@ -85,6 +108,13 @@ async def upsert_llm_settings(
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
+    """创建或更新当前用户的 LLM 配置。
+
+    api_key 字段有三种语义：
+    - None：不修改已有 key；
+    - ""：清空已有 key；
+    - 非空字符串：加密后覆盖保存。
+    """
     auth_limiter.check(f"llm_settings:{user.id}")
     result = await db.execute(
         select(LLMConfig).where(LLMConfig.user_id == _user_uuid(user))
@@ -137,6 +167,10 @@ async def list_models(
     req: ModelListRequest,
     user: AuthUser = Depends(get_current_user),
 ):
+    """实时请求 provider 的 /models 列表，帮助用户检查 base_url/API Key 是否可用。
+
+    这个接口不落库，只用本次请求传入的 provider/base_url/api_key 试探模型列表。
+    """
     auth_limiter.check(f"llm_settings:{user.id}")
     base_url = req.base_url or PROVIDER_BASE_URLS.get(req.provider, "")
     if not base_url:
@@ -160,6 +194,7 @@ async def get_llm_status(
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
+    """返回最小化状态，用于设置页或生成入口判断是否已配置可用模型。"""
     auth_limiter.check(f"llm_settings:{user.id}")
     result = await db.execute(
         select(LLMConfig).where(LLMConfig.user_id == _user_uuid(user))

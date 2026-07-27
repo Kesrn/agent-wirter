@@ -34,6 +34,7 @@ from services.version_service import create_version
 from services.skill_pack_planner import plan_direct_skill_pack, plan_workflow_skill_pack
 from skills.runner import build_expert_skill_pack, build_expert_system_prompt
 from api.routes import _article_system_prompt, _article_brief
+from api.auth import _create_token
 from config.settings import settings
 
 # SQLite 内存数据库
@@ -157,6 +158,19 @@ def test_auth_me_invalid_token_detail():
     resp = client.get("/api/auth/me", headers={"Authorization": "Bearer invalid_token"})
     assert resp.status_code == 401
     assert resp.json()["detail"] == "登录已失效"
+
+
+def test_auth_me_rejects_missing_or_malformed_token_subject():
+    """A signed token must still resolve to an existing UUID-backed user."""
+    ghost_token = _create_token("00000000-0000-0000-0000-000000000000", "ghost")
+    missing_user = client.get("/api/auth/me", headers={"Authorization": f"Bearer {ghost_token}"})
+    assert missing_user.status_code == 401
+    assert missing_user.json()["detail"] == "登录已失效"
+
+    malformed_token = _create_token("not-a-uuid", "ghost")
+    malformed_user = client.get("/api/auth/me", headers={"Authorization": f"Bearer {malformed_token}"})
+    assert malformed_user.status_code == 401
+    assert malformed_user.json()["detail"] == "登录已失效"
 
 
 def test_auth_login_token_type_bearer():

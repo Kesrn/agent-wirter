@@ -1,3 +1,10 @@
+"""集中导出 SQLAlchemy ORM 模型。
+
+init_db 会 import models 包，确保所有模型类都注册到 Base.metadata。
+业务代码也可以从 models 统一导入常用模型，但具体模块内仍倾向显式导入，
+方便看清依赖关系。
+"""
+
 from .base import Base, UUIDMixin, TimestampMixin
 from .project import Project
 from .chapter import Chapter

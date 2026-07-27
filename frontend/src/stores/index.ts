@@ -272,7 +272,11 @@ export const useChapterStore = defineStore('chapter', () => {
 
   function updateDraft(projectId: string, text: string) {
     const ch = currentChapterForProject(projectId)
-    if (ch) ch.draft = text
+    if (ch) {
+      // 定稿后的任何手动改动都必须重新人工确认，不能继续沿用旧定稿上下文。
+      if (ch.status === 'final' && ch.draft !== text) ch.status = 'draft'
+      ch.draft = text
+    }
   }
 
   function nextChapterNum(projectId: string): number {
@@ -328,6 +332,28 @@ export const useChapterStore = defineStore('chapter', () => {
     }
   }
 
+  async function finalizeCurrentChapter(projectId: string, content: string) {
+    const ch = currentChapterForProject(projectId)
+    if (!ch) throw new Error('请选择要定稿的章节')
+    if (!content.trim()) throw new Error('章节正文为空，无法定稿')
+    saving.value = true
+    try {
+      const updated = apiChapterToChapter(
+        await api.finalizeChapter(projectId, ch.chapter_num, { content }),
+        projectId,
+      )
+      const idx = chapters.value.findIndex(c => c.id === ch.id)
+      if (idx !== -1) chapters.value[idx] = updated
+      return updated
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '章节定稿失败'
+      loadError.value = msg
+      throw e
+    } finally {
+      saving.value = false
+    }
+  }
+
   async function updateChapterTitle(projectId: string, chapterNum: number, title: string) {
     const updated = apiChapterToChapter(await api.updateChapter(projectId, chapterNum, { title }), projectId)
     const idx = chapters.value.findIndex(c => c.chapter_num === chapterNum && c.project_id === projectId)
@@ -346,7 +372,7 @@ export const useChapterStore = defineStore('chapter', () => {
     chapters, reviewComments, reviewNotes, currentChapterNum, loadError, saving,
     chaptersForProject, currentChapterForProject, reviewCommentsForChapter, reviewCommentsForProjectChapter,
     setCurrentChapter, updateDraft, nextChapterNum,
-    loadChapters, createChapterRemote, saveCurrentChapter, updateChapterTitle, deleteChapterRemote,
+    loadChapters, createChapterRemote, saveCurrentChapter, finalizeCurrentChapter, updateChapterTitle, deleteChapterRemote,
     loadReviewNotes, createReviewNote, markReviewCommentResolved, deleteReviewNote,
   }
 })
@@ -467,6 +493,7 @@ export const useDocumentStore = defineStore('document', () => {
 export interface ExpertProjectState {
   isGenerating: boolean
   streamOutput: string
+  initialDraft: string
   finalDraft: string
   workflowSteps: WorkflowStep[]
   expertSkills: Record<string, string>
@@ -478,6 +505,7 @@ export interface ExpertProjectState {
 const EMPTY_EXPERT_STATE: ExpertProjectState = {
   isGenerating: false,
   streamOutput: '',
+  initialDraft: '',
   finalDraft: '',
   workflowSteps: [],
   expertSkills: {},
@@ -520,6 +548,7 @@ export const useExpertStore = defineStore('expert', () => {
     const s = ensureState(pid)
     s.isGenerating = true
     s.streamOutput = ''
+    s.initialDraft = ''
     s.finalDraft = ''
     s.workflowSteps = []
     s.expertSkills = {}
@@ -540,6 +569,10 @@ export const useExpertStore = defineStore('expert', () => {
     }
   }
 
+  function setGenerating(pid: string, isGenerating: boolean) {
+    ensureState(pid).isGenerating = isGenerating
+  }
+
   function appendOutput(pid: string, text: string) {
     ensureState(pid).streamOutput += text
   }
@@ -548,8 +581,16 @@ export const useExpertStore = defineStore('expert', () => {
     ensureState(pid).finalDraft += token
   }
 
+  function appendInitialDraft(pid: string, token: string) {
+    ensureState(pid).initialDraft += token
+  }
+
   function setDraft(pid: string, text: string) {
     ensureState(pid).finalDraft = text
+  }
+
+  function setInitialDraft(pid: string, text: string) {
+    ensureState(pid).initialDraft = text
   }
 
   function setWorkflowSteps(pid: string, steps: WorkflowStep[]) {
@@ -637,7 +678,8 @@ export const useExpertStore = defineStore('expert', () => {
   return {
     experts, activeExpertId, activeExpert, states, loading, loadError,
     getExpertName, setActive,
-    getState, startGenerating, stopGenerating, appendOutput, appendDraft, setDraft,
+    getState, startGenerating, stopGenerating, setGenerating, appendOutput,
+    appendDraft, appendInitialDraft, setDraft, setInitialDraft,
     setWorkflowSteps, updateStepStatus, clearProjectState,
       setExpertSkill, setExpertSkillPack, setRevisionInfo,
     loadExperts, addExpert, addCustomExpert, toggleExpert,

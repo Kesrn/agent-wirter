@@ -187,3 +187,105 @@ async def test_create_generation_record_with_run_id(async_db):
     await async_db.commit()
     assert record is not None
     assert str(record.run_id) == str(run_id)
+
+
+@pytest.mark.asyncio
+async def test_discard_run_artifacts_removes_all_incomplete_generation_records(async_db):
+    """生成中途失败时，不保留 run、步骤、候选稿、人工中断或提示词审计记录。"""
+    from sqlalchemy import select
+
+    from harness.human_interrupt_service import create_interrupt
+    from harness.run_manager import create_run, discard_run_artifacts, mark_running
+    from harness.step_logger import start_step
+    from models.ai_run import AiRun
+    from models.ai_run_step import AiRunStep
+    from models.generation_record import GenerationRecord
+    from models.human_interrupt import HumanInterrupt
+    from models.llm_call_log import LlmCallLog
+    from schemas.api import GenerateRequest
+    from services.generation_record_service import create_generation_record
+
+    project_id = uuid.uuid4()
+    run = await create_run(
+        async_db,
+        project_id=project_id,
+        run_type="CHAPTER_DRAFT",
+        mode="full_pipeline",
+        thread_id="failed-run-thread",
+    )
+    await mark_running(async_db, run)
+    await start_step(
+        async_db,
+        run_id=run.id,
+        step_order=1,
+        step_name="chapter_writer",
+        agent_name="chapter_writer",
+    )
+    await create_interrupt(
+        async_db,
+        run=run,
+        thread_id="failed-run-thread",
+        step_name="task_card_review",
+        payload={"task_card": {"core_task": "不应保留"}},
+    )
+    record = await create_generation_record(
+        async_db,
+        project_id=project_id,
+        mode="full_pipeline",
+        content="这是一段中途失败的候选正文。",
+        req=GenerateRequest(mode="full_pipeline"),
+        run_id=run.id,
+    )
+    assert record is not None
+    async_db.add(LlmCallLog(
+        run_id=run.id,
+        agent_name="chapter_writer",
+        rendered_prompt_snapshot="不应保留的 prompt",
+        latency_ms=123,
+    ))
+    await async_db.commit()
+
+    await discard_run_artifacts(async_db, run_id=run.id)
+    await async_db.commit()
+
+    assert (await async_db.execute(select(AiRun).where(AiRun.id == run.id))).scalar_one_or_none() is None
+    assert not (await async_db.execute(select(AiRunStep).where(AiRunStep.run_id == run.id))).scalars().all()
+    assert not (await async_db.execute(select(HumanInterrupt).where(HumanInterrupt.run_id == run.id))).scalars().all()
+    assert not (await async_db.execute(select(GenerationRecord).where(GenerationRecord.run_id == run.id))).scalars().all()
+    assert not (await async_db.execute(select(LlmCallLog).where(LlmCallLog.run_id == run.id))).scalars().all()
+
+
+@pytest.mark.asyncio
+async def test_discard_incomplete_runs_keeps_waiting_human_runs(async_db):
+    """重启清理只处理崩溃遗留的 CREATED/RUNNING，不误删等待人工确认的任务。"""
+    from sqlalchemy import select
+
+    from harness.run_manager import (
+        create_run,
+        discard_incomplete_runs,
+        mark_running,
+        mark_waiting_human,
+    )
+    from models.ai_run import AiRun
+
+    project_id = uuid.uuid4()
+    created = await create_run(
+        async_db, project_id=project_id, run_type="CHAPTER_DRAFT", mode="full_pipeline", thread_id="created-thread",
+    )
+    running = await create_run(
+        async_db, project_id=project_id, run_type="CHAPTER_DRAFT", mode="full_pipeline", thread_id="running-thread",
+    )
+    waiting = await create_run(
+        async_db, project_id=project_id, run_type="CHAPTER_DRAFT", mode="full_pipeline", thread_id="waiting-thread",
+    )
+    await mark_running(async_db, running)
+    await mark_waiting_human(async_db, waiting, step_name="human_review", thread_id="waiting-thread")
+    await async_db.commit()
+
+    thread_ids = await discard_incomplete_runs(async_db)
+    await async_db.commit()
+
+    assert set(thread_ids) == {"created-thread", "running-thread"}
+    assert (await async_db.execute(select(AiRun).where(AiRun.id == created.id))).scalar_one_or_none() is None
+    assert (await async_db.execute(select(AiRun).where(AiRun.id == running.id))).scalar_one_or_none() is None
+    assert (await async_db.execute(select(AiRun).where(AiRun.id == waiting.id))).scalar_one_or_none() is not None

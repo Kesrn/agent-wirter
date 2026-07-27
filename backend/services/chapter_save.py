@@ -15,6 +15,7 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.chapter import Chapter
+from models.chapter_version import ChapterVersion
 from services.content_sanitizer import sanitize_chapter_content
 from services.version_service import create_version
 
@@ -68,4 +69,43 @@ async def save_chapter_content(
             rollback_from_version_id=rollback_from_version_id,
         )
 
+    return chapter
+
+
+async def finalize_chapter_content(
+    db: AsyncSession,
+    chapter: Chapter,
+    raw_content: str | None = None,
+) -> Chapter:
+    """将章节定稿为不可变版本，并把该快照作为后续章节的可信上文。
+
+    相同内容重复定稿是幂等的；若内容变化，则创建新的 ``finalize`` 版本并更新
+    ``final_version_id``。事务仍由路由层统一提交，保证正文、状态与版本一起落库。
+    """
+    clean_content = sanitize_chapter_content(raw_content if raw_content is not None else (chapter.content or ""))
+    if not clean_content.strip():
+        raise ValueError("章节正文为空，无法定稿")
+
+    existing_final: ChapterVersion | None = None
+    if chapter.final_version_id:
+        existing_final = await db.get(ChapterVersion, chapter.final_version_id)
+
+    chapter.content = clean_content
+    chapter.word_count = _count_non_space_chars(clean_content)
+    chapter.status = "final"
+
+    # 防止重复点击“定稿”时不断新增相同的版本。
+    if existing_final and existing_final.content == clean_content:
+        return chapter
+
+    version = await create_version(
+        db,
+        chapter.id,
+        clean_content,
+        source="finalize",
+        project_id=chapter.project_id,
+    )
+    if version is None:  # clean_content 已校验非空，这里仅保留防御性分支。
+        raise RuntimeError("定稿版本创建失败")
+    chapter.final_version_id = version.id
     return chapter

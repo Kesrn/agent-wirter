@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -174,6 +175,161 @@ class ChapterContext:
     story_arcs: list[StoryArcInfo] = field(default_factory=list)  # K-2: 当前长线结构
     stats: ContextStats = field(default_factory=ContextStats)
 
+    def context_summary(
+        self,
+        *,
+        selected_outline_ids: list[str] | None = None,
+        selected_character_ids: list[str] | None = None,
+        selected_world_entry_ids: list[str] | None = None,
+        selected_hidden_thread_ids: list[str] | None = None,
+        excluded_context_keys: list[str] | None = None,
+    ) -> dict:
+        """Build the stable, presentation-oriented summary used by L-3.
+
+        This is deliberately derived from the already-built context object. It does
+        not change the prompt representation or write anything to the memory store.
+        ``selected`` marks explicit user selections while ``source_type`` explains
+        whether an item was automatically attached, explicitly selected, or came
+        from the knowledge layer.
+        """
+        selected = {
+            "outlines": {str(value) for value in (selected_outline_ids or [])},
+            "characters": {str(value) for value in (selected_character_ids or [])},
+            "world_entries": {str(value) for value in (selected_world_entry_ids or [])},
+            "hidden_threads": {str(value) for value in (selected_hidden_thread_ids or [])},
+        }
+        excluded = {str(value) for value in (excluded_context_keys or [])}
+
+        def item(
+            label: str,
+            detail: str = "",
+            *,
+            item_id: str | None = None,
+            source_type: str,
+            is_selected: bool = False,
+            chapter_sequence_number: int | None = None,
+        ) -> dict:
+            value = {
+                "key": f"{source_type}:{item_id}" if item_id else source_type,
+                "label": label,
+                "detail": detail,
+                "source_type": source_type,
+                "selected": is_selected,
+                "chapter_sequence_number": chapter_sequence_number,
+            }
+            value["excluded"] = value["key"] in excluded
+            if item_id:
+                value["id"] = item_id
+            return value
+
+        outlines: list[dict] = []
+        if self.outline:
+            outlines.append(item(
+                self.outline.title,
+                "；".join(filter(None, [self.outline.summary, self.outline.turning_point])),
+                item_id=self.outline.id,
+                source_type="current_outline",
+                is_selected=self.outline.id in selected["outlines"],
+                chapter_sequence_number=self.outline.sequence_number,
+            ))
+        existing_outline_ids = {self.outline.id} if self.outline else set()
+        for outline in self.selected_outlines:
+            if outline.id in existing_outline_ids:
+                continue
+            outlines.append(item(
+                outline.title,
+                "；".join(filter(None, [outline.summary, outline.turning_point])),
+                item_id=outline.id,
+                source_type="selected_outline",
+                is_selected=True,
+                chapter_sequence_number=outline.sequence_number,
+            ))
+
+        characters = [
+            item(
+                character.name,
+                "；".join(filter(None, [character.profile, character.faction])),
+                item_id=character.id,
+                source_type="character",
+                is_selected=character.id in selected["characters"],
+            )
+            for character in self.characters
+        ]
+        hidden_threads = [
+            item(
+                thread.name,
+                "；".join(filter(None, [thread.description, f"状态：{thread.status}"])),
+                item_id=thread.id,
+                source_type="hidden_thread",
+                is_selected=thread.id in selected["hidden_threads"],
+            )
+            for thread in self.hidden_threads
+        ]
+        world_entries = [
+            item(
+                entry.title,
+                entry.content,
+                item_id=entry.id,
+                source_type="world_entry",
+                is_selected=entry.id in selected["world_entries"],
+            )
+            for entry in self.world_entries
+        ]
+        confirmed_memories = [
+            item(
+                memory.title,
+                memory.description or memory.evidence or "",
+                item_id=memory.id,
+                source_type="confirmed_memory",
+                chapter_sequence_number=memory.chapter_sequence_number,
+            )
+            for memory in self.confirmed_memories
+        ]
+        knowledge_sources = [
+            item(
+                rule.title,
+                rule.content,
+                item_id=rule.id,
+                source_type="knowledge_rule",
+                is_selected=True,
+            )
+            for rule in self.fanfic_rules
+        ]
+        knowledge_sources.extend(
+            item(
+                source.title,
+                source.snippet,
+                item_id=source.id,
+                source_type=source.source_type or "knowledge_source",
+                is_selected=source.always_inject,
+            )
+            for source in self.retrieved_sources
+        )
+
+        summary = {
+            "excluded_context_keys": sorted(excluded),
+            "outlines": outlines,
+            "story_arcs": [
+                item(
+                    arc.name,
+                    "；".join(filter(None, [arc.summary, arc.goal, arc.main_conflict])),
+                    item_id=arc.id,
+                    source_type=f"story_arc:{arc.arc_type.lower()}",
+                    chapter_sequence_number=arc.arc_position and self.chapter.sequence_number if self.chapter else None,
+                )
+                for arc in self.story_arcs
+            ],
+            "characters": characters,
+            "hidden_threads": hidden_threads,
+            "world_entries": world_entries,
+            "confirmed_memories": confirmed_memories,
+            "knowledge_sources": knowledge_sources,
+        }
+        if self.previous_chapter_ending:
+            summary["previous_chapter_ending"] = self.previous_chapter_ending.ending_text
+        return summary
+
+
     def to_dict(self) -> dict:
         """转为前端 API 可序列化的 dict"""
         return {
@@ -278,6 +434,30 @@ class ChapterContext:
 # ── 主服务函数 ────────────────────────────────────────
 
 
+def apply_context_exclusions(context: ChapterContext, excluded_context_keys: list[str] | None) -> ChapterContext:
+    """Return a filtered copy used to build the final Writer prompt."""
+    excluded = {str(value) for value in (excluded_context_keys or [])}
+    if not excluded:
+        return context
+
+    filtered = deepcopy(context)
+    if "previous_chapter_ending" in excluded:
+        filtered.previous_chapter_ending = None
+    if filtered.outline and f"current_outline:{filtered.outline.id}" in excluded:
+        filtered.outline = None
+    filtered.selected_outlines = [value for value in filtered.selected_outlines if f"selected_outline:{value.id}" not in excluded]
+    filtered.story_arcs = [value for value in filtered.story_arcs if f"story_arc:{value.arc_type.lower()}:{value.id}" not in excluded]
+    excluded_character_ids = {value.id for value in filtered.characters if f"character:{value.id}" in excluded}
+    filtered.characters = [value for value in filtered.characters if value.id not in excluded_character_ids]
+    filtered.character_events = [value for value in filtered.character_events if value.character_id not in excluded_character_ids]
+    filtered.hidden_threads = [value for value in filtered.hidden_threads if f"hidden_thread:{value.id}" not in excluded]
+    filtered.world_entries = [value for value in filtered.world_entries if f"world_entry:{value.id}" not in excluded]
+    filtered.confirmed_memories = [value for value in filtered.confirmed_memories if f"confirmed_memory:{value.id}" not in excluded]
+    filtered.fanfic_rules = [value for value in filtered.fanfic_rules if f"knowledge_rule:{value.id}" not in excluded]
+    filtered.retrieved_sources = [value for value in filtered.retrieved_sources if f"{value.source_type or 'knowledge_source'}:{value.id}" not in excluded]
+    return filtered
+
+
 async def build_chapter_context(
     db: AsyncSession,
     project_id: str | uuid.UUID,
@@ -301,21 +481,28 @@ async def build_chapter_context(
     - 暗线（HiddenThread.chapter_nums 包含当前章节）
     - 全局设定（WorldEntry.scope_type == "global"）
     - 章节设定（WorldEntry.scope_type == "chapter"）
-    - 最近 3 章前文
+    - 最近 3 章已定稿前文（读取不可变定稿版本）
     - 用户通过 selected_*_ids 显式选择的条目（追加不替代）
 
     资料库 project_sources 默认不注入；调用方显式传 include_knowledge_sources=True 时，
     fanfic_rule / always_inject / 自动检索命中的资料才会进入 prompt。
+
+    这个函数是章节生成、方向建议、章节问答共用的上下文入口。统一入口的好处是：
+    不同接口不会各自拼 prompt，减少“生成用了一套资料、问答又用另一套资料”的不一致。
     """
     import uuid as _uuid
 
     pid = str(project_id) if isinstance(project_id, _uuid.UUID) else project_id
     seq = chapter_sequence_number
 
+    # ChapterContext 是结构化中间结果：先按数据类型聚合，最后再由
+    # format_chapter_context_for_prompt 转成 prompt 文本。这样前端也能直接拿 ctx.to_dict()
+    # 展示“本章用了哪些资料”。
     ctx = ChapterContext()
     stats = ctx.stats
 
     # ── 当前章节 ──
+    # 当前章节只取前 500 字作为 snippet，避免用户正在编辑的大段正文把 prompt 挤爆。
     from models.chapter import Chapter
 
     chapter = (
@@ -337,24 +524,29 @@ async def build_chapter_context(
         )
 
     # ── 本章大纲 ──
+    # 本章大纲是章节生成最高优先级的结构信息，writer/architect 都会重点参考。
     await _load_outline(db, pid, seq, ctx)
 
     # ── 长线结构（K-2: 需要本章 outline 的 story_arc_id）──
+    # story arc 负责跨章节主线/支线，不等同于单章大纲。
     await _load_story_arcs(db, pid, seq, ctx)
 
     # ── 本章角色事件 + 角色 ──
+    # 角色事件记录“这个角色在本章是否出现、发生什么状态变化”，比单纯角色表更贴近当前章节。
     await _load_character_events(db, pid, seq, ctx, stats)
 
     # ── 暗线 ──
     await _load_hidden_threads(db, pid, seq, ctx, stats)
 
     # ── 相关设定 ──
+    # 全局设定和章节级设定一起进入上下文，保证本章不违反世界观规则。
     await _load_world_entries(db, pid, ctx, stats)
 
     # ── 前文 ──
     await _load_previous_chapters(db, pid, seq, ctx)
 
     # ── 用户显式选择的条目（追加） ──
+    # 显式选择不替代自动聚合，而是额外追加。用户选中某个角色/设定，意味着希望本章重点参考。
     await _load_selected(
         db,
         pid,
@@ -368,10 +560,13 @@ async def build_chapter_context(
     )
 
     # ── 接入 project_sources（同人规则 + 检索资料）：默认关闭，避免资料库污染本章 prompt ──
+    # 普通知识库资料量可能很大、来源复杂，默认不注入可以减少无关材料影响写作。
+    # 用户显式打开 include_knowledge_sources 时，再把 always_inject 和检索命中资料加入 prompt。
     if include_knowledge_sources:
         await _load_project_sources(db, pid, ctx, stats, user_query=user_query)
 
     # ── 已确认记忆（H3b）──
+    # 生成后 story-recorder/memory-curator 提炼出的写作记忆，经用户确认后才会注入。
     await _load_confirmed_memories(db, pid, seq, ctx, stats)
 
     # ── 上章结尾锚点（K-1）──
@@ -393,6 +588,11 @@ async def build_chapter_context(
 async def _load_outline(
     db: AsyncSession, project_id: str, seq: int, ctx: ChapterContext
 ) -> None:
+    """加载当前章节的大纲条目。
+
+    Outline.sequence_number 与章节序号一一对应；如果没有大纲，后续 prompt 会缺少
+    明确的章节目标，writer 只能更多依赖前文和用户补充。
+    """
     from models.outline import Outline
 
     outline = (
@@ -434,7 +634,8 @@ async def _load_story_arcs(
 
     arc_ids: set[str] = set()
 
-    # 1. 通过 outline.story_arc_id 查直接关联
+    # 1. 通过 outline.story_arc_id 查直接关联。
+    # 这是“本章属于哪条长线”的人工/结构化标记，优先级最高。
     outline_arc_position = None
     outline_arc_id = None
     if ctx.outline and ctx.outline.story_arc_id:
@@ -442,7 +643,8 @@ async def _load_story_arcs(
         arc_ids.add(outline_arc_id)
         outline_arc_position = ctx.outline.arc_position
 
-    # 2. 通过 start/end_chapter 范围查
+    # 2. 通过 start/end_chapter 范围查。
+    # 即便 outline 没绑定 story_arc，只要当前章节落在长线范围内，也应该让模型知道。
     range_result = await db.execute(
         select(StoryArc).where(
             StoryArc.project_id == project_id,
@@ -490,6 +692,11 @@ async def _load_story_arcs(
 async def _load_character_events(
     db: AsyncSession, project_id: str, seq: int, ctx: ChapterContext, stats: ContextStats
 ) -> None:
+    """加载本章出场人物事件，并反查人物档案。
+
+    角色表描述“这个人是谁”，CharacterEvent 描述“这个人在本章发生了什么”。
+    生成时两者都重要：前者保证人设一致，后者保证当前章节行动/状态一致。
+    """
     from models.character_event import CharacterEvent
     from models.character import Character
 
@@ -506,7 +713,7 @@ async def _load_character_events(
     if not events:
         return
 
-    # 批量反查角色名和 profile
+    # 批量反查角色名和 profile，避免每个事件单独查一次数据库。
     character_ids = {str(e.character_id) for e in events}
     char_map: dict[str, tuple[str, str, str, str]] = {}
     if character_ids:
@@ -544,7 +751,8 @@ async def _load_character_events(
         )
     stats.events = len(ctx.character_events)
 
-    # 填充角色列表（从事件反查的角色）
+    # 填充角色列表（从事件反查的角色）。
+    # ctx.characters 给 prompt 提供角色档案，ctx.character_events 给 prompt 提供本章事件。
     seen_char_ids: set[str] = set()
     for evt in ctx.character_events:
         if evt.character_id not in seen_char_ids and evt.character_id in char_map:
@@ -690,13 +898,13 @@ async def _load_previous_chapter_ending(
     *,
     max_chars: int = 500,
 ) -> None:
-    """加载上一章结尾作为开篇锚点（K-1: opening_anchor 自动提取）。
+    """加载最近已定稿章节的结尾作为开篇锚点（K-1: opening_anchor 自动提取）。
 
     查询规则：
-    1. 优先查 sequence_number == current_seq - 1
-    2. 如果缺章，回退到 sequence_number < current_seq 的最近一章
-    3. 正文为空则不注入
-    4. 取 content.strip()[-500:]，不是开头 500 字
+    1. 优先查紧邻的上一章，且该章已定稿
+    2. 如果没有已定稿的紧邻章，回退到最近的已定稿前章
+    3. 优先读取 final_version_id 指向的不可变版本；兼容旧数据时回退到 chapter.content
+    4. 正文为空则不注入，取末尾 500 字而不是开头 500 字
     """
     from models.chapter import Chapter
 
@@ -705,6 +913,7 @@ async def _load_previous_chapter_ending(
         select(Chapter).where(
             Chapter.project_id == project_id,
             Chapter.sequence_number == current_seq - 1,
+            Chapter.status.in_(["final", "approved"]),
             Chapter.content.isnot(None),
             Chapter.content != "",
         )
@@ -717,6 +926,7 @@ async def _load_previous_chapter_ending(
             select(Chapter).where(
                 Chapter.project_id == project_id,
                 Chapter.sequence_number < current_seq,
+                Chapter.status.in_(["final", "approved"]),
                 Chapter.content.isnot(None),
                 Chapter.content != "",
             )
@@ -725,10 +935,12 @@ async def _load_previous_chapter_ending(
         )
         chapter = result.scalar_one_or_none()
 
-    if chapter is None or not chapter.content:
+    if chapter is None:
         return
 
-    content = chapter.content.strip()
+    content = (await _finalized_chapter_content_map(db, [chapter])).get(str(chapter.id), "")
+    if not content:
+        return
     ending_text = content[-max_chars:] if len(content) > max_chars else content
 
     ctx.previous_chapter_ending = PreviousChapterEndingInfo(
@@ -750,14 +962,18 @@ async def _load_previous_chapters(
             .where(
                 Chapter.project_id == project_id,
                 Chapter.sequence_number < current_seq,
+                Chapter.status.in_(["final", "approved"]),
             )
             .order_by(Chapter.sequence_number.desc())
             .limit(3)
         )
     ).scalars().all()
 
+    final_contents = await _finalized_chapter_content_map(db, chapters)
     for ch in reversed(chapters):
-        content_snippet = (ch.content or "")[:300]
+        content_snippet = final_contents.get(str(ch.id), "")[:300]
+        if not content_snippet:
+            continue
         ctx.previous_chapters.append(
             ChapterInfo(
                 id=str(ch.id),
@@ -766,6 +982,34 @@ async def _load_previous_chapters(
                 content_snippet=content_snippet,
             )
         )
+
+
+async def _finalized_chapter_content_map(
+    db: AsyncSession,
+    chapters: list[object],
+) -> dict[str, str]:
+    """返回章节的可信定稿正文。
+
+    ``final_version_id`` 让上下文绑定到用户确认的版本，而不会受之后草稿编辑影响。
+    老数据中可能只有 status=final 而没有快照，此时兼容性地退回章节当前正文。
+    """
+    from models.chapter_version import ChapterVersion
+
+    version_ids = [getattr(chapter, "final_version_id", None) for chapter in chapters]
+    version_ids = [value for value in version_ids if value is not None]
+    version_contents: dict[str, str] = {}
+    if version_ids:
+        versions = (
+            await db.execute(
+                select(ChapterVersion.id, ChapterVersion.content).where(ChapterVersion.id.in_(version_ids))
+            )
+        ).all()
+        version_contents = {str(version_id): (content or "").strip() for version_id, content in versions}
+
+    return {
+        str(chapter.id): version_contents.get(str(getattr(chapter, "final_version_id", "")), (chapter.content or "").strip())
+        for chapter in chapters
+    }
 
 
 async def _load_selected(
@@ -1094,11 +1338,11 @@ def format_chapter_context_for_prompt(context: ChapterContext) -> str:
             ol_text += "\n" + " | ".join(pacing_parts)
         parts.append(ol_text)
 
-    # 上章结尾锚点（K-1: opening_anchor）— 紧跟本章大纲，让 architect 先抓开篇承接
+    # 上章定稿结尾锚点（K-1: opening_anchor）— 紧跟本章大纲，让 architect 先抓开篇承接
     if context.previous_chapter_ending:
         ending = context.previous_chapter_ending
         parts.append(
-            f"## 上章结尾锚点\n"
+            f"## 上章定稿结尾锚点\n"
             f"第{ending.sequence_number}章《{ending.title}》的结尾：\n"
             f"{ending.ending_text}"
         )

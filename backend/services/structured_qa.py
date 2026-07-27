@@ -85,7 +85,11 @@ def _parse_chinese_int(value: str) -> int | None:
 # ── 意图识别（文档 §13 关键词） ─────────────────────────
 
 def _detect_structured_intent(question: str) -> str:
-    """识别结构化问答意图。"""
+    """识别结构化问答意图。
+
+    结构化问答只处理能由正式表明确回答的问题，例如人物能力、事件、世界规则。
+    未识别的问题返回 unknown，让上层继续走普通 RAG，而不是强行套结构化表。
+    """
     q = question.strip()
     # character_ability
     if any(kw in q for kw in ("什么系", "什么系别", "什么能力", "掌握了什么", "会什么技能",
@@ -108,7 +112,11 @@ def _detect_structured_intent(question: str) -> str:
 
 
 def _extract_character_name(question: str) -> str | None:
-    """从问题中提取人物名（2-4 汉字，可能含尾部字母/数字，出现在问句里）。"""
+    """从问题中提取人物名（2-4 汉字，可能含尾部字母/数字，出现在问句里）。
+
+    这是轻量规则，不追求 NLP 完美，只覆盖常见问法如“莫凡有什么系”“张小侯会风系吗”。
+    更复杂的指代消解由知识库 Query Planner/对话历史处理。
+    """
     import re
     # 名字模式：2-4 个汉字，可选尾部 1-2 个字母/数字（如"测试角色A"）
     name_pat = r"[\u4e00-\u9fff]{2,4}[A-Za-z0-9]{0,2}"
@@ -176,7 +184,11 @@ async def answer_structured_question(
     *,
     conversation_id: str | None = None,
 ) -> dict:
-    """结构化问答主入口。返回兼容现有 QA 格式。"""
+    """结构化问答主入口。返回兼容现有 QA 格式。
+
+    这里不直接调用 LLM。只要问题能映射到结构化表，就用数据库事实回答；
+    没有证据时明确返回“资料不足”，避免模型凭常识补全。
+    """
     pid = str(project_id)
     intent = _detect_structured_intent(question)
 
@@ -197,12 +209,20 @@ async def _answer_character_ability(
     db: AsyncSession, pid: str, question: str, intent: str,
     conversation_id: str | None,
 ) -> dict:
+    """回答“某角色有什么能力/会不会某能力”。
+
+    查询顺序：
+    1. ability_profile 正式表；
+    2. 如果问题问“什么系”但正式表没有魔法系，回退 project_knowledge_facts；
+    3. 仍查不到则返回空结果。
+    """
     character = _extract_character_name(question)
     if not character:
         return _empty_result(intent, conversation_id,
                              "请明确指定要查询的人物名称，例如「莫凡有什么系」。")
 
-    # 是非问句："X会Y吗" → 检查 Y 是否在 X 的能力中
+    # 是非问句："X会Y吗" → 检查 Y 是否在 X 的能力中。
+    # 这种问题必须给肯定/否定式回答，不能只罗列能力。
     import re
     yes_no_match = re.search(r"会([\u4e00-\u9fff]{1,8})吗", question)
     queried_ability = yes_no_match.group(1) if yes_no_match else None
@@ -219,7 +239,8 @@ async def _answer_character_ability(
     )
     abilities = list(result.scalars().all())
 
-    # 是非问句：检查特定能力是否存在
+    # 是非问句：检查特定能力是否存在。
+    # 能力名会做规范化，例如“雷霆系”可归到“雷系”。
     if queried_ability:
         from services.magic_systems import canonical_magic_system_name
         queried_canonical = canonical_magic_system_name(queried_ability) or queried_ability
@@ -249,7 +270,8 @@ async def _answer_character_ability(
                 "retrieval_stats": {"structured_hits": len(matched), "vector_hits": 0},
                 "conversation_id": conversation_id or "",
             }
-        # 不在能力列表中 → 明确说当前资料不支持
+        # 不在能力列表中 → 明确说当前资料不支持。
+        # 这里不用“不会”，因为数据库没记录不等于作品世界里绝对不会。
         return {
             "answer": f"当前结构化资料不支持 **{character}** 会「{queried_ability}」。",
             "citations": [],
@@ -258,7 +280,8 @@ async def _answer_character_ability(
             "conversation_id": conversation_id or "",
         }
 
-    # ability_profile 无记录 → 回退 project_knowledge_facts
+    # ability_profile 无记录 → 回退 project_knowledge_facts。
+    # project_knowledge_facts 是规则/事实索引，可覆盖部分抽取未合并到正式表的场景。
     wants_magic_system = any(term in question for term in ("什么系", "哪些系", "有什么系", "魔法系别"))
     has_magic_system = any(a.ability_type == "magic_element" for a in abilities)
     if not abilities or (wants_magic_system and not has_magic_system):

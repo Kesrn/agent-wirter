@@ -17,6 +17,7 @@ VALID_SOURCES = frozenset({
     "ai_pipeline",
     "ai_approve",
     "ai_draft",
+    "finalize",
     "rollback",
     "import",
 })

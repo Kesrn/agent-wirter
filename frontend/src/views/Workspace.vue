@@ -501,37 +501,43 @@ const extractingStructure = ref(false)
 const applyingStructure = ref(false)
 const showStructurePreview = ref(false)
 const structurePayload = ref<StructureExtractPayload | null>(null)
+const extractingChapterId = ref<string | null>(null)
+const structureTargetChapterNum = ref<number | null>(null)
 
-const canExtractStructure = computed(() => {
-  const unit = currentWritingUnit.value
-  return projectMode.value === 'novel' && !!unit && !!unit.draft?.trim() && !extractingStructure.value && !applyingStructure.value
-})
-
-async function extractCurrentChapterStructure() {
-  const unit = currentWritingUnit.value
-  if (projectMode.value !== 'novel' || !unit) {
-    ui.showToast('请先选择一个小说章节', 'error')
-    return
-  }
-  if (!unit.draft.trim()) {
-    ui.showToast('当前章节正文为空，无法更新记忆', 'error')
+async function extractChapterMemory(unit: WritingUnit) {
+  if (projectMode.value !== 'novel') {
     return
   }
 
   extractingStructure.value = true
+  extractingChapterId.value = unit.id
   try {
-    await chapterStore.saveCurrentChapter(projectId.value)
-    const result = await api.extractChapterStructure(projectId.value, unitPosition(unit), {
+    // 当前正在编辑的章节先保存，确保提炼到的就是用户眼前这版正文；
+    // 点击其他章节则直接用该章已落库的正文，不会切走当前编辑器。
+    let targetUnit = unit
+    if (unitPosition(unit) === currentUnitNum.value) {
+      await chapterStore.saveCurrentChapter(projectId.value)
+      targetUnit = currentWritingUnit.value ?? unit
+    }
+    if (!targetUnit.draft.trim()) {
+      ui.showToast('本章正文为空，无法提炼', 'error')
+      return
+    }
+
+    const sequenceNumber = unitPosition(targetUnit)
+    const result = await api.extractChapterStructure(projectId.value, sequenceNumber, {
       mode: 'preview',
       targets: ['outlines', 'characters', 'world_entries', 'hidden_threads', 'character_relations', 'character_events'],
       include_existing_context: true,
     })
     structurePayload.value = result.extraction
+    structureTargetChapterNum.value = sequenceNumber
     showStructurePreview.value = true
   } catch (e: unknown) {
     ui.showToast(structureExtractionError(e), 'error')
   } finally {
     extractingStructure.value = false
+    extractingChapterId.value = null
   }
 }
 
@@ -547,12 +553,12 @@ function structureExtractionError(e: unknown) {
 }
 
 async function applyExtractedStructure(payload: StructureExtractPayload) {
-  const unit = currentWritingUnit.value
-  if (!unit) return
+  const sequenceNumber = structureTargetChapterNum.value
+  if (!sequenceNumber) return
 
   applyingStructure.value = true
   try {
-    const result = await api.extractChapterStructure(projectId.value, unitPosition(unit), {
+    const result = await api.extractChapterStructure(projectId.value, sequenceNumber, {
       mode: 'apply',
       extraction: payload,
     })
@@ -567,7 +573,8 @@ async function applyExtractedStructure(payload: StructureExtractPayload) {
     ])
     showStructurePreview.value = false
     structurePayload.value = null
-    ui.showToast(`章节记忆已写入：${formatStructureCounts(result.applied?.counts)}`, 'success')
+    structureTargetChapterNum.value = null
+    ui.showToast(`本章记忆已写入：${formatStructureCounts(result.applied?.counts)}`, 'success')
   } catch (e: unknown) {
     ui.showToast(friendlyError(e, '写入章节记忆失败'), 'error')
   } finally {
@@ -1179,14 +1186,6 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
           <div v-if="activeTab === 'units'" class="tab-pane">
             <div class="unit-toolbar">
               <button class="btn-add-unit" @click="openNewUnitForm">+ 新增{{ unitLabel }}</button>
-              <button
-                v-if="projectMode === 'novel'"
-                class="btn-extract-structure"
-                :disabled="!canExtractStructure"
-                @click="extractCurrentChapterStructure"
-              >
-                {{ extractingStructure ? '提炼中...' : '更新记忆' }}
-              </button>
             </div>
             <div v-if="showNewUnit" class="unit-form">
               <div class="form-row">
@@ -1227,6 +1226,13 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 <span class="unit-title">{{ unitDisplayTitle(ch) }}</span>
                 <span class="unit-status" :class="ch.status">{{ ch.status === 'final' ? '终稿' : ch.status === 'reviewing' ? '审核' : ch.status === 'revision' ? '修订' : '草稿' }}</span>
                 <button v-if="projectMode === 'novel'" class="chapter-meta-btn" title="本章资料" @click.stop="openChapterConfig(ch)">资料</button>
+                <button
+                  v-if="projectMode === 'novel'"
+                  class="chapter-meta-btn"
+                  :disabled="extractingStructure"
+                  title="提炼本章的角色、设定、事件与伏笔"
+                  @click.stop="extractChapterMemory(ch)"
+                >{{ extractingChapterId === ch.id ? '提炼中...' : '提炼' }}</button>
               </template>
             </div>
           </div>
@@ -1619,14 +1625,6 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
     <div v-if="mobilePanel === 'units'" class="mobile-pane">
       <div class="unit-toolbar">
         <button class="btn-add-unit" @click="openNewUnitForm">+ 新增{{ unitLabel }}</button>
-        <button
-          v-if="projectMode === 'novel'"
-          class="btn-extract-structure"
-          :disabled="!canExtractStructure"
-          @click="extractCurrentChapterStructure"
-        >
-          {{ extractingStructure ? '提炼中...' : '更新记忆' }}
-        </button>
       </div>
       <div v-if="showNewUnit" class="unit-form">
         <div class="form-row">
@@ -1666,7 +1664,14 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
           <span class="unit-num">{{ unitDisplayNum(ch) }}</span>
           <span class="unit-title">{{ unitDisplayTitle(ch) }}</span>
           <span class="unit-status" :class="ch.status">{{ ch.status === 'final' ? '终稿' : '草稿' }}</span>
-                <button v-if="projectMode === 'novel'" class="chapter-meta-btn" title="本章资料" @click.stop="openChapterConfig(ch)">资料</button>
+          <button v-if="projectMode === 'novel'" class="chapter-meta-btn" title="本章资料" @click.stop="openChapterConfig(ch)">资料</button>
+          <button
+            v-if="projectMode === 'novel'"
+            class="chapter-meta-btn"
+            :disabled="extractingStructure"
+            title="提炼本章的角色、设定、事件与伏笔"
+            @click.stop="extractChapterMemory(ch)"
+          >{{ extractingChapterId === ch.id ? '提炼中...' : '提炼' }}</button>
         </template>
       </div>
     </div>
@@ -2165,6 +2170,10 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   background: var(--accent-subtle);
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 }
+.chapter-meta-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
 
 /* Outline */
 .outline-item {
@@ -2406,25 +2415,6 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 .btn-add-unit:hover {
   border-color: var(--accent);
   background: var(--accent-subtle);
-}
-.btn-extract-structure {
-  width: 100%;
-  padding: 9px var(--sp-3);
-  background: var(--accent);
-  border: 1px solid var(--accent);
-  border-radius: 14px;
-  color: var(--text-inverse);
-  font-size: var(--text-sm);
-  font-weight: 650;
-  transition: background var(--transition), border-color var(--transition), opacity var(--transition);
-}
-.btn-extract-structure:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-}
-.btn-extract-structure:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
 }
 .unit-form {
   background: color-mix(in srgb, var(--bg-panel) 92%, transparent);

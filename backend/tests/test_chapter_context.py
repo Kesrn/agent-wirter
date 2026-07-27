@@ -10,9 +10,41 @@ from services.chapter_context import (
     build_chapter_context,
     format_chapter_context_for_prompt,
     context_to_stats,
+    apply_context_exclusions,
     ChapterContext,
     ContextStats,
+    CharacterInfo,
+    CharacterEventInfo,
+    HiddenThreadInfo,
+    WorldEntryInfo,
+    ConfirmedMemoryInfo,
+    PreviousChapterEndingInfo,
+    StoryArcInfo,
+    OutlineInfo,
 )
+
+
+def test_context_exclusion_filters_prompt_but_preserves_preview_item():
+    context = ChapterContext(
+        characters=[CharacterInfo(id="c1", name="程旋", role_type="protagonist", profile="侦探", faction="")],
+        character_events=[CharacterEventInfo(
+            id="e1", character_id="c1", character_name="程旋", chapter_sequence_number=2,
+            event_summary="发现线索", appearance_type="appeared", state_change="起疑", importance=4,
+        )],
+        previous_chapter_ending=PreviousChapterEndingInfo("ch1", 1, "第一章", "门后传来脚步声"),
+    )
+    excluded = ["character:c1", "previous_chapter_ending"]
+    summary = context.context_summary(excluded_context_keys=excluded)
+    assert summary["excluded_context_keys"] == excluded
+    assert summary["characters"][0]["key"] == "character:c1"
+    assert summary["characters"][0]["excluded"] is True
+
+    filtered = apply_context_exclusions(context, excluded)
+    prompt = format_chapter_context_for_prompt(filtered)
+    assert "程旋" not in prompt
+    assert "发现线索" not in prompt
+    assert "门后传来脚步声" not in prompt
+    assert context.characters[0].name == "程旋"  # 原上下文未被修改
 
 _AUTH_CACHE: dict[str, dict[str, str]] = {}
 
@@ -59,6 +91,18 @@ def _create_chapter(project_id, title, seq, content=""):
         )
         assert resp2.status_code == 200, resp2.text
     return chapter_id
+
+
+def _finalize_chapter(project_id, seq, content=None):
+    """通过最后人工审核定稿接口固定章节版本。"""
+    payload = {} if content is None else {"content": content}
+    resp = client.post(
+        f"/api/projects/{project_id}/chapters/{seq}/finalize",
+        json=payload,
+        headers=_auth(),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
 
 
 def _create_character(project_id, name, role_type="supporting", profile=""):
@@ -212,6 +256,44 @@ class TestChapterContextService:
         assert ctx.chapter.title == "第一章"
         assert "第一章的内容" in ctx.chapter.content_snippet
 
+    def test_context_summary_uses_frontend_preview_shape(self):
+        """L-3 摘要保持统一 item 形状，并标记显式选择和来源。"""
+        ctx = ChapterContext(
+            outline=OutlineInfo("outline-1", 2, "第二章", "进入城镇", "发现线索"),
+            selected_outlines=[OutlineInfo("outline-2", 1, "第一章", "前情", "离开村庄")],
+            characters=[CharacterInfo("char-1", "主角", "protagonist", "谨慎", "旅团")],
+            hidden_threads=[HiddenThreadInfo("thread-1", "黑匣子", "尚未揭晓", [2], status="ACTIVE")],
+            world_entries=[WorldEntryInfo("world-1", "城镇规则", "规则", "global", "夜间禁行")],
+            confirmed_memories=[ConfirmedMemoryInfo("memory-1", "event", "主角已受伤", "左臂受伤", chapter_sequence_number=1)],
+            previous_chapter_ending=PreviousChapterEndingInfo("chapter-1", 1, "第一章", "门在身后关上。"),
+            story_arcs=[StoryArcInfo("arc-1", "ARC", "逃亡线", summary="离开追捕", arc_position="BUILDUP")],
+        )
+
+        summary = ctx.context_summary(
+            selected_outline_ids=["outline-2"],
+            selected_character_ids=["char-1"],
+            selected_world_entry_ids=[],
+            selected_hidden_thread_ids=[],
+        )
+
+        assert summary["previous_chapter_ending"] == "门在身后关上。"
+        assert {item["source_type"] for item in summary["outlines"]} == {"current_outline", "selected_outline"}
+        assert next(item for item in summary["outlines"] if item["id"] == "outline-2")["selected"] is True
+        assert summary["characters"][0] == {
+            "key": "character:char-1",
+            "id": "char-1",
+            "label": "主角",
+            "detail": "谨慎；旅团",
+            "source_type": "character",
+            "selected": True,
+            "chapter_sequence_number": None,
+            "excluded": False,
+        }
+        assert summary["hidden_threads"][0]["source_type"] == "hidden_thread"
+        assert summary["world_entries"][0]["source_type"] == "world_entry"
+        assert summary["confirmed_memories"][0]["chapter_sequence_number"] == 1
+        assert summary["story_arcs"][0]["source_type"] == "story_arc:arc"
+
     def test_empty_chapter_does_not_crash(self):
         """无角色事件、无大纲、无暗线时不报错，返回空结构"""
         pid = _create_project("空章节测试")
@@ -319,12 +401,15 @@ class TestChapterContextService:
         assert "章节设定A" in chapter_titles
 
     def test_previous_chapters_ordered(self):
-        """前文加载最近 3 章，按序号升序排列"""
+        """前文只加载最近 3 章已定稿内容，按序号升序排列"""
         pid = _create_project("前文排序测试")
         _create_chapter(pid, "第一章", 1, "第1章内容")
         _create_chapter(pid, "第二章", 2, "第2章内容")
         _create_chapter(pid, "第三章", 3, "第3章内容")
         _create_chapter(pid, "第四章", 4, "第4章内容（当前章）")
+        _finalize_chapter(pid, 1)
+        _finalize_chapter(pid, 2)
+        _finalize_chapter(pid, 3)
 
         async def _run():
             async with test_session_factory() as session:
@@ -338,6 +423,51 @@ class TestChapterContextService:
         seqs = [pc.sequence_number for pc in ctx.previous_chapters]
         assert seqs == [1, 2, 3]  # 升序
         assert ctx.previous_chapters[0].title == "第一章"
+
+    def test_only_finalized_snapshot_is_used_as_previous_context(self):
+        """草稿不能污染下一章；定稿后读取固定版本，二次编辑会解除定稿。"""
+        pid = _create_project("定稿上下文测试")
+        _create_chapter(pid, "第一章", 1, "第一版结尾：门后传来脚步声。")
+        _create_chapter(pid, "第二章", 2)
+
+        async def _build():
+            async with test_session_factory() as session:
+                return await build_chapter_context(session, pid, 2)
+
+        before_final = asyncio.new_event_loop().run_until_complete(_build())
+        assert before_final.previous_chapters == []
+        assert before_final.previous_chapter_ending is None
+
+        finalized = _finalize_chapter(pid, 1)
+        assert finalized["status"] == "final"
+        assert finalized["final_version_id"]
+        finalized_again = _finalize_chapter(pid, 1)
+        assert finalized_again["final_version_id"] == finalized["final_version_id"]
+        versions = client.get(
+            f"/api/projects/{pid}/chapters/1/versions",
+            headers=_auth(),
+        )
+        assert versions.status_code == 200, versions.text
+        assert len([version for version in versions.json() if version["source"] == "finalize"]) == 1
+
+        after_final = asyncio.new_event_loop().run_until_complete(_build())
+        assert [item.sequence_number for item in after_final.previous_chapters] == [1]
+        assert after_final.previous_chapter_ending is not None
+        assert after_final.previous_chapter_ending.ending_text == "第一版结尾：门后传来脚步声。"
+
+        # 再次编辑即解除定稿，下一章不再使用未经确认的新文本。
+        resp = client.patch(
+            f"/api/projects/{pid}/chapters/1",
+            json={"content": "未重新确认的改稿。"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "draft"
+        assert resp.json()["final_version_id"] is None
+
+        after_edit = asyncio.new_event_loop().run_until_complete(_build())
+        assert after_edit.previous_chapters == []
+        assert after_edit.previous_chapter_ending is None
 
     def test_selected_outlines_do_not_override_current_outline(self):
         """用户额外选中的其他章大纲只作为参考，不覆盖本章大纲"""
@@ -565,6 +695,7 @@ class TestOpeningAnchor:
         pid = _create_project("上章结尾锚点测试")
         _create_chapter(pid, "第一章", 1, "A" * 800)  # 800 字，取后 500
         _create_chapter(pid, "第二章", 2)
+        _finalize_chapter(pid, 1)
 
         async def _run():
             async with test_session_factory() as session:
@@ -580,7 +711,7 @@ class TestOpeningAnchor:
         assert ctx.previous_chapter_ending.ending_text.startswith("A" * 300)  # 800 - 500 = 300 offset
 
         prompt = format_chapter_context_for_prompt(ctx)
-        assert "## 上章结尾锚点" in prompt
+        assert "## 上章定稿结尾锚点" in prompt
         assert "第一章" in prompt
 
     def test_previous_chapter_ending_omitted_when_no_previous_content(self):
@@ -619,6 +750,7 @@ class TestOpeningAnchor:
         _create_chapter(pid, "第1章", 1, "")      # 空正文
         _create_chapter(pid, "第3章", 3, "前文正文内容ABC")  # 第 2 章缺失
         _create_chapter(pid, "第4章", 4)
+        _finalize_chapter(pid, 3)
 
         async def _run():
             async with test_session_factory() as session:
@@ -633,7 +765,7 @@ class TestOpeningAnchor:
         assert ctx.previous_chapter_ending.ending_text == "前文正文内容ABC"
 
         prompt = format_chapter_context_for_prompt(ctx)
-        assert "## 上章结尾锚点" in prompt
+        assert "## 上章定稿结尾锚点" in prompt
         assert "第3章" in prompt
 
 

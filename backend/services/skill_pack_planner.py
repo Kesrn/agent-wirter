@@ -20,6 +20,11 @@ ARTICLE_ROLE_TO_SKILL: dict[str, str] = {
 
 @dataclass(frozen=True)
 class SkillPackPlan:
+    """一次 skill pack 选择决策。
+
+    role_type 决定 prompt 构建时按哪类专家处理；skill_dir 决定读取哪个 Skill.md；
+    event_expert 用于 SSE 事件展示；reason 记录为什么选择这套 skill。
+    """
     role_type: str
     event_expert: str
     skill_dir: str | None = None
@@ -36,7 +41,12 @@ def plan_direct_skill_pack(
     expert_skill_dir: str | None = None,
     expert_name: str | None = None,
 ) -> SkillPackPlan | None:
-    """Choose a skill pack for non-LangGraph direct generation branches."""
+    """Choose a skill pack for non-LangGraph direct generation branches.
+
+    直连分支包括 continue/enhance/summarize 的部分两阶段流程，它们不进入完整
+    LangGraph，但仍需要选择合适技能包。这里用确定性规则，避免在 routes.py
+    中散落大量 if/else。
+    """
     if project_mode == "article":
         if expert_name:
             return SkillPackPlan(
@@ -136,6 +146,9 @@ def plan_workflow_skill_pack(
     Workflow nodes are currently only used for novel full-pipeline generation.
     The function exists so direct routes and graph nodes annotate skill-pack
     metadata consistently.
+
+    workflow 节点通常已经知道自己的 role_type 和可选 skill_dir，因此这里主要
+    负责生成统一的 SkillPackPlan 元数据。
     """
     return SkillPackPlan(
         role_type=role_type,

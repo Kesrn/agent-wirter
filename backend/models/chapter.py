@@ -16,4 +16,7 @@ class Chapter(UUIDMixin, TimestampMixin, Base):
     sequence_number: Mapped[int] = mapped_column(Integer, default=0)
     word_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="draft")
+    # 定稿时指向 ChapterVersion 的不可变快照。下一章上下文从这份快照读取，
+    # 而不是直接读取可能后来又被编辑过的 chapter.content。
+    final_version_id: Mapped[str | None] = mapped_column(GUID(), nullable=True, index=True)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONValue(), nullable=True)

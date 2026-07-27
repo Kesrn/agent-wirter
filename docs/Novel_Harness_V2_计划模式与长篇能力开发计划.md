@@ -316,6 +316,13 @@ UI 约束：
 
 ## 5. Phase L-2：嵌入式澄清
 
+状态：已实现（2026-07-12），待真实模型端到端验收。
+
+当前实现采用任务卡单暂停点：`clarification-planner` 先产生最多三个问题，
+问题随 `task_card_review_required` 展示；用户回答后通过 `refresh_task_card`
+回到 `chapter_architect`，新任务卡生成后再次停在同一面板。旧的独立
+`human_clarification` 路径仅用于历史 Run 兼容。
+
 ### 5.1 目标
 
 把现有 Clarification Loop 从独立问题流程，改造成任务卡预览里的“可选澄清区”。
@@ -386,6 +393,36 @@ answers
 - 用户可以跳过。
 - 用户回答后任务卡更新，而不是直接进入 writer。
 - 澄清回答不直接写正式记忆库。
+
+---
+
+## 5A. Phase L-3：本次上下文预览
+
+状态：预览与逐项排除已实现（2026-07-12），待真实模型和完整工作台验收。
+
+实现链路：
+
+```text
+ChapterContextService
+→ context_summary
+→ CreativeState.context_summary
+→ task_card_review_required / HumanInterrupt.payload
+→ TaskCardReviewPanel「查看本次上下文」
+```
+
+当前展示：
+
+- 前章结尾锚点。
+- 本章大纲与用户额外选择的大纲。
+- Story Arc / 分卷分幕信息。
+- 人物、伏笔与世界设定。
+- 已确认写作记忆。
+- 知识库规则与检索资料。
+- 用户显式选择项和来源类型。
+
+本阶段严格复用已经构建的 `ChapterContext`，不写入或删除正式记忆。每个条目具有稳定 key；作者取消勾选后，`refresh_task_card_context` 会通过专用 `context_refresher` 重建实际 prompt，再运行 Architect 并回到任务卡。被排除条目仍保留在预览中，便于恢复。
+
+最终 `excluded_context_keys` 保存在 LangGraph state，并进入 LLM context snapshot，确保界面、prompt 和审计记录一致。
 
 ---
 
@@ -657,4 +694,3 @@ GET /api/projects/{project_id}/characters/{character_id}/arc?to_chapter=10
 - writer 按修改后的计划写。
 - 生成后仍走 final_review。
 - 审计链完整。
-

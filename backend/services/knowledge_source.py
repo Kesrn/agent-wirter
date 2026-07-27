@@ -280,7 +280,11 @@ def _estimate_tokens(text: str) -> int:
 
 
 def _extract_search_keywords(query: str) -> list[str]:
-    """提取适合 LIKE 检索的关键词，兼容中文自然问法。"""
+    """提取适合 LIKE 检索的关键词，兼容中文自然问法。
+
+    用户问题通常是“莫凡有什么系”“介绍一下张小侯的个人资料”，直接拿整句
+    ILIKE 命中率很低。这里会去掉问句套话，拆出更适合检索的实体/属性词。
+    """
     raw_parts = [kw.strip() for kw in re.split(r"[,，\s]+", query) if kw.strip()]
     keywords: list[str] = []
 
@@ -336,6 +340,12 @@ async def chunk_and_save(
     """将资料条目切片并保存到 project_source_chunks 表。
 
     返回切片数量。如果资料内容为空则返回 0。
+
+    这个函数是资料库入库/重建索引的核心步骤：
+    1. 找到 ProjectSource 原文；
+    2. 删除旧 chunks，避免重复索引；
+    3. 用 chunk_text 做结构感知切片；
+    4. 写入 ProjectSourceChunk，并记录粗略 token_count。
     """
     pid = str(project_id)
     sid = str(source_id)
@@ -347,7 +357,7 @@ async def chunk_and_save(
     if not source or not source.content.strip():
         return 0
 
-    # 删除旧切片
+    # 删除旧切片：重建索引时采用“先删后建”，保证 chunk_index 连续且旧内容不会残留。
     old_chunks = await db.execute(
         select(ProjectSourceChunk).where(
             ProjectSourceChunk.source_id == sid, ProjectSourceChunk.project_id == pid
@@ -356,7 +366,7 @@ async def chunk_and_save(
     for c in old_chunks.scalars().all():
         await db.delete(c)
 
-    # 切片
+    # 切片：保留章节标题、表格和句子边界，后续检索命中时 snippet 更可读。
     raw_chunks = chunk_text(source.content)
     if not raw_chunks:
         source.chunk_count = 0
@@ -406,12 +416,14 @@ async def search_project_knowledge(
     if not keywords and not required_terms:
         return []
 
-    # 合并所有检索词
+    # 合并所有检索词。required_terms 来自 Query Planner，代表必须尽量命中的核心词；
+    # keywords 来自自然问句拆词，负责扩大召回。
     all_terms = list(keywords)
     if required_terms:
         all_terms.extend(required_terms)
 
-    # 搜索 chunks
+    # 搜索 chunks：正文、chunk 摘要、chunk keywords 都参与匹配。
+    # 当前版本使用关键词检索；如果接入 pgvector，这里会增加向量距离排序。
     conditions = []
     for kw in all_terms:
         conditions.append(_ilike_contains(ProjectSourceChunk.content, kw))
@@ -419,7 +431,8 @@ async def search_project_knowledge(
         # 也搜 chunk keywords 字段
         conditions.append(_ilike_contains(ProjectSourceChunk.keywords.cast(SAString), kw))
 
-    # 搜 source 级别的 summary / key_facts / keywords
+    # 搜 source 级别的 summary / key_facts / keywords。
+    # 有些资料在 chunk 中未命中，但资料级摘要/事实字段已经提炼出关键词，也应召回。
     for kw in all_terms:
         conditions.append(_ilike_contains(ProjectSource.summary, kw))
         conditions.append(_ilike_contains(ProjectSource.key_facts.cast(SAString), kw))
@@ -891,11 +904,15 @@ async def search_project_knowledge_with_plan(
     """多路检索：结构化 + 非结构化联合召回，去重排序。
 
     返回 (structured_results, chunk_results)。
+
+    plan.search_queries 可能有多条，例如“莫凡 雷系”“莫凡 能力”，每条都跑一次
+    search_project_knowledge，最后按 chunk_id 去重并保留最高分结果。
     """
-    # 1. 结构化表检索
+    # 1. 结构化表检索：角色表、事件表、世界观等“可信结构化数据”优先召回。
     structured = await _search_structured_knowledge(db, project_id, plan, limit=limit)
 
-    # 2. 非结构化 chunk 检索（多 query 并集）
+    # 2. 非结构化 chunk 检索（多 query 并集）。
+    # 同一个 chunk 被多条 query 命中时，保留分数更高或 snippet 更完整的版本。
     chunk_results_by_id: dict[str, dict] = {}
 
     for sq in plan.search_queries:
@@ -919,7 +936,8 @@ async def search_project_knowledge_with_plan(
                 chunk_results_by_id[cid] = h
     chunk_results = list(chunk_results_by_id.values())
 
-    # 3. 去重（结构化 + chunk 之间）
+    # 3. 去重（结构化 + chunk 之间）。
+    # 去重 key 包含 source_kind/source_id/chunk_id，避免同一证据在 prompt 中重复出现。
     all_ids: set[str] = set()
     deduped_structured = []
     for r in structured:
@@ -946,6 +964,9 @@ async def reindex_project_sources(
     """重新切片项目的所有资料条目。
 
     返回 {"total_sources": N, "total_chunks": M, "failed": K}。
+
+    重建索引用于切片策略升级、资料导入修复或用户手动点击“重新索引”。
+    单个 source 失败不会中断整个项目，最终通过 failed 计数反馈给前端。
     """
     pid = str(project_id)
 
@@ -1017,7 +1038,11 @@ SUMMARIZE_CHUNK_PROMPT = """\
 
 
 def _safe_parse_json(text: str) -> dict:
-    """从 LLM 响应中安全提取 JSON。"""
+    """从 LLM 响应中安全提取 JSON。
+
+    摘要任务要求模型输出严格 JSON，但真实模型可能带 Markdown 代码块或解释文字。
+    这里按“直接解析 -> 代码块 -> 第一个大括号范围”逐级降级。
+    """
     import json
     # 尝试直接解析
     try:
@@ -1052,6 +1077,9 @@ async def summarize_project_source(
     """使用 LLM 对资料条目生成摘要、事实、约束、关键词。
 
     原文永远保存。摘要字段失败时不丢原文，只返回空摘要。
+
+    这些摘要/关键词用于提升后续关键词检索质量，不是唯一事实来源。
+    因此失败时不能删除用户上传的原文，也不应阻断 chunk 检索。
     """
     pid = str(project_id)
     sid = str(source_id)
@@ -1063,19 +1091,21 @@ async def summarize_project_source(
     if not source:
         return {"error": "资料不存在"}
 
-    # 获取 LLM provider
+    # 获取 LLM provider：使用用户自己的模型配置，使摘要和问答/生成保持同一模型上下文。
     from agents.llm_provider import get_llm_provider
     from api.llm_deps import get_user_llm_config
 
     llm_config_dict = await get_user_llm_config(str(user_id), db)
     provider = get_llm_provider(llm_config_dict)
 
-    # 资料全文（截断到 8000 字符避免撑爆 context）
+    # 资料全文（截断到 8000 字符避免撑爆 context）。
+    # 原文仍完整保存在 source.content，只是摘要调用不把超长文本一次性塞给模型。
     content_for_llm = source.content[:8000] if source.content else ""
     if not content_for_llm.strip():
         return {"chunk_count": 0, "message": "资料内容为空，跳过摘要"}
 
     # ── 1. 资料级摘要 ──
+    # source.summary/key_facts/constraints 是“资料整体”层面的索引字段。
     try:
         result_text = await provider.generate(
             SUMMARIZE_SOURCE_PROMPT,
@@ -1094,6 +1124,7 @@ async def summarize_project_source(
         # 不清空已有摘要，直接跳过
 
     # ── 2. Chunk 级摘要 ──
+    # chunk.summary/facts/keywords 是“片段级”索引字段，用于精确命中具体证据。
     chunks_result = await db.execute(
         select(ProjectSourceChunk)
         .where(ProjectSourceChunk.source_id == sid, ProjectSourceChunk.project_id == pid)
@@ -1594,11 +1625,21 @@ async def ask_knowledge_question(
     web_api_key: str | None = None,
     web_base_url: str | None = None,
 ) -> dict:
-    """资料问答主入口 -- 基于 query_plan 的语义检索 + LLM 归纳。"""
+    """资料问答主入口 -- 基于 query_plan 的语义检索 + LLM 归纳。
+
+    处理流程：
+    1. 找到或创建 QA 会话，并加载最近对话；
+    2. 用 Query Planner 把自然语言问题改写成检索计划；
+    3. 检索并分类结构化/非结构化证据；
+    4. 优先尝试本地规则事实回答，能短路就不调用 LLM；
+    5. 组装带证据和回答策略的 prompt 调 LLM；
+    6. 保存用户问题和助手回答，返回 citations。
+    """
     pid = str(project_id)
     _ = (web_provider, web_api_key, web_base_url)
 
     # -- 1. 会话管理与最近对话 --
+    # 会话用于支持追问，例如“那他还有什么能力？”需要从最近对话补全“他”是谁。
     session_obj = None
     if conversation_id:
         sess_result = await db.execute(
@@ -1622,6 +1663,7 @@ async def ask_knowledge_question(
     recent_messages = list(reversed(msgs_result.scalars().all()))
 
     # -- 2. 构建查询计划（V2）--
+    # Query Planner 会输出 intent/entities/attributes/sub_queries 等结构化检索指令。
     from services.knowledge_query_planner import build_knowledge_query_plan_v2
 
     recent_msg_dicts = [{"role": msg.role, "content": msg.content} for msg in recent_messages]
@@ -1635,6 +1677,7 @@ async def ask_knowledge_question(
     plan = v2_plan.to_v1()
 
     # -- 3. 证据检索（分类 + 重排 + 分组）--
+    # retrieve_and_classify 会把证据分为人物直接证据、技能表、世界观、时间线等类型。
     from services.knowledge_retrieval import retrieve_and_classify
 
     structured_results, chunk_results, evidence_grouped = await retrieve_and_classify(
@@ -1647,6 +1690,7 @@ async def ask_knowledge_question(
     )
 
     # -- 3.5 可选联网检索 --
+    # 默认关闭。创作资料问答一般应以用户资料库为准，联网结果只能作为补充材料。
     web_results: list[dict] = []
     if include_web:
         from services.web_search import search_web
@@ -1654,6 +1698,7 @@ async def ask_knowledge_question(
         web_results = await search_web(resolved_question, limit=5)
 
     # -- 4. 对话历史 --
+    # history 是低优先级上下文，预算不足时优先裁剪，避免挤掉当前问题和证据。
     conversation_history = ""
     if session_obj.summary:
         conversation_history += f"## 之前的对话摘要\n{session_obj.summary}\n\n"
@@ -1664,7 +1709,8 @@ async def ask_knowledge_question(
             history_lines.append(f"{role_label}: {msg.content[:500]}")
         conversation_history += "## 最近对话\n" + "\n".join(history_lines)
 
-    # -- 4.5 优先查规则事实索引（人物-法系），命中则短路 RAG/LLM
+    # -- 4.5 优先查规则事实索引（人物-法系），命中则短路 RAG/LLM。
+    # 这类问题有明确结构化事实时，不需要让 LLM 再归纳，能降低幻觉。
     fact_answer: tuple[str, list[dict]] | None = await _try_answer_from_facts(db, pid, v2_plan)
 
     compiled_answer = _try_compile_local_qa_answer(question, v2_plan, evidence_grouped)

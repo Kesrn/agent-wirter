@@ -4,13 +4,17 @@ import type { GenerateMode, ProjectMode } from '../api/types'
 const props = defineProps<{
   show: boolean
   content: string
+  originalContent?: string
   mode: GenerateMode
   hasHITL: boolean
   projectMode: ProjectMode
+  canFinalize?: boolean
+  finalizing?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'decision', value: 'accept' | 'accept_with_mods' | 'reject'): void
+  (e: 'finalize'): void
 }>()
 
 const NOVEL_TITLE_MAP: Record<GenerateMode, string> = {
@@ -45,15 +49,33 @@ function modsLabel(): string {
   <div v-if="show" class="modal-overlay">
     <div class="modal-card">
       <h3 class="modal-title">{{ titleLabel() }}</h3>
-      <p class="modal-hint">以下为 AI 生成的{{ props.projectMode === 'article' ? '候选内容' : '候选稿' }}，确认后将写入编辑器草稿，需手动保存。</p>
+      <p class="modal-hint">
+        <template v-if="canFinalize">确认“定稿本章”会保存当前版本，并作为下一章创作的可信上文。</template>
+        <template v-else>以下为 AI 生成的{{ props.projectMode === 'article' ? '候选内容' : '候选稿' }}，确认后将写入编辑器草稿，需手动保存。</template>
+      </p>
       <div class="modal-body">
-        <pre class="modal-content">{{ content }}</pre>
+        <section v-if="originalContent && originalContent !== content" class="draft-block draft-block-original">
+          <div class="draft-block-title">
+            <strong>AI 初稿（写手原文）</strong>
+            <span>编辑前的原始版本，仅供对照</span>
+          </div>
+          <pre class="modal-content">{{ originalContent }}</pre>
+        </section>
+        <section class="draft-block">
+          <div class="draft-block-title">
+            <strong>{{ originalContent ? (originalContent === content ? 'AI 初稿（尚未经过编辑修改）' : '编辑后的候选稿') : 'AI 生成候选稿' }}</strong>
+          </div>
+          <pre class="modal-content">{{ content }}</pre>
+        </section>
       </div>
       <div class="modal-actions">
-        <button class="modal-btn modal-btn-ghost" @click="emit('decision', 'reject')">{{ REJECT_LABEL }}</button>
+        <button class="modal-btn modal-btn-ghost" :disabled="finalizing" @click="emit('decision', 'reject')">{{ REJECT_LABEL }}</button>
         <div class="modal-action-group">
-          <button class="modal-btn modal-btn-secondary" @click="emit('decision', 'accept_with_mods')">{{ modsLabel() }}</button>
-          <button class="modal-btn modal-btn-primary" @click="emit('decision', 'accept')">{{ ACCEPT_LABEL }}</button>
+          <button class="modal-btn modal-btn-secondary" :disabled="finalizing" @click="emit('decision', 'accept_with_mods')">{{ modsLabel() }}</button>
+          <button class="modal-btn modal-btn-primary" :disabled="finalizing" @click="emit('decision', 'accept')">{{ ACCEPT_LABEL }}</button>
+          <button v-if="canFinalize" class="modal-btn modal-btn-final" :disabled="finalizing" @click="emit('finalize')">
+            {{ finalizing ? '定稿中…' : '定稿本章' }}
+          </button>
         </div>
       </div>
     </div>
@@ -117,6 +139,33 @@ function modsLabel(): string {
   color: var(--text);
 }
 
+.draft-block + .draft-block {
+  margin-top: var(--sp-4, 16px);
+  padding-top: var(--sp-4, 16px);
+  border-top: 1px solid var(--border, #e5e7eb);
+}
+
+.draft-block-original {
+  border-left: 3px solid var(--accent, #2563eb);
+  padding-left: var(--sp-3, 12px);
+}
+
+.draft-block-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3, 12px);
+  margin-bottom: var(--sp-2, 8px);
+  color: var(--text, #111827);
+  font-size: var(--text-sm, 13px);
+}
+
+.draft-block-title span {
+  color: var(--text-tertiary, #9ca3af);
+  font-size: var(--text-xs, 12px);
+  font-weight: 400;
+}
+
 .modal-actions {
   display: flex;
   align-items: center;
@@ -157,6 +206,12 @@ function modsLabel(): string {
 
 .modal-btn:active {
   transform: translateY(0);
+}
+
+.modal-btn:disabled {
+  cursor: wait;
+  opacity: 0.58;
+  transform: none;
 }
 
 .modal-btn:focus-visible {
@@ -200,6 +255,19 @@ function modsLabel(): string {
   background: var(--accent-hover, #1d4ed8);
   border-color: var(--accent-hover, #1d4ed8);
   box-shadow: 0 10px 22px rgba(37, 99, 235, 0.26);
+}
+
+.modal-btn-final {
+  color: var(--text-inverse, #fff);
+  background: var(--status-final, #059669);
+  border-color: var(--status-final, #059669);
+  box-shadow: 0 8px 18px rgba(5, 150, 105, 0.22);
+}
+
+.modal-btn-final:hover:not(:disabled) {
+  background: #047857;
+  border-color: #047857;
+  box-shadow: 0 10px 22px rgba(5, 120, 87, 0.26);
 }
 
 @media (max-width: 560px) {

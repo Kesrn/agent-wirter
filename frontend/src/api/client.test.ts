@@ -50,6 +50,17 @@ describe('api generation routes', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('/projects/project-1/chapters/generate')
   })
 
+  it('finalizes a chapter through the dedicated final-review endpoint', async () => {
+    vi.mocked(fetch).mockImplementation(async () => new Response('{}', { status: 200 }))
+
+    await api.finalizeChapter('project-1', 2, { content: '确认后的章节正文' })
+
+    const fetchMock = vi.mocked(fetch)
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/projects/project-1/chapters/2/finalize')
+    expect(fetchMock.mock.calls[0][1]?.method).toBe('POST')
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ content: '确认后的章节正文' })
+  })
+
   it('routes article resume through document endpoints', async () => {
     await api.resumeGeneration('project-1', 'thread-1', 'reject', vi.fn(), undefined, undefined, 'article')
 
@@ -62,6 +73,42 @@ describe('api generation routes', () => {
 
     const fetchMock = vi.mocked(fetch)
     expect(String(fetchMock.mock.calls[0][0])).toContain('/projects/project-1/chapters/resume')
+  })
+
+  it('sends task card resume payload in request body instead of query string', async () => {
+    const taskCard = JSON.stringify({ core_task: 'x'.repeat(10_000) })
+
+    await api.resumeGeneration(
+      'project-1',
+      'thread-1',
+      'approve_task_card',
+      vi.fn(),
+      undefined,
+      undefined,
+      'novel',
+      taskCard,
+    )
+
+    const fetchMock = vi.mocked(fetch)
+    const url = String(fetchMock.mock.calls[0][0])
+    const init = fetchMock.mock.calls[0][1]
+    expect(url).toContain('thread_id=thread-1')
+    expect(url).toContain('action=approve_task_card')
+    expect(url).not.toContain('task_card=')
+    expect(JSON.parse(String(init?.body)).task_card).toBe(taskCard)
+  })
+
+  it('sends resume feedback in request body instead of query string', async () => {
+    const feedback = '请重点修改：'.repeat(1000)
+
+    await api.resumeGeneration('project-1', 'thread-1', 'revise', vi.fn(), feedback, undefined, 'novel')
+
+    const fetchMock = vi.mocked(fetch)
+    const url = String(fetchMock.mock.calls[0][0])
+    const init = fetchMock.mock.calls[0][1]
+    expect(url).toContain('action=revise')
+    expect(url).not.toContain('feedback=')
+    expect(JSON.parse(String(init?.body)).feedback).toBe(feedback)
   })
 
   it('routes AI generation history through chapter and document endpoints', async () => {

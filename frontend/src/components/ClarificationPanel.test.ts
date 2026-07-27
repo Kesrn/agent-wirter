@@ -145,8 +145,10 @@ describe('AgentPanel clarification_required wiring', () => {
     expect(agentPanelSource).toContain('@skip="handleClarificationSkip"')
   })
 
-  it('calls submitClarificationAnswers for both submit and skip actions', () => {
-    expect(agentPanelSource).toContain("api.submitClarificationAnswers(runId, { action: 'submit', answers })")
-    expect(agentPanelSource).toContain("api.submitClarificationAnswers(runId, { action: 'skip', answers: {} })")
+  it('calls resumeGeneration for submit and skip actions (M-3: 不再用 submitClarificationAnswers)', () => {
+    expect(agentPanelSource).toContain("api.resumeGeneration")
+    expect(agentPanelSource).toContain("'submit_clarification'")
+    expect(agentPanelSource).toContain("'skip_clarification'")
+    expect(agentPanelSource).toContain("clarification_answers: answers")
   })
 })

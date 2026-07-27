@@ -26,6 +26,12 @@ Option:
     "label": str,
     "description": str
   }
+
+这个模块只负责“把 LLM 的澄清规划结果变成稳定结构”：
+- run_clarification_planner 调模型判断是否需要追问；
+- parse_clarification_result 对模型输出做容错解析；
+- build_embedded_clarification_payload 是历史兼容路径，主流程已迁移到 workflow_v2
+  的 clarification_planner -> human_clarification 图节点。
 """
 
 import json
@@ -38,6 +44,106 @@ logger = logging.getLogger(__name__)
 MAX_QUESTIONS = 3
 VALID_QUESTION_TYPES = {"single_choice", "multi_choice", "free_text", "number"}
 
+# M-1: STRICT 模式下 AI 没返回问题时的兜底问题。
+# 兜底问题保证 STRICT 模式至少让用户明确一次本章重点，不被模型“无需澄清”
+# 的判断直接跳过。
+DEFAULT_CLARIFICATION_QUESTIONS = [
+    {
+        "id": "chapter_focus",
+        "type": "free_text",
+        "question": "这一章你最希望 AI 优先写好的重点是什么？",
+        "required": False,
+        "reason": "用于控制本章重点，避免自由发挥。",
+    }
+]
+
+
+def build_embedded_clarification_payload(
+    *,
+    ai_result: dict | None,
+    mode: str,
+    round_num: int,
+    max_rounds: int,
+) -> dict | None:
+    """[N-1 deprecated] 根据生成前交互模式构建 clarification payload。
+
+    .. deprecated:: N-1
+        本函数仅供已废弃的 refresh_task_card 历史路径使用。M-3 后澄清链路统一走
+        graph 正式节点（clarification_planner -> human_clarification），不再在
+        任务卡中内嵌澄清。待旧 run 全部过期后删除本函数。
+
+    Args:
+        ai_result: run_clarification_planner 的返回 dict（可为 None）
+        mode: FAST / PLANNING / STRICT
+        round_num: 当前轮次（1 起始）
+        max_rounds: 最大轮次
+
+    Returns:
+        None 表示不附带 clarification（前端不显示问题区）。
+        dict 始终包含: needs_clarification, questions, assumptions_if_skipped,
+        round, max_rounds, show_user_note, require_answer。
+    """
+    ai_questions: list = []
+    ai_assumptions: list = []
+    if ai_result and ai_result.get("needs_clarification"):
+        ai_questions = ai_result.get("questions", [])[:MAX_QUESTIONS]
+        ai_assumptions = ai_result.get("assumptions_if_skipped", [])
+
+    if mode == "FAST":
+        # 不强制澄清；有 AI 问题时展示但不强制
+        if not ai_questions:
+            return None
+        return {
+            "needs_clarification": True,
+            "questions": ai_questions,
+            "assumptions_if_skipped": ai_assumptions,
+            "round": round_num,
+            "max_rounds": max_rounds,
+            "show_user_note": False,
+            "require_answer": False,
+        }
+
+    if mode == "PLANNING":
+        # 每次展示补充要求区；有 AI 问题时展示问题
+        if not ai_questions:
+            return None
+        return {
+            "needs_clarification": True,
+            "questions": ai_questions,
+            "assumptions_if_skipped": ai_assumptions,
+            "round": round_num,
+            "max_rounds": max_rounds,
+            "show_user_note": True,
+            "require_answer": False,
+        }
+
+    if mode == "STRICT":
+        # 至少一轮；AI 无问题时用兜底问题
+        questions = ai_questions if ai_questions else DEFAULT_CLARIFICATION_QUESTIONS
+        require_answer = round_num <= max_rounds
+        return {
+            "needs_clarification": True,
+            "questions": questions,
+            "assumptions_if_skipped": ai_assumptions,
+            "round": round_num,
+            "max_rounds": max_rounds,
+            "show_user_note": True,
+            "require_answer": require_answer,
+        }
+
+    # 未知模式 fallback 为 PLANNING 行为
+    if not ai_questions:
+        return None
+    return {
+        "needs_clarification": True,
+        "questions": ai_questions,
+        "assumptions_if_skipped": ai_assumptions,
+        "round": round_num,
+        "max_rounds": max_rounds,
+        "show_user_note": True,
+        "require_answer": False,
+    }
+
 
 def _coerce_confidence(value: Any) -> float:
     """将 confidence 强制为 0-1 的 float。"""
@@ -49,13 +155,25 @@ def _coerce_confidence(value: Any) -> float:
 
 
 def _coerce_string_list(value: Any) -> list[str]:
+    """把任意 list-like LLM 输出清洗成字符串列表。
+
+    模型可能把 missing_fields/assumptions 写成数字、对象或 null，这里只保留
+    可转成字符串的条目，保证响应 schema 稳定。
+    """
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if item is not None]
 
 
 def _coerce_question(question: Any, index: int) -> dict[str, Any] | None:
-    """将单个 question 原始数据规范化为标准结构。"""
+    """将单个 question 原始数据规范化为标准结构。
+
+    这里做了几件保护：
+    - 无 id 时自动生成 question_1/question_2；
+    - 非法类型降级为 free_text；
+    - 没有问题文本的条目直接丢弃；
+    - free_text/number 不保留 options，避免前端误渲染选择器。
+    """
     if not isinstance(question, dict):
         return None
 
@@ -96,7 +214,11 @@ def _coerce_question(question: Any, index: int) -> dict[str, Any] | None:
 
 
 def _coerce_questions(raw_questions: Any) -> list[dict[str, Any]]:
-    """规范化问题列表，裁剪到 MAX_QUESTIONS。"""
+    """规范化问题列表，裁剪到 MAX_QUESTIONS。
+
+    问题数量限制是产品和体验边界：生成前最多追问 3 个问题，避免把写作流程
+    变成冗长问卷。
+    """
     if not isinstance(raw_questions, list):
         return []
     questions: list[dict[str, Any]] = []
@@ -137,10 +259,12 @@ def parse_clarification_result(raw: str) -> dict[str, Any]:
             if isinstance(parsed, dict):
                 questions = _coerce_questions(parsed.get("questions"))
                 needs = bool(parsed.get("needs_clarification", False))
-                # 如果没有问题但 needs_clarification=True，强制设为 False
+                # 如果没有问题但 needs_clarification=True，强制设为 False。
+                # 前端需要 questions 才能渲染交互；没有问题时继续停在澄清节点没有意义。
                 if needs and not questions:
                     needs = False
-                # 如果有问题但 needs_clarification=False，强制设为 True
+                # 如果有问题但 needs_clarification=False，强制设为 True。
+                # 模型偶尔会字段自相矛盾，实际以 questions 是否存在为准。
                 if questions and not needs:
                     needs = True
 
@@ -195,6 +319,9 @@ def build_clarification_summary(
 ) -> str:
     """将问题和回答整合为 clarification_summary 文本。
 
+    这个摘要会被注入 chapter_architect_node，而不是直接注入 writer。
+    目的是让澄清结果先影响任务卡规划，再由任务卡约束正文生成。
+
     Args:
         questions: 已问过的问题列表
         answers: {question_id: answer_value} 映射
@@ -226,6 +353,9 @@ def build_clarification_prompt(
     max_rounds: int,
 ) -> str:
     """构建 clarification-planner 的 user prompt。
+
+    prompt 明确要求 planner 只判断“还缺什么信息”，不生成正文、不改大纲。
+    这能把“需求澄清”和“章节策划”职责拆开，降低节点输出越界。
 
     Args:
         context: ChapterContextService 格式化的上下文（含大纲、角色、设定、前文等）
@@ -309,7 +439,8 @@ async def run_clarification_planner(
     prev = previous_answers or {}
     answered_ids = set(prev.keys())
 
-    # 构建 prompt
+    # 构建 prompt：当前上下文 + 用户补充 + 已有回答。
+    # previous_answers 存在时会要求模型不要重复追问。
     user_prompt = build_clarification_prompt(
         context=context,
         chapter_num=chapter_num,
@@ -320,7 +451,8 @@ async def run_clarification_planner(
         max_rounds=max_rounds,
     )
 
-    # 构建 system prompt（含 SKILL.md 内容）
+    # 构建 system prompt（含 SKILL.md 内容）。
+    # clarification-planner 的技能包可以沉淀“什么问题值得问、什么信息不该问”。
     pack = build_expert_skill_pack(
         "writer",  # clarification-planner 用 writer role_type 加载 skill
         skill_dir="clarification-planner",
@@ -334,7 +466,8 @@ async def run_clarification_planner(
     )
     system_prompt = build_expert_system_prompt("writer", base_prompt, pack)
 
-    # 获取 LLM 并包装日志
+    # 获取 LLM 并包装日志：如果本次生成有 AiRun，就把 planner 调用也记入
+    # LLM call log，方便排查“为什么这次问了这些问题”。
     llm = get_llm_provider(llm_config)
     state_for_wrap = {
         "harness_run_id": harness_run_id,
@@ -360,14 +493,14 @@ async def run_clarification_planner(
             "raw": str(e),
         }
 
-    # 过滤已回答的问题
+    # 过滤已回答的问题，多轮澄清时避免重复问同一个 question_id。
     if result["questions"] and answered_ids:
         result["questions"] = filter_answered_questions(result["questions"], answered_ids)
         # 过滤后如果没有新问题了，不需要再澄清
         if not result["questions"]:
             result["needs_clarification"] = False
 
-    # 如果有已有回答，整合到 summary
+    # 如果有已有回答，整合到 summary。即使本轮不再追问，前面回答过的信息也不能丢。
     if prev:
         existing_summary = build_clarification_summary(
             [{"id": k, "question": k} for k in prev],

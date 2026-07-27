@@ -1,4 +1,8 @@
-"""Expert Skill Runner — 按专家角色执行 skill，返回结构化结果注入工作流节点"""
+"""Expert Skill Runner — 按专家角色读取 skill，返回结构化结果注入工作流节点。
+
+当前实现是“预注入模式”：读取本地 SKILL.md 的写作指导，拼进远程 LLM 的
+system_prompt。它不执行任意本地命令，也不让模型直接调用工具。
+"""
 
 import logging
 import re
@@ -22,6 +26,11 @@ _OUTPUT_FORMAT_PATTERN = re.compile(r'^##\s*输出格式', re.MULTILINE)
 
 @dataclass
 class ExpertSkillResult:
+    """一次 skill pack 加载结果。
+
+    prompt_content 会进入 system_prompt；sources/warnings/token_estimate 用于
+    SSE、生成历史和调试展示。
+    """
     expert_role: str
     skill_name: str
     prompt_content: str
@@ -36,7 +45,10 @@ class ExpertSkillResult:
         return bool(self.prompt_content)
 
     def to_summary(self) -> dict:
-        """Return a compact, serializable summary for SSE/log/history metadata."""
+        """Return a compact, serializable summary for SSE/log/history metadata.
+
+        摘要不包含完整 prompt_content，避免把长 Skill.md 反复塞进前端事件和历史记录。
+        """
         return {
             "expert": self.expert_role,
             "skill": self.skill_name,
@@ -85,6 +97,8 @@ def run_expert_skill(
     Returns:
         ExpertSkillResult 包含 skill prompt 内容和元信息
     """
+    # 显式 skill_dir 优先，用于 Expert System v2 精确绑定 chapter-writer 等技能；
+    # 没有显式目录时按 role_type 使用默认映射。
     skill = get_skill_by_dir(skill_dir) if skill_dir else get_skill_for_role(role_type)
     if not skill:
         dir_name = skill_dir or EXPERT_SKILL_MAP.get(role_type, "unknown")
@@ -106,6 +120,7 @@ def run_expert_skill(
             warnings=[f"Skill {skill.dir_name} has no content"],
         )
 
+    # Skill.md 里的输出格式示例可能污染正文输出，所以先剥离再注入。
     clean_content = _strip_output_template(prompt_content)
     sources = [{"type": "skill", "name": skill.name, "dir": skill.dir_name}]
     if project_id:

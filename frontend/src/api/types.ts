@@ -328,6 +328,8 @@ export interface ApiChapter {
   sequence_number: number
   word_count: number
   status: string
+  /** 用户最终审核确认的不可变版本；下一章只读取该版本作为前文。 */
+  final_version_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -822,6 +824,9 @@ export interface ChapterStructureExtractResponse {
 
 export type GenerateMode = 'continue' | 'full_pipeline' | 'enhance' | 'summarize'
 
+// M-1: 生成前交互模式
+export type PreGenerationMode = 'FAST' | 'PLANNING' | 'STRICT'
+
 export interface GenerateRequest {
   chapter_id?: string
   document_id?: string
@@ -846,6 +851,9 @@ export interface GenerateRequest {
   tone?: string
   key_points?: string
   planning_review?: boolean
+  // M-1: 生成前交互模式
+  pre_generation_mode?: PreGenerationMode
+  max_clarification_rounds?: number
 }
 
 export interface ArticleGenerateParams {
@@ -907,6 +915,8 @@ export interface ErrorPayload {
 export interface WriterOutputPayload {
   content?: string
   token?: string
+  /** 写手首次生成的原文；编辑和后续修订均不会覆盖它。 */
+  initial_draft?: string
 }
 
 /** Payload for critic_output SSE event (full_pipeline mode) */
@@ -1044,10 +1054,13 @@ export interface ClarificationAnswerRequest {
 export interface ClarificationRequiredPayload {
   run_id: string
   interrupt_id: string | null
+  thread_id?: string
   round: number
   max_rounds: number
   questions: ClarificationQuestion[]
   assumptions_if_skipped: string[]
+  pre_generation_mode?: PreGenerationMode
+  require_answer?: boolean
 }
 
 // ─── L-1: Task Card Review ───
@@ -1086,12 +1099,45 @@ export interface ClarificationEmbedded {
   needs_clarification: boolean
   questions: ClarificationQuestion[]
   assumptions_if_skipped: string[]
+  round?: number
+  max_rounds?: number
+  // M-1: 模式控制字段
+  show_user_note?: boolean
+  require_answer?: boolean
+}
+
+export type TaskCardClarificationStatus = 'pending' | 'not_needed' | 'answered' | 'skipped'
+
+export interface TaskCardContextItem {
+  key: string
+  id?: string
+  label: string
+  detail?: string
+  source_type: string
+  selected?: boolean
+  excluded?: boolean
+  chapter_sequence_number?: number | null
+}
+
+export interface TaskCardContextSummary {
+  previous_chapter_ending?: string
+  excluded_context_keys?: string[]
+  outlines?: TaskCardContextItem[]
+  story_arcs?: TaskCardContextItem[]
+  characters?: TaskCardContextItem[]
+  hidden_threads?: TaskCardContextItem[]
+  world_entries?: TaskCardContextItem[]
+  confirmed_memories?: TaskCardContextItem[]
+  knowledge_sources?: TaskCardContextItem[]
 }
 
 export interface TaskCardReviewRequiredPayload {
   task_card: TaskCardPayload
   thread_id: string
+  pre_generation_mode?: PreGenerationMode
   clarification?: ClarificationEmbedded | null
+  clarification_status?: TaskCardClarificationStatus
+  context_summary?: TaskCardContextSummary | null
 }
 
 // ─── Chapter Version History ───

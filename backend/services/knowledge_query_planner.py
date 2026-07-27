@@ -218,7 +218,11 @@ async def _build_llm_plan(
     user_id: str | None,
     db: AsyncSession | None,
 ) -> KnowledgeQueryPlanV2 | None:
-    """调用 LLM 生成 query plan。失败返回 None。"""
+    """调用 LLM 生成 query plan。失败返回 None。
+
+    Planner 调用只负责“理解问题”，不负责回答问题。temperature=0 是为了让
+    intent/entities/sub_queries 更稳定，降低同一问题多次检索结果大幅波动。
+    """
     if not user_id or not db:
         return None
 
@@ -252,7 +256,11 @@ async def _build_llm_plan(
 # ── Rule Fallback ───────────────────────────────────────
 
 def _build_rule_plan(question: str, recent_messages: list[dict] | None = None) -> KnowledgeQueryPlanV2:
-    """基于规则构建 query plan（V2 schema），作为 LLM fallback。"""
+    """基于规则构建 query plan（V2 schema），作为 LLM fallback。
+
+    规则 planner 覆盖常见中文问法，保证真实 LLM 不可用、输出格式错误或低置信度时，
+    知识库问答仍然能跑通基础检索。
+    """
     from services.knowledge_query_plan import build_knowledge_query_plan
 
     v1 = build_knowledge_query_plan(question)
@@ -294,7 +302,8 @@ def _build_rule_plan(question: str, recent_messages: list[dict] | None = None) -
         evidence_policy = "设定/参考资料优先，不要误召回纯人物关系片段。"
         answer_policy = "基于资料中的设定内容回答，不要编造。"
 
-    # 追问消解：如果问题含代词，从 recent_messages 提取上文实体补充
+    # 追问消解：如果问题含代词，从 recent_messages 提取上文实体补充。
+    # 例：“莫凡有什么系？”之后问“他和叶心夏什么关系？”需要把“他”还原为莫凡。
     rewritten = None
     if recent_messages and any(p in question for p in ("她", "他", "TA", "ta")):
         for msg in reversed(recent_messages):
@@ -306,7 +315,8 @@ def _build_rule_plan(question: str, recent_messages: list[dict] | None = None) -
                         break
                 break
 
-    # 短追问消解："那叶心夏呢？"
+    # 短追问消解："那叶心夏呢？"。
+    # 这类追问常省略关系锚点，规则会从上一轮关系问题中补一个 anchor。
     if not rewritten and len(question.strip()) <= 12:
         followup_markers = ("那", "那么", "还有", "呢")
         if any(m in question for m in followup_markers) and recent_messages:
@@ -368,16 +378,20 @@ async def build_knowledge_query_plan_v2(
     user_id: str | None = None,
     db: AsyncSession | None = None,
 ) -> KnowledgeQueryPlanV2:
-    """V2 Planner 主入口：LLM 优先，规则 fallback。"""
-    # 1. 尝试 LLM planner
+    """V2 Planner 主入口：LLM 优先，规则 fallback。
+
+    返回值一定是 KnowledgeQueryPlanV2，不会因为 LLM 调用失败让问答流程中断。
+    """
+    # 1. 尝试 LLM planner。置信度足够高才采用，避免模型“看似 JSON 合法但理解错意图”。
     llm_plan = await _build_llm_plan(question, recent_messages, user_id, db)
     if llm_plan and llm_plan.confidence >= 0.5:
         return llm_plan
 
-    # 2. 规则 fallback
+    # 2. 规则 fallback。
     rule_plan = _build_rule_plan(question, recent_messages)
 
-    # 3. 如果 LLM 有结果但置信度低，用规则 plan 但保留 LLM 的 rewritten_question
+    # 3. 如果 LLM 有结果但置信度低，用规则 plan 但保留 LLM 的 rewritten_question。
+    # 这样可以利用 LLM 的指代消解能力，同时保留规则 planner 的稳定 intent/terms。
     if llm_plan and llm_plan.rewritten_question:
         rule_plan.rewritten_question = llm_plan.rewritten_question
 

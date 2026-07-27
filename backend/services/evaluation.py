@@ -1,4 +1,10 @@
-"""Evaluation dataset runner and LLM-as-judge helpers."""
+"""Evaluation dataset runner and LLM-as-judge helpers.
+
+评测实验室用于批量检查 AI 输出质量：
+- EvaluationCase 保存输入、期望属性、参考输出和评分 rubric；
+- run_evaluation_case 可以“生成并评测”或“只评测已有输出”；
+- judge prompt 要求模型只返回 JSON，parse_judge_response 再做容错归一。
+"""
 
 from __future__ import annotations
 
@@ -28,6 +34,7 @@ DEFAULT_RUBRICS: dict[str, dict[str, str]] = {
 
 
 def default_rubric(project_mode: str) -> dict[str, str]:
+    """根据项目类型返回默认评分维度。小说和文章关注点不同。"""
     return dict(DEFAULT_RUBRICS.get(project_mode, DEFAULT_RUBRICS["novel"]))
 
 
@@ -48,6 +55,10 @@ def normalize_rubric(value: Any, project_mode: str) -> dict[str, str]:
 
 
 def _json_block(text: str) -> dict[str, Any] | None:
+    """从模型输出中提取 JSON 对象。
+
+    裁判模型有时会把 JSON 包在 Markdown 或解释里，这里只取第一个对象块。
+    """
     text = (text or "").strip()
     if not text:
         return None
@@ -76,6 +87,11 @@ def _number(value: Any) -> float | None:
 
 
 def parse_judge_response(text: str, rubric: dict[str, str]) -> dict[str, Any]:
+    """把裁判模型输出解析成稳定评测结果。
+
+    即使模型漏掉部分维度，也会用已有 scores 计算 overall，最后兜底为 1.0。
+    这样单个异常输出不会让整批评测崩掉。
+    """
     parsed = _json_block(text) or {}
     raw_scores = parsed.get("scores") if isinstance(parsed.get("scores"), dict) else {}
     scores: dict[str, float] = {}
@@ -108,6 +124,7 @@ def parse_judge_response(text: str, rubric: dict[str, str]) -> dict[str, Any]:
 
 
 def build_generation_prompt(project: Project, case: EvaluationCase, rubric: dict[str, str], expected: list[str]) -> tuple[str, str]:
+    """构造被测模型的生成 prompt。"""
     if project.mode == "article":
         system = (
             "你是一位中文文章/文案创作者。根据评测样本输入生成候选输出。"
@@ -131,6 +148,10 @@ def build_generation_prompt(project: Project, case: EvaluationCase, rubric: dict
 
 
 def build_judge_prompt(case: EvaluationCase, rubric: dict[str, str], expected: list[str], output: str) -> tuple[str, str]:
+    """构造 LLM-as-Judge prompt。
+
+    裁判只根据输入、期望属性、rubric、参考输出和候选输出评分，不参与生成。
+    """
     system = (
         "你是严格的创作质量评测裁判。请只输出严格 JSON，不要输出 Markdown。"
         "JSON 格式：{\"overall_score\": 1-5, \"scores\": {维度: 1-5}, "
@@ -156,6 +177,12 @@ async def run_evaluation_case(
     case: EvaluationCase,
     generation_mode: str,
 ) -> dict[str, Any]:
+    """运行单条评测样本。
+
+    generation_mode:
+    - generate_and_judge：先让 provider 根据样本输入生成候选输出，再评测；
+    - judge_only：直接评测 case.actual_output。
+    """
     start = time.perf_counter()
     rubric = normalize_rubric(case.rubric, project.mode)
     expected = normalize_expected_properties(case.expected_properties)

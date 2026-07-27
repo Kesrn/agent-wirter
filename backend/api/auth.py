@@ -1,4 +1,4 @@
-"""认证路由 — JWT 认证 + 用户注册
+"""认证路由 — JWT 认证 + 用户注册。
 
 功能：
 - POST /auth/register — 注册新用户（bcrypt 哈希密码）
@@ -7,6 +7,9 @@
 
 MVP 兼容：如果 User 表为空（首次使用），仍然允许任意账号密码登录并自动创建用户。
 生产环境务必设置 JWT_SECRET 环境变量，否则重启后所有 token 失效。
+
+本模块只处理“谁在访问”的问题，不处理项目权限。具体项目是否属于当前用户，
+由 api/routes.py 里的 _verify_project_owner 在每个业务接口里校验。
 """
 
 import logging
@@ -37,17 +40,25 @@ if not _jwt_secret:
 
 
 def _hash_password(password: str) -> str:
-    """用 bcrypt 哈希密码"""
+    """用 bcrypt 哈希密码。
+
+    数据库只保存 hash，不保存明文密码。bcrypt 自带 salt 和计算成本，
+    比直接 SHA-256 更适合密码场景。
+    """
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def _verify_password(password: str, hashed: str) -> bool:
-    """验证密码与哈希是否匹配"""
+    """验证密码与哈希是否匹配。"""
     return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
 
 
 def _create_token(user_id: str, username: str) -> str:
-    """签发 JWT token"""
+    """签发 JWT token。
+
+    token 中只放 user_id/username 和过期时间，不放密码、API Key 等敏感信息。
+    后续请求通过 Authorization: Bearer <token> 进入 get_current_user。
+    """
     now = datetime.now(timezone.utc)
     payload = {
         "user_id": user_id,
@@ -59,7 +70,10 @@ def _create_token(user_id: str, username: str) -> str:
 
 
 def _decode_token(token: str) -> dict:
-    """验证并解码 JWT token，失败时抛出 HTTPException"""
+    """验证并解码 JWT token，失败时抛出 HTTPException。
+
+    路由层收到 HTTPException 后会直接返回 401，前端据此跳回登录或提示登录过期。
+    """
     try:
         return jwt.decode(token, _jwt_secret, algorithms=["HS256"])
     except jwt.ExpiredSignatureError:
@@ -75,6 +89,8 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
 
     用法: async def handler(user: AuthUser = Depends(get_current_user)):
     """
+    # 前端所有需要登录的接口都应带 Bearer token。这里不兼容 query token，
+    # 是为了避免 token 出现在 URL、日志或浏览器历史里。
     auth = request.headers.get("authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="未登录")
@@ -82,26 +98,28 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
     payload = _decode_token(token)
 
     user_id = payload.get("user_id")
-    if user_id:
-        # 验证用户存在且 active
-        uid = uuid.UUID(user_id)
-        result = await db.execute(select(User).where(User.id == uid))
-        db_user = result.scalar_one_or_none()
-        if db_user and not db_user.is_active:
-            raise HTTPException(status_code=401, detail="用户已被禁用")
-        # 如果用户存在于 DB，用 DB 数据
-        if db_user:
-            return AuthUser(
-                id=str(db_user.id),
-                username=db_user.username,
-                display_name=db_user.username,
-            )
+    if not isinstance(user_id, str):
+        raise HTTPException(status_code=401, detail="登录已失效")
 
-    # fallback：JWT 中的信息（兼容旧 token / MVP 模式）
+    try:
+        uid = uuid.UUID(user_id)
+    except (ValueError, TypeError, AttributeError):
+        # token 即使签名合法，也不能让格式错误的 subject 触发 500。
+        raise HTTPException(status_code=401, detail="登录已失效")
+
+    # JWT 只证明 token 曾经由本服务签发；当前用户仍必须存在且处于启用状态。
+    # 不再回退到 token 内的 username，避免删除用户后旧 token 在过期前继续生效。
+    result = await db.execute(select(User).where(User.id == uid))
+    db_user = result.scalar_one_or_none()
+    if not db_user:
+        raise HTTPException(status_code=401, detail="登录已失效")
+    if not db_user.is_active:
+        raise HTTPException(status_code=401, detail="用户已被禁用")
+
     return AuthUser(
-        id=payload["user_id"],
-        username=payload["username"],
-        display_name=payload["username"],
+        id=str(db_user.id),
+        username=db_user.username,
+        display_name=db_user.username,
     )
 
 
@@ -110,7 +128,11 @@ async def register(
     req: RegisterRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """注册新用户"""
+    """注册新用户。
+
+    注册时先校验 username/email 唯一性，然后写入 bcrypt hash。这里不自动登录，
+    前端可在注册后跳转登录页或复用 login 流程。
+    """
     auth_limiter.check(f"auth:{req.username}")
     # 校验 username 不重复
     result = await db.execute(select(User).where(User.username == req.username))
@@ -151,7 +173,9 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     identity = req.username or req.email
     auth_limiter.check(f"auth:{identity}")
 
-    # 检查 User 表是否有记录
+    # 检查 User 表是否有记录。
+    # 首次使用时自动创建用户，是为了降低本地演示/桌面端第一次启动门槛；
+    # 一旦已有用户，就进入正常用户名密码校验。
     count_result = await db.execute(select(func.count()).select_from(User))
     user_count = count_result.scalar()
 

@@ -83,7 +83,11 @@ BINDING_TERMS = (
 
 
 def _split_clauses(text: str) -> list[str]:
-    """按句末标点 + 逗号/分号/换行切分子句，返回去空后的非空片段列表。"""
+    """按句末标点 + 逗号/分号/换行切分子句，返回去空后的非空片段列表。
+
+    人物-属性绑定必须在较短语义片段内判断；整段文本太长时，容易把不同人物和
+    不同能力错误绑定到一起。
+    """
     return [s.strip() for s in _CLAUSE_SPLIT_RE.split(text) if s.strip()]
 
 
@@ -145,6 +149,8 @@ def _is_entity_attr_bound(entity: str, attr: str, clause: str,
     且不满足"第三人夹击"排除条件。
     known_entities 传入已知人物实体，用于精确识别第三人（避免把动词误判为人名）。
     """
+    # 这里做的是规则级“证据质量过滤”，不是最终回答。
+    # 如果绑定不成立，该证据会降级为普通上下文，避免误导 LLM。
     e = entity.lower()
     a = attr.lower()
     c = clause.lower()
@@ -184,7 +190,11 @@ def _is_entity_attr_bound(entity: str, attr: str, clause: str,
 
 @dataclass
 class ClassifiedEvidence:
-    """分类后的单条证据。"""
+    """分类后的单条证据。
+
+    evidence_type 决定它在 prompt 里的优先级和分组位置。高质量直接证据会比
+    泛泛正文上下文先进入模型上下文。
+    """
     evidence_type: str
     source_kind: str
     source_id: str
@@ -198,7 +208,11 @@ class ClassifiedEvidence:
 
 @dataclass
 class GroupedEvidence:
-    """按类型分组的证据集合。"""
+    """按类型分组的证据集合。
+
+    问答 prompt 不是把所有检索结果平铺，而是按证据类型组织。这样模型更容易区分：
+    哪些是直接事实，哪些只是背景资料，哪些是否定/不足证据。
+    """
     direct_character: list[ClassifiedEvidence] = field(default_factory=list)
     relationship: list[ClassifiedEvidence] = field(default_factory=list)
     ability_table: list[ClassifiedEvidence] = field(default_factory=list)
@@ -225,6 +239,8 @@ class GroupedEvidence:
         - 否定证据只在没有任何正向证据时才包含，避免干扰模型。
         - max_chars: 证据部分的总字符预算（不含 history/web/policy，那些由 ask 流程另计）。
         """
+        # 正向证据存在时不主动加入 negative_evidence，避免“没有说明”类句子
+        # 干扰模型对已有证据的判断；只有完全没有正向证据时才提示资料不足。
         positive = self.positive_evidence()
         parts: list[str] = []
 
@@ -300,7 +316,11 @@ class GroupedEvidence:
 # ── 证据分类 ────────────────────────────────────────────
 
 def _classify_evidence(result: dict, intent: str, entities: list[str], attributes: list[str]) -> str:
-    """根据内容特征和查询意图，将单条检索结果分类。"""
+    """根据内容特征和查询意图，将单条检索结果分类。
+
+    分类不是为了“证明答案”，而是为了控制 prompt 组织方式和排序优先级。
+    例如人物能力问题应优先看 direct_character_evidence，而不是世界观背景段落。
+    """
     content = (result.get("snippet", "") or "").lower()
     title = (result.get("title", "") or "").lower()
     source_type = result.get("source_type", "")
@@ -396,7 +416,11 @@ def _classify_evidence(result: dict, intent: str, entities: list[str], attribute
 # ── 重排优先级 ────────────────────────────────────────────
 
 def _rerank_priority(evidence_type: str, intent: str) -> int:
-    """返回排序优先级（越小越优先）。"""
+    """返回排序优先级（越小越优先）。
+
+    不同 intent 的高价值证据类型不同：关系问题优先 relationship_evidence，
+    人物能力问题优先 direct_character_evidence，世界观问题则更看重设定条目。
+    """
     # 人物能力问题
     if intent in ("character_ability", "character_profile"):
         priority_map = {
@@ -466,6 +490,9 @@ async def retrieve_and_classify(
     返回 (structured_results, chunk_results, grouped)。
     structured_results 和 chunk_results 保持原始格式供兼容使用。
     grouped 是分类后的证据分组供 prompt 使用。
+
+    这是 ask_knowledge_question 的证据入口。它先复用 knowledge_source 的检索结果，
+    再在本层做“证据质量判断”，避免问答 prompt 只是低质量片段列表。
     """
     from services.knowledge_source import search_project_knowledge_with_plan
 
@@ -477,7 +504,7 @@ async def retrieve_and_classify(
     if clean_entities:
         entities = clean_entities
 
-    # 1. 复用现有检索
+    # 1. 复用现有检索：include_structured=True 时先查正式结构化表，再查资料切片。
     if include_structured:
         structured_results, chunk_results = await search_project_knowledge_with_plan(
             db, project_id, plan, limit=limit,
@@ -490,7 +517,7 @@ async def retrieve_and_classify(
             required_terms=plan.required_terms, limit=limit,
         )
 
-    # 2. 分类
+    # 2. 分类：结构化结果和 chunk 结果统一变成 ClassifiedEvidence，后续统一排序/分组。
     all_classified: list[ClassifiedEvidence] = []
 
     for r in structured_results:
@@ -521,7 +548,8 @@ async def retrieve_and_classify(
             source_type=r.get("source_type", ""),
         ))
 
-    # 3. 重排：按类型优先级 + 原始分数
+    # 3. 重排：按类型优先级 + 原始分数。
+    # 类型优先级保证“高可信证据”靠前，原始分数保证同类证据中更相关的靠前。
     all_classified.sort(
         key=lambda e: (_rerank_priority(e.evidence_type, intent), -e.score),
     )

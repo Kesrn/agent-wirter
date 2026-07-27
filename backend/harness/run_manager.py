@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.ai_run import AiRun
@@ -37,6 +38,14 @@ async def create_run(
     workflow_snapshot: dict[str, Any] | None = None,
     expert_snapshot: list[dict[str, Any]] | None = None,
 ) -> AiRun:
+    """创建一次 AI Run。
+
+    Run 是一次生成/续写/润色任务的顶层记录，用来串联：
+    - 当前项目、章节/文档；
+    - 用户目标和模型配置快照；
+    - workflow/expert 快照；
+    - 后续 steps、llm_call_logs、human_interrupts。
+    """
     run = AiRun(
         project_id=project_id,
         chapter_id=chapter_id,
@@ -58,6 +67,7 @@ async def create_run(
 
 
 async def mark_running(db: AsyncSession, run: AiRun) -> None:
+    """把 run 标记为 RUNNING，并记录首次开始时间。"""
     run.status = RunStatus.RUNNING
     if run.started_at is None:
         run.started_at = datetime.now(timezone.utc)
@@ -67,6 +77,10 @@ async def mark_running(db: AsyncSession, run: AiRun) -> None:
 async def mark_waiting_human(
     db: AsyncSession, run: AiRun, *, step_name: str, thread_id: str | None = None
 ) -> None:
+    """把 run 标记为等待人工处理。
+
+    thread_id 会写回 run，resume 接口可据此找到同一次 LangGraph checkpoint。
+    """
     run.status = RunStatus.WAITING_HUMAN
     run.current_step = step_name
     if thread_id:
@@ -75,12 +89,14 @@ async def mark_waiting_human(
 
 
 async def mark_completed(db: AsyncSession, run: AiRun) -> None:
+    """把 run 标记为完成。"""
     run.status = RunStatus.COMPLETED
     run.finished_at = datetime.now(timezone.utc)
     await db.flush()
 
 
 async def mark_failed(db: AsyncSession, run: AiRun, error_message: str) -> None:
+    """把 run 标记为失败，并保存错误信息，便于前端展示和排查。"""
     run.status = RunStatus.FAILED
     run.error_message = error_message
     run.finished_at = datetime.now(timezone.utc)
@@ -88,9 +104,59 @@ async def mark_failed(db: AsyncSession, run: AiRun, error_message: str) -> None:
 
 
 async def mark_cancelled(db: AsyncSession, run: AiRun) -> None:
+    """把 run 标记为用户取消。"""
     run.status = RunStatus.CANCELLED
     run.finished_at = datetime.now(timezone.utc)
     await db.flush()
+
+
+async def discard_run_artifacts(
+    db: AsyncSession,
+    *,
+    run_id: str | uuid.UUID,
+) -> None:
+    """删除一次未完成生成留下的全部持久化痕迹。
+
+    流式生成必须在节点间提交运行状态，才能让 LLM 审计日志和人工暂停点跨 session
+    可见；因此单纯依赖请求事务不足以处理模型异常或客户端断连。失败时按 run_id
+    显式删除相关数据，避免候选稿、步骤和提示词快照以“半截任务”的形式留在库中。
+
+    正式章节/文档内容不会由生成阶段写入，只有人工批准后才会保存，故这里不触碰
+    正式内容和已批准版本。
+    """
+    # LlmCallLog 的外键删除策略是 SET NULL，不能只删 AiRun，否则会留下无归属的
+    # 提示词快照；GenerationRecord / WritingMemoryStaging 没有 run 外键，也需显式删。
+    from models.generation_record import GenerationRecord
+    from models.human_interrupt import HumanInterrupt
+    from models.llm_call_log import LlmCallLog
+    from models.writing_memory_staging import WritingMemoryStaging
+    from models.ai_run_step import AiRunStep
+
+    await db.execute(delete(LlmCallLog).where(LlmCallLog.run_id == run_id))
+    await db.execute(delete(GenerationRecord).where(GenerationRecord.run_id == run_id))
+    await db.execute(delete(WritingMemoryStaging).where(WritingMemoryStaging.run_id == run_id))
+    await db.execute(delete(HumanInterrupt).where(HumanInterrupt.run_id == run_id))
+    await db.execute(delete(AiRunStep).where(AiRunStep.run_id == run_id))
+    await db.execute(delete(AiRun).where(AiRun.id == run_id))
+    await db.flush()
+
+
+async def discard_incomplete_runs(db: AsyncSession) -> list[str]:
+    """清理上一个进程崩溃时遗留的 CREATED / RUNNING 任务。
+
+    返回清理到的 LangGraph thread_id，调用方随后删除内存 checkpoint。正常等待人工
+    确认的 WAITING_HUMAN 不属于异常中断，不能误删。
+    """
+    rows = await db.execute(
+        select(AiRun.id, AiRun.thread_id).where(
+            AiRun.status.in_((RunStatus.CREATED, RunStatus.RUNNING))
+        )
+    )
+    stale_runs = list(rows.all())
+    thread_ids = [row.thread_id for row in stale_runs if row.thread_id]
+    for row in stale_runs:
+        await discard_run_artifacts(db, run_id=row.id)
+    return thread_ids
 
 
 # ── Expert System v2: 快照辅助函数 ────────────────────

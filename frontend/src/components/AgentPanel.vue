@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { useChapterStore, useDocumentStore, useExpertStore, useUiStore, useOutlineStore, useCharacterStore, useWorldEntryStore, useHiddenThreadStore, useGenerationHistoryStore, friendlyError } from '../stores'
 import type { WorkflowStep, SSEEnvelope, GenerateMode, ProjectMode, ArticleGenerateParams, WritingUnit } from '../api/types'
-import type { AgentStartPayload, AgentOutputPayload, AgentDonePayload, ProgressPayload, ErrorPayload, WriterOutputPayload, CriticOutputPayload, ConsistencyCheckPayload, EnhanceDirectionsPayload, TurnSuggestionsPayload, RevisionSuggestionsPayload, SkillPackPayload, ArticleReviewPayload, GenerationRecordPayload, RunCreatedPayload, ClarificationRequiredPayload, TaskCardPayload, TaskCardReviewRequiredPayload, ClarificationEmbedded, ClarificationQuestion } from '../api/types'
+import type { AgentStartPayload, AgentOutputPayload, AgentDonePayload, ProgressPayload, ErrorPayload, WriterOutputPayload, CriticOutputPayload, ConsistencyCheckPayload, EnhanceDirectionsPayload, TurnSuggestionsPayload, RevisionSuggestionsPayload, SkillPackPayload, ArticleReviewPayload, GenerationRecordPayload, RunCreatedPayload, ClarificationRequiredPayload, ClarificationEmbedded, TaskCardClarificationStatus, TaskCardContextSummary, TaskCardPayload, TaskCardReviewRequiredPayload, PreGenerationMode } from '../api/types'
 import { api } from '../api/client'
 import ApprovalModal from './ApprovalModal.vue'
 import AgentWorkflow from './AgentWorkflow.vue'
@@ -40,6 +40,7 @@ const currentWritingUnitWordCount = computed(() => {
   const draft = currentWritingUnit.value?.draft ?? ''
   return draft.replace(/\s+/g, '').length || 1200
 })
+const initialDraftPreview = computed(() => cleanGeneratedContent(projectState.value.initialDraft))
 const candidateDraftPreview = computed(() => cleanGeneratedContent(projectState.value.finalDraft))
 const panelTitle = computed(() => isNovel.value ? '章节助手' : '内容助手')
 const unitTypeLabel = computed(() => isNovel.value ? '当前章节' : '当前稿件')
@@ -56,6 +57,7 @@ function unitPosition(unit: WritingUnit): number {
 
 const showApproval = ref(false)
 const approvalContent = ref('')
+const finalizingChapter = ref(false)
 const showContextPicker = ref(false)
 const showEnhancePicker = ref(false)
 const showTurnPicker = ref(false)
@@ -66,6 +68,12 @@ const revisionDirections = ref<string[]>([])
 const revisionCount = ref(0)
 const maxRevisions = ref(3)
 const pendingMode = ref<GenerateMode>('full_pipeline')
+const canFinalizeCandidate = computed(() =>
+  isNovel.value
+  && !!currentWritingUnit.value
+  && pendingMode.value !== 'summarize'
+  && !!candidateDraftPreview.value,
+)
 const showArticleParams = ref(false)
 const latestGenerationRecordId = ref<string | null>(null)
 const latestRunId = ref<string | null>(null)
@@ -78,7 +86,42 @@ const clarificationState = ref<ClarificationRequiredPayload | null>(null)
 const planningReview = ref(true)
 const taskCardState = ref<TaskCardPayload | null>(null)
 const showTaskCardReview = ref(false)
-const clarificationData = ref<ClarificationEmbedded | null>(null)
+const taskCardReviewKey = ref(0)
+const embeddedClarification = ref<ClarificationEmbedded | null>(null)
+const taskCardClarificationStatus = ref<TaskCardClarificationStatus | null>(null)
+const taskCardContextSummary = ref<TaskCardContextSummary | null>(null)
+// M-1: 生成前交互模式 — 会话级配置
+// M-2: 持久化到 localStorage，按 projectId 分隔
+const _modeKey = computed(() => `pre_gen_mode_${pid.value}`)
+const _roundsKey = computed(() => `pre_gen_rounds_${pid.value}`)
+function _loadMode(): PreGenerationMode {
+  try {
+    const v = localStorage.getItem(_modeKey.value)
+    if (v === 'FAST' || v === 'PLANNING' || v === 'STRICT') return v
+  } catch { /* 隐私模式 */ }
+  return 'PLANNING'
+}
+function _loadRounds(): number {
+  try {
+    const v = parseInt(localStorage.getItem(_roundsKey.value) || '3', 10)
+    return isNaN(v) || v < 1 || v > 10 ? 3 : v
+  } catch { /* 隐私模式 */ }
+  return 3
+}
+const preGenerationMode = ref<PreGenerationMode>(_loadMode())
+const maxClarificationRounds = ref(_loadRounds())
+// M-2: watch 写入 localStorage
+watch(preGenerationMode, (v) => {
+  try { localStorage.setItem(_modeKey.value, v) } catch { /* ignore */ }
+})
+watch(maxClarificationRounds, (v) => {
+  try { localStorage.setItem(_roundsKey.value, String(v)) } catch { /* ignore */ }
+})
+// M-2: projectId 变化时重新加载
+watch(pid, () => {
+  preGenerationMode.value = _loadMode()
+  maxClarificationRounds.value = _loadRounds()
+})
 
 // ─── Chapter context stats ───
 interface ChapterContextStats {
@@ -201,6 +244,50 @@ function quickActionLabel(action: QuickActionDef): string {
 
 /** Abort controller for cancelling in-flight SSE requests */
 let currentAbort: AbortController | null = null
+
+/**
+ * M-2: 创建 SSE 看门狗 — 首事件超时 + idle 超时
+ * @param onTimeout 超时回调，reason 区分首事件超时还是 idle 超时
+ * @param firstEventMs 首事件超时（默认 20s）
+ * @param idleMs idle 超时（默认 90s）
+ */
+function createSSEWatchdog(
+  onTimeout: (reason: 'first_event' | 'idle') => void,
+  firstEventMs = 20000,
+  idleMs = 90000,
+) {
+  let receivedFirst = false
+  let timer: number | undefined
+  const arm = () => {
+    timer = window.setTimeout(() => {
+      onTimeout(receivedFirst ? 'idle' : 'first_event')
+    }, receivedFirst ? idleMs : firstEventMs)
+  }
+  return {
+    onEvent: () => {
+      if (!receivedFirst) receivedFirst = true
+      if (timer) window.clearTimeout(timer)
+      arm()
+    },
+    start: arm,
+    clear: () => { if (timer) window.clearTimeout(timer) },
+  }
+}
+
+/** M-2: SSE 超时通用处理 — abort + toast + 停止生成 */
+function handleSSETimeout(reason: 'first_event' | 'idle', baseMsg: string) {
+  if (currentAbort && !currentAbort.signal.aborted) {
+    currentAbort.abort()
+  }
+  if (showTaskCardReview.value) {
+    taskCardReviewKey.value += 1
+  }
+  const suffix = reason === 'first_event' ? '未收到响应' : '90 秒无新事件，可能已断开'
+  const msg = `${baseMsg}：${suffix}。请重试或重启后端服务。`
+  expertStore.appendOutput(pid.value, `\n\n[错误] ${msg}`)
+  expertStore.stopGenerating(pid.value)
+  ui.showToast(msg, 'error')
+}
 /** Thread ID for HITL resume (set when workflow pauses at human_review) */
 const hitlThreadId = ref<string | null>(null)
 /** Whether we're currently in a HITL resume flow (prevent re-showing approval modal on done) */
@@ -225,6 +312,7 @@ const articleWorkflow: WorkflowStep[] = [
 function agentToStepId(agent: string): string | null {
   const map: Record<string, string> = {
     writer: 'writer',
+    chapter_writer: 'writer',
     content_writer: 'writer',
     critic: 'critic',
     structure_review: 'critic',
@@ -362,7 +450,13 @@ function handleGenerate() {
   pendingMode.value = 'full_pipeline'
   latestGenerationRecordId.value = null
   latestRunId.value = null
+  embeddedClarification.value = null
+  taskCardClarificationStatus.value = null
+  taskCardContextSummary.value = null
   clarificationState.value = null
+  showTaskCardReview.value = false
+  taskCardState.value = null
+  hitlThreadId.value = null
   if (isNovel.value) {
     showContextPicker.value = true
   } else {
@@ -417,6 +511,9 @@ function handleQuickAction(key: string) {
   latestGenerationRecordId.value = null
   latestRunId.value = null
   clarificationState.value = null
+  showTaskCardReview.value = false
+  taskCardState.value = null
+  hitlThreadId.value = null
   if (!isNovel.value) {
     showArticleParams.value = true
     return
@@ -441,6 +538,10 @@ async function runEnhanceDirections() {
     return
   }
   currentAbort = new AbortController()
+  const watchdog = createSSEWatchdog(
+    (reason) => handleSSETimeout(reason, isNovel.value ? '获取润色方向无响应' : '获取改写方向无响应'),
+  )
+  watchdog.start()
   try {
     await api.generateStream(
       pid.value,
@@ -451,7 +552,7 @@ async function runEnhanceDirections() {
         mode: 'enhance',
         ...(isNovel.value ? {} : articleParams.value ?? {}),
       },
-      (envelope: SSEEnvelope) => handleSSEEvent(envelope),
+      (envelope: SSEEnvelope) => { watchdog.onEvent(); handleSSEEvent(envelope) },
       currentAbort.signal,
       props.mode,
     )
@@ -461,6 +562,8 @@ async function runEnhanceDirections() {
     expertStore.appendOutput(pid.value, `\n[错误] ${msg}`)
     expertStore.stopGenerating(pid.value)
     ui.showToast(msg, 'error')
+  } finally {
+    watchdog.clear()
   }
 }
 
@@ -480,6 +583,10 @@ async function runTurnSuggestions() {
     return
   }
   currentAbort = new AbortController()
+  const watchdog = createSSEWatchdog(
+    (reason) => handleSSETimeout(reason, isNovel.value ? '获取转折建议无响应' : '获取内容方向无响应'),
+  )
+  watchdog.start()
   try {
     await api.generateStream(
       pid.value,
@@ -490,7 +597,7 @@ async function runTurnSuggestions() {
         mode: 'continue',
         ...(isNovel.value ? {} : articleParams.value ?? {}),
       },
-      (envelope: SSEEnvelope) => handleSSEEvent(envelope),
+      (envelope: SSEEnvelope) => { watchdog.onEvent(); handleSSEEvent(envelope) },
       currentAbort.signal,
       props.mode,
     )
@@ -500,6 +607,8 @@ async function runTurnSuggestions() {
     expertStore.appendOutput(pid.value, `\n[错误] ${msg}`)
     expertStore.stopGenerating(pid.value)
     ui.showToast(msg, 'error')
+  } finally {
+    watchdog.clear()
   }
 }
 
@@ -517,12 +626,16 @@ async function requestRevisionDirections() {
   pendingMode.value = 'full_pipeline'
   hitlResuming = true
   currentAbort = new AbortController()
+  const watchdog = createSSEWatchdog(
+    (reason) => handleSSETimeout(reason, '获取修改方向无响应'),
+  )
+  watchdog.start()
   try {
     await api.resumeGeneration(
       pid.value,
       threadId,
       'review',
-      (envelope: SSEEnvelope) => handleSSEEvent(envelope),
+      (envelope: SSEEnvelope) => { watchdog.onEvent(); handleSSEEvent(envelope) },
       undefined,
       currentAbort.signal,
       props.mode,
@@ -533,6 +646,7 @@ async function requestRevisionDirections() {
     expertStore.appendOutput(pid.value, `\n[错误] ${msg}`)
     ui.showToast(msg, 'error')
   } finally {
+    watchdog.clear()
     hitlResuming = false
   }
 }
@@ -551,12 +665,16 @@ async function handleRevisionConfirm(direction: string, userNote: string) {
   expertStore.setRevisionInfo(pid.value, nextRevisionCount, maxRevisions.value)
 
   currentAbort = new AbortController()
+  const watchdog = createSSEWatchdog(
+    (reason) => handleSSETimeout(reason, '修改无响应'),
+  )
+  watchdog.start()
   try {
     await api.resumeGeneration(
       pid.value,
       hitlThreadId.value!,
       'revise',
-      (envelope: SSEEnvelope) => handleSSEEvent(envelope),
+      (envelope: SSEEnvelope) => { watchdog.onEvent(); handleSSEEvent(envelope) },
       feedback,
       currentAbort.signal,
       props.mode,
@@ -567,6 +685,8 @@ async function handleRevisionConfirm(direction: string, userNote: string) {
     expertStore.appendOutput(pid.value, `\n[错误] ${msg}`)
     expertStore.stopGenerating(pid.value)
     ui.showToast(msg, 'error')
+  } finally {
+    watchdog.clear()
   }
 }
 
@@ -594,6 +714,13 @@ async function runGenerateStream(
   currentAbort = new AbortController()
   latestGenerationRecordId.value = null
   latestRunId.value = null
+  // M-2: 用 SSE 看门狗替换原 noEventTimer，增加 idle 超时
+  const watchdog = createSSEWatchdog(
+    (reason) => handleSSETimeout(reason, '生成连接超时'),
+    20000,
+    90000,
+  )
+  watchdog.start()
 
   try {
     await api.generateStream(
@@ -614,9 +741,15 @@ async function runGenerateStream(
         user_note: userNote,
         selected_direction: selectedDirection,
         planning_review: planningReview.value || undefined,
+        // M-1: 生成前交互模式
+        pre_generation_mode: preGenerationMode.value,
+        max_clarification_rounds: maxClarificationRounds.value,
         ...(articleParams.value ?? {}),
       },
-      (envelope: SSEEnvelope) => handleSSEEvent(envelope),
+      (envelope: SSEEnvelope) => {
+        watchdog.onEvent()
+        handleSSEEvent(envelope)
+      },
       currentAbort.signal,
       props.mode,
     )
@@ -626,6 +759,8 @@ async function runGenerateStream(
     expertStore.appendOutput(pid.value, `\n\n[错误] ${msg}`)
     expertStore.stopGenerating(pid.value)
     ui.showToast(msg, 'error')
+  } finally {
+    watchdog.clear()
   }
 }
 
@@ -672,8 +807,18 @@ function handleSSEEvent(envelope: SSEEnvelope) {
       const payload = data as unknown as WriterOutputPayload
       if (payload.token) {
         expertStore.appendDraft(pid.value, payload.token)
+        if (!expertStore.getState(pid.value).initialDraft) {
+          expertStore.appendInitialDraft(pid.value, payload.token)
+        }
       } else if (payload.content) {
-        expertStore.appendDraft(pid.value, payload.content)
+        const state = expertStore.getState(pid.value)
+        if (payload.initial_draft) {
+          expertStore.setInitialDraft(pid.value, payload.initial_draft)
+        } else if (!state.initialDraft) {
+          expertStore.setInitialDraft(pid.value, payload.content)
+        }
+        // chain_end 返回的是完整正文，不是增量；设置而非追加可避免和流式 token 重复。
+        expertStore.setDraft(pid.value, payload.content)
       }
       expertStore.updateStepStatus(pid.value, 'writer', 'running')
       break
@@ -682,8 +827,14 @@ function handleSSEEvent(envelope: SSEEnvelope) {
       const payload = data as unknown as WriterOutputPayload
       if (payload.token) {
         expertStore.appendDraft(pid.value, payload.token)
+        if (!expertStore.getState(pid.value).initialDraft) {
+          expertStore.appendInitialDraft(pid.value, payload.token)
+        }
       } else if (payload.content) {
-        expertStore.appendDraft(pid.value, payload.content)
+        if (!expertStore.getState(pid.value).initialDraft) {
+          expertStore.setInitialDraft(pid.value, payload.content)
+        }
+        expertStore.setDraft(pid.value, payload.content)
       }
       expertStore.updateStepStatus(pid.value, 'writer', 'running')
       break
@@ -698,23 +849,31 @@ function handleSSEEvent(envelope: SSEEnvelope) {
       break
     }
     case 'architect_output': {
-      // L-1: 任务卡预览 — 如果启用了 planning_review，展示 TaskCardReviewPanel
+      // L-1: 先缓存任务卡；真正进入可操作的人工等待态时由
+      // task_card_review_required 事件展示面板，因为那时才有 thread_id。
       const taskCard = (data as Record<string, unknown>).task_card as TaskCardPayload | undefined
       if (taskCard && planningReview.value) {
         taskCardState.value = taskCard
-        showTaskCardReview.value = true
       }
       break
     }
     case 'task_card_review_required': {
-      // L-1/L-2: 后端发送 task_card_review_required，携带 clarification 字段
+      // L-2：任务卡是唯一的生成前暂停点，澄清问题随 payload 一起展示。
       const payload = data as unknown as TaskCardReviewRequiredPayload
+      clarificationState.value = null
       if (payload.task_card) {
         taskCardState.value = payload.task_card
         showTaskCardReview.value = true
       }
+      embeddedClarification.value = payload.clarification ?? null
+      taskCardClarificationStatus.value = payload.clarification_status ?? null
+      taskCardContextSummary.value = payload.context_summary ?? null
       if (payload.thread_id) hitlThreadId.value = payload.thread_id
-      clarificationData.value = payload.clarification ?? null
+      // M-1: 同步当前 run 的模式（resume 时后端可能返回不同模式）
+      if (payload.pre_generation_mode) preGenerationMode.value = payload.pre_generation_mode
+      expertStore.stopGenerating(pid.value)
+      expertStore.updateStepStatus(pid.value, 'writer', 'pending')
+      expertStore.appendOutput(pid.value, '[系统] 澄清已完成，章节任务卡已生成，等待你确认后继续写作。\n')
       break
     }
     case 'critic_output': {
@@ -803,6 +962,8 @@ function handleSSEEvent(envelope: SSEEnvelope) {
       // 生成前澄清：暂存 payload，停止"生成中"转圈，等待用户补充信息
       const payload = data as unknown as ClarificationRequiredPayload
       clarificationState.value = payload
+      if (payload.thread_id) hitlThreadId.value = payload.thread_id
+      if (payload.pre_generation_mode) preGenerationMode.value = payload.pre_generation_mode
       expertStore.appendOutput(pid.value, `[系统] 需要补充信息（第 ${payload.round}/${payload.max_rounds} 轮澄清）\n`)
       expertStore.stopGenerating(pid.value)
       break
@@ -837,116 +998,319 @@ function handleSSEEvent(envelope: SSEEnvelope) {
 
 // ─── Clarification Loop (生成前澄清) ───
 async function handleClarificationSubmit(answers: Record<string, string>) {
-  const runId = clarificationState.value?.run_id ?? latestRunId.value
-  if (!runId) {
+  if (hitlResuming) return
+  const threadId = hitlThreadId.value || clarificationState.value?.thread_id
+  if (!threadId) {
+    ui.showToast('缺少 thread_id，无法提交澄清回答', 'error')
     clarificationState.value = null
     return
   }
+  hitlResuming = true
+  expertStore.setGenerating(pid.value, true)
+  const abort = new AbortController()
+  currentAbort = abort
+  const watchdog = createSSEWatchdog(
+    (reason) => handleSSETimeout(reason, '提交澄清后无响应'),
+  )
+  watchdog.start()
   try {
-    await api.submitClarificationAnswers(runId, { action: 'submit', answers })
-    // 提交成功后清空澄清状态，等待后端继续流式生成
-    clarificationState.value = null
+    await api.resumeGeneration(
+      pid.value,
+      threadId,
+      'submit_clarification',
+      (envelope: SSEEnvelope) => { watchdog.onEvent(); handleSSEEvent(envelope) },
+      undefined,
+      abort.signal,
+      props.mode,
+      undefined,
+      { clarification_answers: answers },
+    )
   } catch (e: unknown) {
+    if (abort.signal.aborted) return
     expertStore.appendOutput(pid.value, `\n[错误] 提交澄清回答失败：${friendlyError(e, '请重试')}`)
+    expertStore.stopGenerating(pid.value)
     ui.showToast(friendlyError(e, '提交澄清回答失败'), 'error')
+  } finally {
+    watchdog.clear()
+    hitlResuming = false
+    if (currentAbort === abort) currentAbort = null
   }
 }
 
 async function handleClarificationSkip() {
-  const runId = clarificationState.value?.run_id ?? latestRunId.value
-  if (!runId) {
+  if (hitlResuming) return
+  const threadId = hitlThreadId.value || clarificationState.value?.thread_id
+  if (!threadId) {
+    ui.showToast('缺少 thread_id，无法跳过澄清', 'error')
     clarificationState.value = null
     return
   }
+  hitlResuming = true
+  expertStore.setGenerating(pid.value, true)
+  const abort = new AbortController()
+  currentAbort = abort
+  const watchdog = createSSEWatchdog(
+    (reason) => handleSSETimeout(reason, '跳过澄清后无响应'),
+  )
+  watchdog.start()
   try {
-    await api.submitClarificationAnswers(runId, { action: 'skip', answers: {} })
-    // 跳过后清空澄清状态，等待后端继续流式生成
-    clarificationState.value = null
+    await api.resumeGeneration(
+      pid.value,
+      threadId,
+      'skip_clarification',
+      (envelope: SSEEnvelope) => { watchdog.onEvent(); handleSSEEvent(envelope) },
+      undefined,
+      abort.signal,
+      props.mode,
+    )
   } catch (e: unknown) {
+    if (abort.signal.aborted) return
     expertStore.appendOutput(pid.value, `\n[错误] 跳过澄清失败：${friendlyError(e, '请重试')}`)
+    expertStore.stopGenerating(pid.value)
     ui.showToast(friendlyError(e, '跳过澄清失败'), 'error')
+  } finally {
+    watchdog.clear()
+    hitlResuming = false
+    if (currentAbort === abort) currentAbort = null
   }
 }
 
 // ─── L-1: Task Card Review ───
 
-async function handleTaskCardApproved(taskCard: TaskCardPayload) {
-  showTaskCardReview.value = false
+async function handleTaskCardApproved(taskCard: TaskCardPayload, userNote?: string) {
+  if (hitlResuming) return  // M-2: 防重复
   const threadId = hitlThreadId.value
   if (!threadId) {
     ui.showToast('缺少 thread_id，无法继续生成', 'error')
     return
   }
   hitlResuming = true
+  expertStore.setGenerating(pid.value, true)
+  expertStore.updateStepStatus(pid.value, 'writer', 'running')
+  const abort = new AbortController()
+  currentAbort = abort
+  const watchdog = createSSEWatchdog(
+    (reason) => handleSSETimeout(reason, '任务卡确认后无响应'),
+  )
+  watchdog.start()
+  let writerStarted = false
+  let resumeError: string | null = null
   try {
+    const requestBody = userNote ? { user_note: userNote } : undefined
     await api.resumeGeneration(
       pid.value,
       threadId,
       'approve_task_card',
-      (envelope: SSEEnvelope) => handleSSEEvent(envelope),
+      (envelope: SSEEnvelope) => {
+        watchdog.onEvent()
+        if (envelope.event === 'agent_start') {
+          const payload = envelope.data as unknown as AgentStartPayload
+          if (agentToStepId(payload.agent) === 'writer') {
+            writerStarted = true
+            showTaskCardReview.value = false
+            taskCardState.value = null
+            embeddedClarification.value = null
+            taskCardClarificationStatus.value = null
+            taskCardContextSummary.value = null
+          }
+        } else if (envelope.event === 'error') {
+          const payload = envelope.data as unknown as ErrorPayload
+          resumeError = payload.message || '任务卡确认失败'
+        }
+        handleSSEEvent(envelope)
+      },
       undefined,
-      undefined,
+      abort.signal,
       props.mode,
       JSON.stringify(taskCard),
+      requestBody,
     )
+    if (!writerStarted) {
+      throw new Error(resumeError || '任务卡确认未能启动正文创作，请重试')
+    }
   } catch (e: unknown) {
+    if (abort.signal.aborted) return
     const msg = friendlyError(e, '任务卡确认失败')
-    expertStore.appendOutput(pid.value, `\n[错误] ${msg}`)
+    // SSE error 已由 handleSSEEvent 呈现；这里只处理网络/空流等未产生 SSE 错误的失败。
+    if (!resumeError) {
+      expertStore.appendOutput(pid.value, `\n[错误] ${msg}`)
+      ui.showToast(msg, 'error')
+    }
     expertStore.stopGenerating(pid.value)
-    ui.showToast(msg, 'error')
   } finally {
+    watchdog.clear()
     hitlResuming = false
-    taskCardState.value = null
+    if (currentAbort === abort) currentAbort = null
+    if (!writerStarted) {
+      showTaskCardReview.value = true
+      taskCardReviewKey.value += 1
+    }
   }
 }
 
-async function handleTaskCardRejected() {
-  showTaskCardReview.value = false
-  const threadId = hitlThreadId.value
-  if (threadId) {
-    await api.resumeGeneration(
-      pid.value,
-      threadId,
-      'reject_task_card',
-      (envelope: SSEEnvelope) => handleSSEEvent(envelope),
-      undefined,
-      undefined,
-      props.mode,
-    )
-  }
-  expertStore.stopGenerating(pid.value)
-  taskCardState.value = null
-  clarificationData.value = null
-}
-
-// L-2: 澄清回答 → refresh_task_card
-async function handleClarificationAnswered(answers: Record<string, string>, questions: ClarificationQuestion[]) {
+async function handleTaskCardClarificationRefresh(answers: Record<string, string>, userNote?: string) {
+  if (hitlResuming) return
   const threadId = hitlThreadId.value
   if (!threadId) {
-    ui.showToast('缺少 thread_id，无法刷新任务卡', 'error')
+    ui.showToast('缺少 thread_id，无法重新规划任务卡', 'error')
     return
   }
+  hitlResuming = true
+  expertStore.setGenerating(pid.value, true)
+  const abort = new AbortController()
+  currentAbort = abort
+  const watchdog = createSSEWatchdog(
+    (reason) => handleSSETimeout(reason, '任务卡重新规划后无响应'),
+  )
+  watchdog.start()
+  let refreshed = false
   try {
     await api.resumeGeneration(
       pid.value,
       threadId,
       'refresh_task_card',
-      (envelope: SSEEnvelope) => handleSSEEvent(envelope),
+      (envelope: SSEEnvelope) => {
+        watchdog.onEvent()
+        if (envelope.event === 'task_card_review_required') {
+          const payload = envelope.data as unknown as TaskCardReviewRequiredPayload
+          refreshed = true
+          taskCardState.value = payload.task_card
+          embeddedClarification.value = payload.clarification ?? null
+          taskCardClarificationStatus.value = payload.clarification_status ?? null
+          taskCardContextSummary.value = payload.context_summary ?? null
+          showTaskCardReview.value = true
+          expertStore.stopGenerating(pid.value)
+        }
+        handleSSEEvent(envelope)
+      },
       undefined,
-      undefined,
+      abort.signal,
       props.mode,
       undefined,
-      { clarification_answers: answers, clarification_questions: questions },
+      { clarification_answers: answers, user_note: userNote || '' },
     )
+    if (!refreshed) throw new Error('任务卡重新规划未返回新的任务卡，请重试')
   } catch (e: unknown) {
-    const msg = friendlyError(e, '刷新任务卡失败')
-    expertStore.appendOutput(pid.value, `\n[错误] ${msg}`)
-    ui.showToast(msg, 'error')
+    if (!abort.signal.aborted) {
+      const msg = friendlyError(e, '任务卡重新规划失败')
+      expertStore.appendOutput(pid.value, `\n[错误] ${msg}`)
+      ui.showToast(msg, 'error')
+      taskCardReviewKey.value += 1
+    }
+  } finally {
+    watchdog.clear()
+    hitlResuming = false
+    expertStore.stopGenerating(pid.value)
+    if (currentAbort === abort) currentAbort = null
   }
 }
 
-function handleClarificationSkipped() {
-  clarificationData.value = null
+async function handleTaskCardContextRefresh(excludedKeys: string[]) {
+  if (hitlResuming) return
+  const threadId = hitlThreadId.value
+  if (!threadId) {
+    ui.showToast('缺少 thread_id，无法应用上下文选择', 'error')
+    return
+  }
+  hitlResuming = true
+  expertStore.setGenerating(pid.value, true)
+  const abort = new AbortController()
+  currentAbort = abort
+  const watchdog = createSSEWatchdog(
+    (reason) => handleSSETimeout(reason, '上下文重新加载后无响应'),
+  )
+  watchdog.start()
+  let refreshed = false
+  try {
+    await api.resumeGeneration(
+      pid.value,
+      threadId,
+      'refresh_task_card_context',
+      (envelope: SSEEnvelope) => {
+        watchdog.onEvent()
+        if (envelope.event === 'task_card_review_required') {
+          const payload = envelope.data as unknown as TaskCardReviewRequiredPayload
+          refreshed = true
+          taskCardState.value = payload.task_card
+          embeddedClarification.value = payload.clarification ?? null
+          taskCardClarificationStatus.value = payload.clarification_status ?? null
+          taskCardContextSummary.value = payload.context_summary ?? null
+          showTaskCardReview.value = true
+          expertStore.stopGenerating(pid.value)
+        }
+        handleSSEEvent(envelope)
+      },
+      undefined,
+      abort.signal,
+      props.mode,
+      undefined,
+      { excluded_context_keys: excludedKeys },
+    )
+    if (!refreshed) throw new Error('上下文应用后未返回新的任务卡，请重试')
+  } catch (e: unknown) {
+    if (!abort.signal.aborted) {
+      const msg = friendlyError(e, '应用上下文选择失败')
+      expertStore.appendOutput(pid.value, `\n[错误] ${msg}`)
+      ui.showToast(msg, 'error')
+      taskCardReviewKey.value += 1
+    }
+  } finally {
+    watchdog.clear()
+    hitlResuming = false
+    expertStore.stopGenerating(pid.value)
+    if (currentAbort === abort) currentAbort = null
+  }
+}
+
+async function handleTaskCardRejected() {
+  if (hitlResuming) return
+  hitlResuming = true
+  if (currentAbort && !currentAbort.signal.aborted) {
+    currentAbort.abort()
+  }
+  const threadId = hitlThreadId.value
+  if (threadId) {
+    const abort = new AbortController()
+    currentAbort = abort
+    try {
+      let rejected = false
+      await api.resumeGeneration(
+        pid.value,
+        threadId,
+        'reject_task_card',
+        (envelope: SSEEnvelope) => {
+          if (envelope.event === 'done') {
+            rejected = true
+            return
+          }
+          handleSSEEvent(envelope)
+        },
+        undefined,
+        abort.signal,
+        props.mode,
+      )
+      if (!rejected) throw new Error('取消任务卡未得到确认，请重试')
+      showTaskCardReview.value = false
+      taskCardState.value = null
+      embeddedClarification.value = null
+      taskCardClarificationStatus.value = null
+      taskCardContextSummary.value = null
+    } catch (e: unknown) {
+      if (!abort.signal.aborted) {
+        ui.showToast(friendlyError(e, '取消任务卡失败'), 'error')
+        showTaskCardReview.value = true
+        taskCardReviewKey.value += 1
+      }
+    } finally {
+      if (currentAbort === abort) currentAbort = null
+    }
+  }
+  expertStore.stopGenerating(pid.value)
+  if (!threadId) {
+    showTaskCardReview.value = false
+    taskCardState.value = null
+  }
+  hitlResuming = false
 }
 
 async function handleDecision(decision: 'accept' | 'accept_with_mods' | 'reject') {
@@ -1021,6 +1385,41 @@ async function handleDecision(decision: 'accept' | 'accept_with_mods' | 'reject'
   expertStore.stopGenerating(pid.value)
 }
 
+async function handleFinalizeChapter() {
+  if (!isNovel.value || !currentWritingUnit.value) {
+    ui.showToast('当前不是可定稿的小说章节', 'error')
+    return
+  }
+
+  const state = expertStore.getState(pid.value)
+  const candidateContent = cleanGeneratedContent(state.finalDraft || approvalContent.value)
+  if (!candidateContent) {
+    ui.showToast('没有可定稿的章节正文', 'error')
+    return
+  }
+
+  finalizingChapter.value = true
+  try {
+    await chapterStore.finalizeCurrentChapter(pid.value, candidateContent)
+    expertStore.setDraft(pid.value, candidateContent)
+    approvalContent.value = candidateContent
+    if (latestGenerationRecordId.value) {
+      generationHistoryStore.updateRecordStatus(pid.value, latestGenerationRecordId.value, 'applied')
+    }
+    const threadId = hitlThreadId.value
+    if (threadId) await closePausedWorkflow(threadId)
+    hitlThreadId.value = null
+    latestGenerationRecordId.value = null
+    showApproval.value = false
+    expertStore.stopGenerating(pid.value)
+    ui.showToast('本章已定稿，下一章创作会自动使用这版正文衔接', 'success')
+  } catch (e: unknown) {
+    ui.showToast(friendlyError(e, '章节定稿失败'), 'error')
+  } finally {
+    finalizingChapter.value = false
+  }
+}
+
 // ─── Test expert ───
 
 async function testExpert(expertId: string, sampleText: string) {
@@ -1056,6 +1455,10 @@ function cancelStream() {
   showEnhancePicker.value = false
   showTurnPicker.value = false
   showRevisionPicker.value = false
+  showTaskCardReview.value = false
+  taskCardState.value = null
+  // M-2: 清理 pre-generation ClarificationPanel 状态
+  clarificationState.value = null
   expertStore.stopGenerating(pid.value, true)
 }
 
@@ -1099,6 +1502,27 @@ defineExpose({ testExpert, cancelStream })
           {{ GENERATE_LABEL }}
         </button>
       </div>
+
+      <!-- M-1: 生成前交互模式配置（仅小说 full_pipeline 有效） -->
+      <div v-if="isNovel && planningReview" class="pre-gen-config">
+        <span class="pre-gen-label">生成前交互</span>
+        <label class="pre-gen-option">
+          <input type="radio" value="FAST" v-model="preGenerationMode" />
+          <span>快速</span>
+        </label>
+        <label class="pre-gen-option">
+          <input type="radio" value="PLANNING" v-model="preGenerationMode" />
+          <span>计划</span>
+        </label>
+        <label class="pre-gen-option">
+          <input type="radio" value="STRICT" v-model="preGenerationMode" />
+          <span>严格</span>
+        </label>
+        <label class="pre-gen-rounds">
+          最大澄清轮数
+          <input type="number" min="1" max="10" v-model.number="maxClarificationRounds" class="rounds-input" />
+        </label>
+      </div>
     </section>
 
     <div class="quick-actions">
@@ -1111,6 +1535,22 @@ defineExpose({ testExpert, cancelStream })
         {{ quickActionLabel(action) }}
       </button>
     </div>
+
+    <!-- L-1/L-2: 任务卡预览 + 嵌入式澄清。放在进度上方，避免人工等待态被藏在下方。 -->
+    <TaskCardReviewPanel
+      v-if="showTaskCardReview && taskCardState"
+      :key="taskCardReviewKey"
+      :task-card="taskCardState"
+      :project-id="projectId"
+      :thread-id="hitlThreadId ?? ''"
+      :clarification="embeddedClarification"
+      :clarification-status="taskCardClarificationStatus"
+      :context-summary="taskCardContextSummary"
+      @approved="handleTaskCardApproved"
+      @rejected="handleTaskCardRejected"
+      @clarification-refresh="handleTaskCardClarificationRefresh"
+      @context-refresh="handleTaskCardContextRefresh"
+    />
 
     <!-- Workflow progress -->
     <section v-if="pendingMode === 'full_pipeline'" class="workflow-section">
@@ -1128,21 +1568,9 @@ defineExpose({ testExpert, cancelStream })
       :round="clarificationState.round"
       :max-rounds="clarificationState.max_rounds"
       :assumptions-if-skipped="clarificationState.assumptions_if_skipped"
+      :pre-generation-mode="clarificationState.pre_generation_mode ?? preGenerationMode"
       @submit="handleClarificationSubmit"
       @skip="handleClarificationSkip"
-    />
-
-    <!-- L-1/L-2: 任务卡预览 + 嵌入式澄清 -->
-    <TaskCardReviewPanel
-      v-if="showTaskCardReview && taskCardState"
-      :task-card="taskCardState"
-      :project-id="projectId"
-      :thread-id="hitlThreadId ?? ''"
-      :clarification="clarificationData"
-      @approved="handleTaskCardApproved"
-      @rejected="handleTaskCardRejected"
-      @clarification-answered="handleClarificationAnswered"
-      @clarification-skipped="handleClarificationSkipped"
     />
 
     <!-- Review comments -->
@@ -1178,9 +1606,9 @@ defineExpose({ testExpert, cancelStream })
       </div>
     </div>
 
-    <!-- Candidate draft preview (separate from stream logs) -->
+    <!-- 普通预览只展示当前最新候选稿；初稿与版本对照只放在最后的人工审核弹窗。 -->
     <div v-if="candidateDraftPreview && !showApproval" class="draft-section">
-      <div class="section-label">{{ isNovel ? '候选稿' : '候选内容' }}</div>
+      <div class="section-label">{{ isNovel ? '当前候选稿（最新版本）' : '当前候选内容（最新版本）' }}</div>
       <div class="draft-preview">
         <pre>{{ candidateDraftPreview }}</pre>
       </div>
@@ -1189,10 +1617,14 @@ defineExpose({ testExpert, cancelStream })
     <ApprovalModal
       :show="showApproval"
       :content="approvalContent"
+      :original-content="initialDraftPreview"
       :mode="pendingMode"
       :has-h-i-t-l="!!hitlThreadId"
       :project-mode="props.mode"
+      :can-finalize="canFinalizeCandidate"
+      :finalizing="finalizingChapter"
       @decision="handleDecision"
+      @finalize="handleFinalizeChapter"
     />
 
     <ContextPicker
@@ -1382,6 +1814,51 @@ defineExpose({ testExpert, cancelStream })
 .btn-cancel-stream:hover {
   opacity: 0.9;
   transform: translateY(-1px);
+}
+
+/* M-1: 生成前交互模式配置 */
+.pre-gen-config {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border, #2a3342) 60%, transparent);
+  font-size: 13px;
+}
+.pre-gen-label {
+  font-weight: 600;
+  color: var(--text-secondary, #cbd5e1);
+}
+.pre-gen-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--text, #f8fafc);
+}
+.pre-gen-option input[type="radio"] {
+  margin: 0;
+  cursor: pointer;
+}
+.pre-gen-rounds {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--text-tertiary, #94a3b8);
+  font-size: 12px;
+}
+.rounds-input {
+  width: 48px;
+  padding: 2px 4px;
+  border: 1px solid var(--border, #2a3342);
+  border-radius: 4px;
+  background: var(--bg-elevated, #1e293b);
+  color: var(--text, #f8fafc);
+  font-size: 12px;
+  text-align: center;
 }
 
 .quick-actions {

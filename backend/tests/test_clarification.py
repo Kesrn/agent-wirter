@@ -32,6 +32,29 @@ def _ensure_db(setup_db):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _mock_llm_provider(monkeypatch):
+    """Keep workflow tests offline after production disabled the mock provider.
+
+    The application imports ``get_llm_provider`` into several modules, so patch
+    every local reference used by the tested clarification and generation paths.
+    This fixture is deliberately test-local and never changes provider policy.
+    """
+    from agents.llm_provider import MockProvider
+    import agents.llm_provider as llm_provider
+    import agents.workflow as workflow
+    import agents.workflow_v2 as workflow_v2
+    import api.routes as routes
+
+    def _get_mock_provider(_config=None):
+        return MockProvider()
+
+    monkeypatch.setattr(llm_provider, "get_llm_provider", _get_mock_provider)
+    monkeypatch.setattr(workflow, "get_llm_provider", _get_mock_provider)
+    monkeypatch.setattr(workflow_v2, "get_llm_provider", _get_mock_provider)
+    monkeypatch.setattr(routes, "get_llm_provider", _get_mock_provider)
+
+
 # ── parse_clarification_result ─────────────────────────
 
 

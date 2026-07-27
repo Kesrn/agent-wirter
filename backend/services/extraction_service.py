@@ -60,6 +60,11 @@ SKILL_ALIAS_TO_SYSTEM = {
 # ── 状态常量 ─────────────────────────────────────────────
 
 class JobStatus:
+    """ExtractionJob 的状态。
+
+    Job 表示“某个资料源的一批章节抽取任务”。它控制整体进度、暂停/取消、
+    是否还有章节要处理。
+    """
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     BATCH_DONE = "BATCH_DONE"        # 本批配额完成，但全书还有未处理章节，可继续推进
@@ -71,6 +76,11 @@ class JobStatus:
 
 
 class StagingStatus:
+    """ExtractionStaging 的状态。
+
+    Staging 表示“某一章的一次抽取中间结果”。raw_output 必须落库，
+    即使 JSON 解析失败，也要保存原始模型输出，方便用户/开发者排查。
+    """
     EXTRACTED = "EXTRACTED"
     VALIDATED = "VALIDATED"
     VALIDATION_FAILED = "VALIDATION_FAILED"
@@ -120,6 +130,10 @@ async def advance_extraction_job(
     """创建或推进抽取 job，每次处理 CHAPTERS_PER_ADVANCE 章。
 
     返回 job 的当前状态字典（含 id/status/counts）。
+
+    这个函数不是后台常驻 worker，而是“前端轮询推进”：
+    前端每次点/轮询 /extract，后端推进一小批章节，状态写入数据库后返回。
+    这样桌面端关闭进程也不会留下不可控后台任务。
     """
     pid = str(project_id)
     sid = str(source_id)
@@ -144,10 +158,12 @@ async def advance_extraction_job(
     job_obj.started_at = job_obj.started_at or datetime.now(timezone.utc)
     job_obj.last_run_started_at = datetime.now(timezone.utc)
 
-    # 每批读一次项目级 alias_map，传给本批所有 merge（避免每章查 DB）
+    # 每批读一次项目级 alias_map，传给本批所有 merge（避免每章查 DB）。
+    # alias_map 用于把“张侯/张候/张小侯”等异名统一到规范人物名。
     alias_map = await _load_alias_map(db, pid)
 
-    # 真实 LLM 下每次只推进 1 章，避免长请求卡页面（方案 §3/§4.3）
+    # 真实 LLM 下每次只推进 1 章，避免长请求卡页面（方案 §3/§4.3）。
+    # mock 很快，可以一批推进多章；真实模型慢且不稳定，小批次更适合 UI 反馈和失败重试。
     is_mock = provider_name == "mock"
     chapters_this_advance = 1 if not is_mock else CHAPTERS_PER_ADVANCE
 
@@ -156,7 +172,8 @@ async def advance_extraction_job(
         db, pid, sid, job_obj, force_reextract,
     )
 
-    # 处理 chapters_this_advance 章
+    # 处理 chapters_this_advance 章。单章失败只记录错误并结束本批，
+    # 下次推进仍可以从 RETRYING/未完成章节继续。
     for chapter in chapters_to_process[:chapters_this_advance]:
         job_obj.current_chapter_no = chapter.chapter_no
         try:
@@ -331,11 +348,21 @@ async def _process_single_chapter(
     force_reextract: bool = False,
     alias_map: dict[str, str] | None = None,
 ) -> None:
-    """处理单章：LLM 抽取 → 保存 raw_output → 校验 → 合并。"""
+    """处理单章：LLM 抽取 → 保存 raw_output → 校验 → 合并。
+
+    单章内部是完整小流水线：
+    1. 截断超长章节，记录 warning；
+    2. 调 LLM 输出结构化 JSON；
+    3. raw_output 无条件落 staging；
+    4. JSON parse + Pydantic schema 校验；
+    5. 归一化能力/人物名；
+    6. merge 到正式结构化知识表。
+    """
     content = chapter.content or ""
     warning = None
 
-    # MAX_EXTRACT_CHARS 截断（文档 §5.4）
+    # MAX_EXTRACT_CHARS 截断（文档 §5.4）。
+    # 这是为了避免超长章节导致模型上下文溢出；原始章节不改，只在抽取 prompt 中截断。
     if len(content) > MAX_EXTRACT_CHARS:
         content = content[:MAX_EXTRACT_CHARS]
         warning = f"chapter content exceeded MAX_EXTRACT_CHARS ({MAX_EXTRACT_CHARS}) and was truncated for MVP extraction"
@@ -344,7 +371,7 @@ async def _process_single_chapter(
         else:
             chapter.warning = warning
 
-    # 调 LLM
+    # 调 LLM：每章独立调用，失败只影响当前章，不影响同 source 的其他章节。
     user_prompt = build_extraction_user_prompt(
         genre, chapter.chapter_no, chapter.chapter_title or "", content,
     )
@@ -368,7 +395,8 @@ async def _process_single_chapter(
                             status=StagingStatus.FAILED, error_message=str(e))
         return
 
-    # 保存 raw_output（无论合法与否都落库）
+    # 保存 raw_output（无论合法与否都落库）。
+    # 这是排查真实模型输出格式问题的关键，否则 parse 失败后就没有证据了。
     staging = await _save_staging(db, job, chapter, genre, raw_output=raw_output,
                                   status=StagingStatus.EXTRACTED)
 
@@ -382,7 +410,7 @@ async def _process_single_chapter(
 
     staging.raw_json = parsed
 
-    # Pydantic 校验
+    # Pydantic 校验：把“模型看起来像 JSON”进一步约束成项目约定的 ChapterExtraction schema。
     try:
         extraction = ChapterExtraction.model_validate(parsed)
     except ValidationError as e:
@@ -394,7 +422,8 @@ async def _process_single_chapter(
     extraction = _normalize_extraction_abilities(extraction, content, genre=genre)
     staging.status = StagingStatus.VALIDATED
 
-    # 合并到正式表
+    # 合并到正式表。begin_nested 使用数据库 savepoint，让 merge 失败能回滚本章 merge，
+    # 但不破坏 job/staging 外层状态更新。
     try:
         async with db.begin_nested():
             if force_reextract:
@@ -420,7 +449,8 @@ async def _save_staging(
     对同一 job + chapter 复用已有记录（retry 时不新建），让 retry_count 真实累积。
     首次处理时创建；重试时更新同一条记录的 raw_output/status/error_message。
     """
-    # 查找该 job + chapter 已有的 staging（按最新一条）
+    # 查找该 job + chapter 已有的 staging（按最新一条）。
+    # retry 复用同一条记录，避免同一章生成多条“最新状态”互相冲突。
     existing = None
     if chapter.id:
         result = await db.execute(
@@ -798,7 +828,8 @@ async def _merge_extraction(
     chapter_no = chapter.chapter_no
     source_priority = CANON_PRIORITY.get(canon_level, 60)
 
-    # 1. character_profile（人物名归一）
+    # 1. character_profile（人物名归一）。
+    # 同一个角色可能被模型抽成不同别名，入正式表前必须统一，否则 QA 会查漏。
     for char in extraction.characters:
         canonical_name, alias_variants = normalize_character_name_with_aliases(char.name, alias_map)
         merged_aliases = list(dict.fromkeys(list(char.aliases or []) + alias_variants))
@@ -808,7 +839,8 @@ async def _merge_extraction(
             char = char.model_copy(update={"aliases": merged_aliases})
         await _merge_character(db, pid, sid, chapter_no, chapter.chapter_title, char, canon_level, origin, source_priority, alias_map=alias_map, chapter=chapter)
 
-    # 2. ability_profile（evidence 绑定校验 + 人物名归一；能力名归一在 _merge_ability 内部）
+    # 2. ability_profile（evidence 绑定校验 + 人物名归一；能力名归一在 _merge_ability 内部）。
+    # evidence 绑定校验用于拦截“别人释放的光系魔法保护了张小侯”这类误归因。
     for ability in extraction.abilities:
         if not is_ability_bound_to_character(ability.character, ability.ability_name, ability.evidence):
             logger.debug("drop unbound ability: %s -> %s (evidence lacks binding)",
@@ -819,7 +851,8 @@ async def _merge_extraction(
             ability = ability.model_copy(update={"character": canonical_name})
         await _merge_ability(db, pid, sid, chapter_no, ability, canon_level, origin, source_priority, chapter=chapter)
 
-    # 3. event_timeline（MVP 不去重，直接新增；人物名归一）
+    # 3. event_timeline（MVP 不去重，直接新增；人物名归一）。
+    # 事件天然按章节累积，宁可保留多条证据，也不要轻易覆盖。
     for event in extraction.events:
         raw_chars = event.characters or []
         normalized_chars: list[str] = []
@@ -845,7 +878,8 @@ async def _merge_extraction(
             evidence=[make_evidence_ref(event.evidence, chapter=chapter, source_id=sid, confidence=event.confidence)],
         ))
 
-    # 4. world_rule（category 归一 + 查重键 project_id + category + rule_text）
+    # 4. world_rule（category 归一 + 查重键 project_id + category + rule_text）。
+    # 世界规则重复度高，使用 category + rule_text 去重，后续证据追加即可。
     for rule in extraction.world_rules:
         normalized_category = normalize_world_rule_category(rule.category, rule.rule_text)
         if normalized_category != rule.category:

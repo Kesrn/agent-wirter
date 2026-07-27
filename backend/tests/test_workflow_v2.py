@@ -30,6 +30,24 @@ def _ensure_db(setup_db):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _mock_llm_provider(monkeypatch):
+    """Exercise v2 workflows with an explicit offline provider fixture."""
+    from agents.llm_provider import MockProvider
+    import agents.llm_provider as llm_provider
+    import agents.workflow as workflow
+    import agents.workflow_v2 as workflow_v2
+    import api.routes as routes
+
+    def _get_mock_provider(_config=None):
+        return MockProvider()
+
+    monkeypatch.setattr(llm_provider, "get_llm_provider", _get_mock_provider)
+    monkeypatch.setattr(workflow, "get_llm_provider", _get_mock_provider)
+    monkeypatch.setattr(workflow_v2, "get_llm_provider", _get_mock_provider)
+    monkeypatch.setattr(routes, "get_llm_provider", _get_mock_provider)
+
+
 # ── 图结构 ─────────────────────────────────────────────
 
 
@@ -142,6 +160,51 @@ class TestArchitectNode:
         assert "## 用户本轮写作要求" in captured["user_prompt"]
         assert "多写心理变化，少用旁白" in captured["user_prompt"]
 
+    def test_architect_repairs_unescaped_newline_in_task_card_json(self, monkeypatch):
+        """模型把多行任务直接写进 JSON 字符串时，仍能生成可审核任务卡。"""
+        from agents import workflow_v2
+
+        class MalformedJsonProvider:
+            async def generate(self, system_prompt, user_prompt, temperature=0.7, max_tokens=4096):
+                return '''```json
+{
+  "chapter_title": "测试章节",
+  "core_task": "承接上一章的冲突，\n推进主角的选择",
+  "scenes": []
+}
+```'''
+
+        monkeypatch.setattr(workflow_v2, "get_llm_provider", lambda _config: MalformedJsonProvider())
+        monkeypatch.setattr(
+            workflow_v2,
+            "_maybe_wrap_llm",
+            lambda llm, _state, agent_name, include_context=False: llm,
+        )
+
+        result = asyncio.new_event_loop().run_until_complete(workflow_v2.chapter_architect_node(_make_base_state()))
+        card = result["chapter_task_card"]
+
+        assert card["core_task"] == "承接上一章的冲突，\n推进主角的选择"
+        assert card["word_budget"] == 2000
+
+    def test_architect_rejects_unparseable_task_card_instead_of_showing_api_error(self, monkeypatch):
+        """不可解析结果不能伪装成 API 配置错误任务卡进入人工确认。"""
+        from agents import workflow_v2
+
+        class InvalidProvider:
+            async def generate(self, system_prompt, user_prompt, temperature=0.7, max_tokens=4096):
+                return "这不是任务卡 JSON"
+
+        monkeypatch.setattr(workflow_v2, "get_llm_provider", lambda _config: InvalidProvider())
+        monkeypatch.setattr(
+            workflow_v2,
+            "_maybe_wrap_llm",
+            lambda llm, _state, agent_name, include_context=False: llm,
+        )
+
+        with pytest.raises(workflow_v2.TaskCardGenerationError, match="结构化内容无法解析"):
+            asyncio.new_event_loop().run_until_complete(workflow_v2.chapter_architect_node(_make_base_state()))
+
 
 class TestWriterNode:
     def test_writer_consumes_task_card(self):
@@ -156,6 +219,7 @@ class TestWriterNode:
         result = asyncio.new_event_loop().run_until_complete(chapter_writer_node(state))
         assert "draft" in result
         assert len(result["draft"]) > 0
+        assert result["writer_draft"] == result["draft"]
 
     def test_writer_revision_mode(self):
         """修订模式：改写候选稿不续写"""
@@ -169,6 +233,25 @@ class TestWriterNode:
         result = asyncio.new_event_loop().run_until_complete(chapter_writer_node(state))
         assert "draft" in result
         assert len(result["draft"]) > 0
+        assert "writer_draft" not in result
+
+    def test_writer_failure_aborts_instead_of_returning_error_as_draft(self, monkeypatch):
+        """模型调用失败必须中止整条链路，不能把报错文字伪装成正文。"""
+        from agents import workflow_v2
+
+        class FailingProvider:
+            async def generate(self, system_prompt, user_prompt, temperature=0.7, max_tokens=4096):
+                raise RuntimeError("provider unavailable")
+
+        monkeypatch.setattr(workflow_v2, "get_llm_provider", lambda _config: FailingProvider())
+        monkeypatch.setattr(
+            workflow_v2,
+            "_maybe_wrap_llm",
+            lambda llm, _state, agent_name, include_context=False: llm,
+        )
+
+        with pytest.raises(workflow_v2.WorkflowGenerationError, match="章节正文生成失败"):
+            asyncio.new_event_loop().run_until_complete(workflow_v2.chapter_writer_node(_make_base_state()))
 
 
 class TestCriticNode:
@@ -256,6 +339,7 @@ class TestFullPipelineSSE:
         # v2 事件
         assert "event: architect_output" in text
         assert "event: writer_output" in text
+        assert '"initial_draft"' in text
         assert "event: critic_output" in text
         assert "event: editor_output" in text
         assert "event: consistency_check" in text

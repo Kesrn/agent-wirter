@@ -24,6 +24,7 @@ MAX_PROMPT_SNAPSHOT_CHARS = 8000
 
 
 def _build_rendered_prompt(system_prompt: str, user_prompt: str) -> str:
+    """把 system/user prompt 合并成便于审计查看的文本快照。"""
     return f"[system]\n{system_prompt}\n\n[user]\n{user_prompt}"
 
 
@@ -66,6 +67,10 @@ class LoggedLLMProvider:
         return getattr(self._wrapped, "model", None)
 
     async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> str:
+        """记录非流式 LLM 调用。
+
+        不改变返回值；只在调用前后计时，并在成功/失败后写 llm_call_logs。
+        """
         rendered = _build_rendered_prompt(system_prompt, user_prompt)
         started = time.perf_counter()
         try:
@@ -87,6 +92,11 @@ class LoggedLLMProvider:
             raise
 
     async def generate_stream(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> AsyncIterator[str]:
+        """记录流式 LLM 调用。
+
+        只有 stream 正常迭代结束后才写成功日志；中途异常则写 error_message 后继续抛出，
+        让上层 SSE 能返回 error 事件。
+        """
         rendered = _build_rendered_prompt(system_prompt, user_prompt)
         started = time.perf_counter()
         try:
@@ -108,6 +118,12 @@ class LoggedLLMProvider:
             raise
 
     async def _write_log(self, *, rendered_prompt: str, latency_ms: int, error_message: str | None) -> None:
+        """best-effort 写入 llm_call_logs。
+
+        日志写入不能影响生成主链路，所以所有异常都被吞掉并写 warning。
+        这里使用独立 session，是因为 LangGraph 节点执行时不适合把请求 session
+        放进 state，也不希望日志事务和业务事务互相影响。
+        """
         try:
             snapshot, truncated = _truncate(rendered_prompt)
             request_meta = {"prompt_snapshot_truncated": True} if truncated else None

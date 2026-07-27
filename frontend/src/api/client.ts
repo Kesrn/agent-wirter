@@ -267,6 +267,8 @@ export const api = {
     request<ApiChapter>(`/projects/${projectId}/chapters`, { method: 'POST', body: JSON.stringify(data) }),
   updateChapter: (projectId: string, sequenceNumber: number, data: { title?: string; content?: string; outline?: string; status?: string }) =>
     request<ApiChapter>(`/projects/${projectId}/chapters/${sequenceNumber}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  finalizeChapter: (projectId: string, sequenceNumber: number, data: { content?: string }) =>
+    request<ApiChapter>(`/projects/${projectId}/chapters/${sequenceNumber}/finalize`, { method: 'POST', body: JSON.stringify(data) }),
   deleteChapter: (projectId: string, sequenceNumber: number) =>
     request<{ ok: boolean }>(`/projects/${projectId}/chapters/${sequenceNumber}`, { method: 'DELETE' }),
   extractChapterStructure: (projectId: string, sequenceNumber: number, data: ChapterStructureExtractRequest) =>
@@ -373,7 +375,7 @@ export const api = {
   resumeGeneration: (
     projectId: string,
     threadId: string,
-    action: 'approve' | 'reject' | 'review' | 'revise' | 'approve_task_card' | 'reject_task_card' | 'refresh_task_card',
+    action: 'approve' | 'reject' | 'review' | 'revise' | 'approve_task_card' | 'reject_task_card' | 'refresh_task_card' | 'refresh_task_card_context' | 'submit_clarification' | 'skip_clarification',
     onEvent: (envelope: SSEEnvelope) => void,
     feedback?: string,
     signal?: AbortSignal,
@@ -382,8 +384,9 @@ export const api = {
     body?: Record<string, unknown>,
   ) => {
     const params = new URLSearchParams({ thread_id: threadId, action })
-    if (feedback) params.set('feedback', feedback)
-    if (taskCard && !body) params.set('task_card', taskCard)
+    const requestBody: Record<string, unknown> = body ? { ...body } : {}
+    if (feedback) requestBody.feedback = feedback
+    if (taskCard) requestBody.task_card = taskCard
     const unitPath = mode === 'article' ? 'documents' : 'chapters'
     const url = `${API_BASE_URL}/projects/${projectId}/${unitPath}/resume?${params.toString()}`
     const fetchOpts: RequestInit = {
@@ -391,9 +394,8 @@ export const api = {
       headers: sseHeaders(),
       signal,
     }
-    if (body) {
-      if (taskCard) body.task_card = taskCard
-      fetchOpts.body = JSON.stringify(body)
+    if (Object.keys(requestBody).length) {
+      fetchOpts.body = JSON.stringify(requestBody)
       fetchOpts.headers = { ...fetchOpts.headers, 'Content-Type': 'application/json' }
     }
     return fetch(url, fetchOpts).then(async (res) => {
@@ -401,7 +403,8 @@ export const api = {
         const text = await res.text().catch(() => '')
         throw new ApiError(res.status, parseApiError(res.status, text))
       }
-      return parseSSEStream(res.body!.getReader(), onEvent)
+      if (!res.body) throw new ApiError(502, '服务未返回生成流，请重试')
+      return parseSSEStream(res.body.getReader(), onEvent)
     })
   },
 
@@ -763,6 +766,8 @@ export const api = {
   listProjectRuns: (projectId: string, limit?: number) =>
     request<ApiRunListItem[]>(`/projects/${projectId}/ai-runs${limit ? `?limit=${limit}` : ''}`),
   // ─── Clarification Loop (生成前澄清) ───
+  // @deprecated N-1: M-3 后澄清链路统一走 resume action=submit_clarification/skip_clarification。
+  // 以下两个 wrapper 仅供历史 run 查询保留，不再用于主流程，待旧 run 过期后移除。
   getClarification: (runId: string) =>
     request<ClarificationState>(`/ai-runs/${runId}/clarification`),
   submitClarificationAnswers: (runId: string, data: ClarificationAnswerRequest) =>

@@ -1,4 +1,9 @@
-"""Human Interrupt 服务层 — 持久化人工审核等待状态。"""
+"""Human Interrupt 服务层 — 持久化人工审核等待状态。
+
+LangGraph 的 MemorySaver 能保存运行时 state，但它是内存级 checkpoint。
+HumanInterrupt 表额外记录“这次 run 正在等用户做什么决定”，用于前端展示、
+幂等保护和审计。
+"""
 
 from datetime import datetime, timezone
 from typing import Any
@@ -34,6 +39,27 @@ async def create_interrupt(
     Returns:
         创建的 HumanInterrupt 对象
     """
+    # 同一 run 在同一个暂停点重新规划时（例如 L-2 回答澄清后重出任务卡），
+    # 复用仍在等待的 interrupt，避免前端和审计表积累多个“待处理”任务卡。
+    if thread_id and step_name:
+        existing = await db.execute(
+            select(HumanInterrupt)
+            .where(
+                HumanInterrupt.run_id == run.id,
+                HumanInterrupt.thread_id == thread_id,
+                HumanInterrupt.step_name == step_name,
+                HumanInterrupt.resolved == False,  # noqa: E712
+            )
+            .order_by(HumanInterrupt.created_at.desc())
+            .limit(1)
+        )
+        interrupt = existing.scalar_one_or_none()
+        if interrupt:
+            interrupt.payload = payload or {}
+            await db.flush()
+            return interrupt
+
+    # payload 保存暂停点需要给前端展示的信息，例如任务卡、澄清问题、候选正文摘要等。
     interrupt = HumanInterrupt(
         run_id=run.id,
         step_id=step_id,
@@ -64,10 +90,11 @@ async def resolve_interrupt(
         feedback: 用户反馈（可选）
     """
     if interrupt.resolved:
-        # 幂等：已解析的 interrupt 不再修改
+        # 幂等：已解析的 interrupt 不再修改。
+        # 防止用户重复点击批准/拒绝造成重复版本或状态回退。
         return
 
-    # 映射决策到状态
+    # 映射决策到状态。decision 记录用户动作，status 便于列表/筛选展示。
     decision_to_status = {
         InterruptDecision.APPROVE: InterruptStatus.APPROVED,
         InterruptDecision.REJECT: InterruptStatus.REJECTED,
@@ -123,6 +150,29 @@ async def get_interrupt_by_thread(
     result = await db.execute(
         select(HumanInterrupt)
         .where(HumanInterrupt.thread_id == thread_id)
+        .order_by(HumanInterrupt.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_unresolved_interrupt_by_thread_step(
+    db: AsyncSession,
+    thread_id: str,
+    step_name: str,
+) -> HumanInterrupt | None:
+    """查找指定线程和暂停点仍在等待的 interrupt。
+
+    任务卡刷新会在同一个逻辑审核点重复规划，因此不能用“线程最新记录”
+    代替精确匹配。按 step_name 限定还能避免误解析旧的澄清或人工终审记录。
+    """
+    result = await db.execute(
+        select(HumanInterrupt)
+        .where(
+            HumanInterrupt.thread_id == thread_id,
+            HumanInterrupt.step_name == step_name,
+            HumanInterrupt.resolved == False,  # noqa: E712
+        )
         .order_by(HumanInterrupt.created_at.desc())
         .limit(1)
     )

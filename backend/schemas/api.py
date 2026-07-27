@@ -1,4 +1,14 @@
-"""API 请求/响应 Schema"""
+"""API 请求/响应 Schema。
+
+Pydantic schema 是前后端之间的“接口合同”：
+- *Create：创建接口需要的字段；
+- *Update：PATCH 接口可选字段，通常配合 exclude_unset=True；
+- *Response：返回给前端的结构，model_config.from_attributes=True 允许从 ORM 对象转换；
+- Request 类：生成、评测、知识库问答等复杂操作的入参。
+
+字段级校验尽量放在这里，例如字符串长度、枚举 pattern、数值范围。业务级校验
+（是否属于当前项目、关系是否存在）放在 routes/service 层。
+"""
 
 import uuid
 from datetime import datetime
@@ -171,6 +181,12 @@ class ChapterUpdate(BaseModel):
     status: str | None = Field(default=None, pattern=r"^(draft|reviewing|revision|final|approved)$")
 
 
+class ChapterFinalizeRequest(BaseModel):
+    """最后人工审核确认的章节定稿请求。"""
+
+    content: str | None = Field(default=None, min_length=1)
+
+
 class ChapterResponse(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID
@@ -180,6 +196,7 @@ class ChapterResponse(BaseModel):
     sequence_number: int
     word_count: int
     status: str
+    final_version_id: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -266,6 +283,8 @@ class GenerateRequest(BaseModel):
     tone: str | None = Field(default=None, max_length=120)
     key_points: str | None = Field(default=None, max_length=2000)
     planning_review: bool = False  # L-1: 是否启用任务卡预览
+    pre_generation_mode: str = Field(default="PLANNING", pattern=r"^(FAST|PLANNING|STRICT)$")  # M-1: 生成前交互模式
+    max_clarification_rounds: int = Field(default=3, ge=1, le=10)  # M-1: 最大澄清轮数
 
 
 # --- 专家测试请求 ---

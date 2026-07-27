@@ -19,6 +19,11 @@ from models.harness_enums import RunStepStatus
 
 
 def _idempotency_key(run_id: str | uuid.UUID, step_name: str, revision_round: int) -> str:
+    """生成 step 幂等键。
+
+    同一个 run 的同一步在网络重试或 resume 重放时可能被再次 start；
+    使用 run_id + step_name + revision_round 保证不会重复创建步骤。
+    """
     return f"{run_id}:{step_name}:{revision_round}"
 
 
@@ -33,6 +38,10 @@ async def start_step(
     input_data: dict[str, Any] | None = None,
     max_retry: int = 0,
 ) -> AiRunStep:
+    """创建或复用一个 RUNNING step。
+
+    routes.py 在 LangGraph on_chain_start 事件中调用它，把图节点映射成可展示步骤。
+    """
     key = _idempotency_key(run_id, step_name, revision_round)
     # 幂等：若已存在同 key 的 step，直接返回
     existing = await db.execute(
@@ -61,6 +70,7 @@ async def start_step(
 async def finish_step(
     db: AsyncSession, step: AiRunStep, *, output: dict[str, Any] | None = None
 ) -> None:
+    """把 step 标记为 SUCCESS，并保存节点输出摘要。"""
     step.status = RunStepStatus.SUCCESS
     step.output = output
     step.ended_at = datetime.now(timezone.utc)
@@ -70,6 +80,7 @@ async def finish_step(
 async def fail_step(
     db: AsyncSession, step: AiRunStep, *, error_message: str
 ) -> None:
+    """把 step 标记为 FAILED，并保存错误信息。"""
     step.status = RunStepStatus.FAILED
     step.error_message = error_message
     step.ended_at = datetime.now(timezone.utc)
@@ -79,6 +90,10 @@ async def fail_step(
 async def wait_human_step(
     db: AsyncSession, step: AiRunStep, *, payload: dict[str, Any] | None = None
 ) -> None:
+    """把 step 标记为 WAITING_HUMAN。
+
+    用于 human_review、task_card_review、human_clarification 等暂停点。
+    """
     step.status = RunStepStatus.WAITING_HUMAN
     step.output = payload
     await db.flush()

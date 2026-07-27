@@ -1,11 +1,18 @@
-"""LLM Provider 抽象层
+"""LLM Provider 抽象层。
 
 支持 mock / openai / deepseek / siliconflow / zhipu / moonshot / qwen / yi / minimax / custom。
 所有非 mock 厂商均走 OpenAI 兼容 API。
 默认 mock，无需 API key 即可运行。
+
+上层工作流只依赖 LLMProvider.generate / generate_stream 两个方法，
+不关心底层到底是 OpenAI、DeepSeek、通义千问还是其他兼容接口。这样可以做到：
+- 工作流节点、知识库抽取、评测等业务逻辑不用散落 vendor 判断；
+- 用户级配置和环境变量配置可以复用同一套 provider 创建逻辑；
+- 测试/演示时可用 MockProvider 模拟结构化输出。
 """
 
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from typing import AsyncIterator
 import json
@@ -14,8 +21,16 @@ import re
 from config.settings import settings
 from observability.langfuse import current_langfuse_metadata, get_langfuse_async_openai_class
 
+logger = logging.getLogger(__name__)
+
 
 class LLMProvider(ABC):
+    """所有模型适配器必须实现的最小接口。
+
+    generate 用于一次性返回完整文本；generate_stream 用于 SSE 场景逐块返回 token。
+    工作流节点只调用这两个方法，因此新增厂商时只需要新增 Provider 实现。
+    """
+
     @abstractmethod
     async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> str:
         ...
@@ -26,17 +41,26 @@ class LLMProvider(ABC):
 
 
 class LLMConfigError(ValueError):
-    """Raised when a real provider is selected but its local config is unusable."""
+    """模型配置不可用时抛出的业务异常。
+
+    路由层会把它转换成用户可理解的错误，例如“缺少 API Key”。
+    """
 
 
 class MockProvider(LLMProvider):
-    """Mock provider for testing — echoes context-aware responses"""
+    """测试/演示用 Provider。
+
+    它不调用真实模型，而是根据 prompt 里的关键词返回稳定文本或 JSON。
+    这样测试可以覆盖章节生成、结构化抽取、知识库问答、评测等链路，
+    不依赖外部 API、网络和真实 token 消耗。
+    """
 
     async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> str:
         await asyncio.sleep(0.3)
         prompt_lower = (system_prompt + user_prompt).lower()
 
-        # Extract key context info for more realistic mock output
+        # 从上下文里提取角色/世界观关键词，让 mock 结果能体现“上下文确实被注入了”。
+        # 这对前端联调和测试断言很有用：如果缺少上下文，mock 文本里的 char_note 会消失。
         context_chars = []
         if "角色资料" in user_prompt:
             char_matches = re.findall(r"- (.+?)\(", user_prompt)
@@ -55,6 +79,8 @@ class MockProvider(LLMProvider):
             ("给出3个" in prompt_lower or "给出5个" in prompt_lower or "json数组" in prompt_lower or "json字符串数组" in prompt_lower)
             and ("方向" in prompt_lower or "建议" in prompt_lower or "direction" in prompt_lower or "suggestion" in prompt_lower)
         )
+        # 下面的分支按业务类型模拟不同 LLM 输出。真实模型可能返回自然语言或 JSON，
+        # 所以服务层仍然要做容错解析，不能因为 mock 稳定就假设生产也稳定。
         is_structure_extraction_request = (
             "结构提炼" in prompt_lower
             or ("只输出严格 json" in prompt_lower and "character_relations" in prompt_lower)
@@ -532,6 +558,7 @@ class MockProvider(LLMProvider):
         )
 
     async def generate_stream(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> AsyncIterator[str]:
+        """把 mock 完整结果切成小块，模拟真实模型流式 token。"""
         result = await self.generate(system_prompt, user_prompt, temperature, max_tokens)
         for i in range(0, len(result), 5):
             yield result[i:i+5]
@@ -539,20 +566,31 @@ class MockProvider(LLMProvider):
 
 
 class OpenAIProvider(LLMProvider):
-    """OpenAI 兼容 API Provider（DeepSeek / SiliconFlow 等也走此路径）"""
+    """OpenAI 兼容 API Provider（DeepSeek / SiliconFlow 等也走此路径）。
+
+    只要厂商支持 Chat Completions 兼容协议，就可以通过 base_url + model_id 接入。
+    这也是项目支持多模型的关键：不同厂商差异被压缩到配置层。
+    """
 
     def __init__(self, api_key: str, base_url: str | None = None, model: str = "gpt-4o-mini"):
         if not api_key:
             raise LLMConfigError("当前模型配置缺少 API Key，请在设置里重新保存 API Key 后再试")
+        # Langfuse 开启且当前请求已激活 trace 时，用 Langfuse 的 AsyncOpenAI wrapper；
+        # 否则退回官方 openai.AsyncOpenAI。业务调用方不需要感知这层差异。
         langfuse_async_openai = get_langfuse_async_openai_class()
         self._use_langfuse_metadata = langfuse_async_openai is not None
         AsyncOpenAI = langfuse_async_openai
         if AsyncOpenAI is None:
             from openai import AsyncOpenAI
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url or None)
+        # 设置120秒超时：章节生成可能较慢，但不应无限等待
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url or None, timeout=120.0)
         self.model = model
 
     async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> str:
+        """非流式文本生成。
+
+        适合结构化抽取、审校、方向建议、评测裁判等“等待完整结果再解析”的场景。
+        """
         payload = {
             "model": self.model,
             "messages": [
@@ -562,6 +600,7 @@ class OpenAIProvider(LLMProvider):
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        # Langfuse metadata 不包含 API Key/Authorization，只记录模型、stream 标记和请求上下文。
         metadata = current_langfuse_metadata({"llm_model": self.model, "stream": False}) if self._use_langfuse_metadata else None
         if metadata:
             payload["metadata"] = metadata
@@ -569,6 +608,11 @@ class OpenAIProvider(LLMProvider):
         return resp.choices[0].message.content or ""
 
     async def generate_stream(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> AsyncIterator[str]:
+        """流式文本生成。
+
+        章节正文/文章正文会通过这个方法逐块返回，api/routes.py 再包装成 SSE
+        writer_output/content_output 事件推给前端。
+        """
         payload = {
             "model": self.model,
             "messages": [
@@ -589,16 +633,24 @@ class OpenAIProvider(LLMProvider):
 
 
 def get_llm_provider(config: dict | None = None) -> LLMProvider:
-    """根据配置返回 LLM Provider 实例
+    """根据配置返回 LLM Provider 实例。
 
     Args:
         config: 用户 LLM 配置字典 {"provider", "api_key", "base_url", "model"}。
             若为 None，走 settings 默认值（向后兼容）。
+
+    优先级：
+    1. 用户设置页保存的 LLMConfig（解密后传入 config）；
+    2. 环境变量 settings.LLM_*。
+
+    当前版本禁用了 mock provider：如果检测到 mock 或缺少 API Key，直接抛出
+    LLMConfigError，让前端提示用户配置真实模型。
     """
     if config:
         provider = config.get("provider", settings.LLM_PROVIDER)
         if provider == "mock":
-            return MockProvider()
+            logger.warning("检测到 mock provider 配置，但 mock 已被禁用，将抛出错误")
+            raise LLMConfigError("Mock provider 已被禁用，请配置真实的 LLM provider (OpenAI/DeepSeek等)")
         api_key = (config.get("api_key") or "").strip()
         if not api_key:
             raise LLMConfigError("当前模型配置缺少 API Key，请在设置里重新保存 API Key 后再试")
@@ -611,7 +663,8 @@ def get_llm_provider(config: dict | None = None) -> LLMProvider:
 
     # 无 config → 走 settings 默认值
     if settings.LLM_PROVIDER == "mock":
-        return MockProvider()
+        logger.warning("检测到 mock provider 配置，但 mock 已被禁用，将抛出错误")
+        raise LLMConfigError("Mock provider 已被禁用，请在 .env 或前端设置中配置真实的 LLM provider")
     else:
         if not settings.LLM_API_KEY.strip():
             raise LLMConfigError("当前模型配置缺少 API Key，请在设置里重新保存 API Key 后再试")

@@ -1,4 +1,4 @@
-"""LangGraph 创作工作流
+"""LangGraph 创作工作流。
 
 流水线：ContextLoader → [enabled experts by workflow_position] → HumanReview
 
@@ -7,6 +7,10 @@
 - Human-in-the-loop（interrupt_before）
 - Checkpoint 持久化（可选）
 - 动态图构建：根据项目启用的专家决定节点和边
+
+这个文件是旧版小说章节生成主链路。routes.py 负责把 HTTP/SSE 请求转成
+initial_state，再调用这里编译出的 LangGraph app。节点函数只接收/返回 state
+的一小部分字段，LangGraph 负责把每个节点的输出合并回全局状态。
 """
 
 import logging
@@ -28,16 +32,32 @@ logger = logging.getLogger(__name__)
 # In-memory checkpoint storage must be shared across requests. The generate
 # endpoint pauses at human_review and returns a thread_id; the resume endpoint
 # uses that thread_id in a separate HTTP request.
+#
+# 这里不能在 get_creative_app 里每次 new MemorySaver，否则 generate 请求暂停后，
+# resume 请求拿到的是另一个空 checkpointer，会找不到 thread_id 对应状态。
 _CHECKPOINTER = MemorySaver()
 
 
 # --- 工作流状态 ---
 class CreativeState(TypedDict):
+    """旧版 LangGraph 全局状态。
+
+    LangGraph 节点之间不直接互相调用，而是通过这个 dict 传递数据：
+    - context_loader 写 context；
+    - writer 写 draft；
+    - critic 追加 critiques；
+    - consistency_checker 写 consistency_report；
+    - human_review 只负责暂停，让 routes.py 根据用户操作 resume。
+
+    Annotated + reducer 的字段表示“合并时追加而不是覆盖”，例如多轮修订时
+    critiques/skill_packs 可以保留历史。
+    """
     project_id: str
     chapter_id: str
     chapter_num: int  # 章节序号，供 ChapterContextService 按章查询
     mode: str  # continue | full_pipeline | enhance | summarize
     context: str  # RAG 检索到的上下文
+    context_summary: dict  # L-3: 前端可解释的结构化上下文摘要
     draft: str  # 当前草稿
     original_text: str  # 原始文本（增强模式用）
     critiques: Annotated[list[str], lambda a, b: a + b]  # 审校意见累积
@@ -54,6 +74,7 @@ class CreativeState(TypedDict):
     selected_world_entry_ids: list[str]  # 用户选中的世界观 ID
     selected_hidden_thread_ids: list[str]  # 用户选中的暗线 ID
     include_knowledge_sources: bool  # 是否将资料库 project_sources 注入上下文
+    excluded_context_keys: list[str]  # L-3: 本次生成明确排除的上下文条目
     target_words: int  # 目标字数
     selected_direction: str  # 用户选择的剧情走向（从 DirectionPicker 传入）
     user_note: str  # 用户补充要求
@@ -64,7 +85,12 @@ class CreativeState(TypedDict):
 
 
 def _maybe_wrap_llm(llm, state, *, agent_name: str, include_context: bool = False):
-    """若 state 注入了 harness_run_id，把 llm 包成 LoggedLLMProvider；否则原样返回。"""
+    """若 state 注入了 harness_run_id，把 llm 包成 LoggedLLMProvider；否则原样返回。
+
+    LoggedLLMProvider 会在每次 generate/generate_stream 时写 LlmCallLog，
+    用于“AI Runs”页面查看模型、prompt、上下文快照和错误。没有 run_id 的旧路径
+    不记录日志，保持轻量。
+    """
     run_id = state.get("harness_run_id")
     if not run_id:
         return llm
@@ -73,7 +99,10 @@ def _maybe_wrap_llm(llm, state, *, agent_name: str, include_context: bool = Fals
     context_snapshot = None
     if include_context:
         ctx = state.get("context", "")
-        context_snapshot = {"context_len": len(ctx)} if ctx else None
+        context_snapshot = {
+            "context_len": len(ctx),
+            "excluded_context_keys": list(state.get("excluded_context_keys", []) or []),
+        } if ctx else None
     return LoggedLLMProvider(
         llm,
         run_id=run_id,
@@ -107,7 +136,14 @@ def _is_revision_state(state: CreativeState) -> bool:
 
 
 def _build_writer_user_prompt(state: CreativeState) -> str:
-    """Build a writer prompt that separates initial generation from revision."""
+    """构建 writer 节点的用户 prompt。
+
+    这里最重要的设计是把“初次生成”和“修订改稿”分开：
+    - 初次生成：根据上下文、用户选择方向、补充要求写完整章节；
+    - 修订改稿：只能重写当前候选稿，不允许在末尾继续扩写新剧情。
+
+    这样可以避免用户点“修改”后模型误以为要续写，导致章节越改越长。
+    """
     context = state.get("context", "")
     draft = state.get("draft", "")
     critiques = state.get("critiques", [])
@@ -168,6 +204,12 @@ def _build_workflow_skill_pack(
     skill_dir: str | None = None,
     expert_name: str | None = None,
 ):
+    """为工作流节点准备 skill pack。
+
+    skill pack 会把本地 Skill.md、引用资料、写作技法等内容拼入 system prompt。
+    planner 会根据节点名和 role_type 选择合适的 skill_dir，例如 writer/critic
+    使用不同技能包，避免所有专家共用一份笼统 prompt。
+    """
     plan = plan_workflow_skill_pack(
         node_name=node_name,
         role_type=role_type,
@@ -188,6 +230,7 @@ def _build_workflow_skill_pack(
 
 
 def _skill_pack_summary(pack, plan: SkillPackPlan) -> dict:
+    """把完整 skill pack 压缩成可通过 SSE 返回给前端的摘要。"""
     summary = pack.to_summary()
     summary["expert"] = plan.event_expert
     summary["planner"] = plan.planner
@@ -204,7 +247,17 @@ def _make_expert_node(
     max_tokens: int,
     skill_dir: str | None = None,
 ):
-    """为动态专家创建节点函数"""
+    """为用户自定义专家创建 LangGraph 节点函数。
+
+    用户在界面上配置的 Expert 不是硬编码函数，而是通过 role_type 决定读写哪些
+    state 字段：
+    - writer 写 draft；
+    - critic/custom/researcher 追加 critiques；
+    - editor 写 edited_draft。
+
+    这样新增专家时无需改图结构核心逻辑，只需在 build_creative_graph 中按
+    workflow_position 把节点插入到合适位置。
+    """
     async def expert_node(state: CreativeState) -> dict:
         llm = get_llm_provider(state.get("llm_config"))
         llm = _maybe_wrap_llm(llm, state, agent_name=f"expert_{expert_id[:8]}", include_context=role_type in ("writer", "researcher", "custom"))
@@ -253,12 +306,15 @@ async def context_loader_node(state: CreativeState) -> dict:
     selected_characters = state.get("selected_character_ids", [])
     selected_world_entries = state.get("selected_world_entry_ids", [])
     selected_hidden_threads = state.get("selected_hidden_thread_ids", [])
+    excluded_context_keys = list(state.get("excluded_context_keys", []) or [])
     chapter_num = state.get("chapter_num", 0)
 
     # ── 主路径：有章节号时走 ChapterContextService ──
+    # ChapterContextService 是新上下文聚合入口，能同时取本章大纲、角色、
+    # 角色事件、世界观、暗线、前文和知识库资料。它比旧 RAG 更贴合“按章节写作”。
     if chapter_num:
         try:
-            from services.chapter_context import build_chapter_context, format_chapter_context_for_prompt
+            from services.chapter_context import apply_context_exclusions, build_chapter_context, format_chapter_context_for_prompt
             from db.session import async_session as ctx_async_session
             async with ctx_async_session() as session:
                 ctx = await build_chapter_context(
@@ -278,17 +334,38 @@ async def context_loader_node(state: CreativeState) -> dict:
                     selected_hidden_thread_ids=selected_hidden_threads or None,
                     include_knowledge_sources=bool(state.get("include_knowledge_sources", False)),
                 )
-                context = format_chapter_context_for_prompt(ctx)
+                context_summary = ctx.context_summary(
+                    selected_outline_ids=selected_outlines,
+                    selected_character_ids=selected_characters,
+                    selected_world_entry_ids=selected_world_entries,
+                    selected_hidden_thread_ids=selected_hidden_threads,
+                    excluded_context_keys=excluded_context_keys,
+                )
+                filtered_ctx = apply_context_exclusions(ctx, excluded_context_keys)
+                context = format_chapter_context_for_prompt(filtered_ctx)
                 logger.info(
                     "context_loader: ChapterContextService loaded length=%d stats=%s has_selections=%s",
                     len(context), ctx.stats, bool(selected_outlines or selected_characters or selected_world_entries or selected_hidden_threads),
                 )
-                return {"context": context}
+                return {"context": context, "context_summary": context_summary}
         except Exception as e:
             logger.exception(f"ChapterContextService 加载失败，fallback 到旧逻辑: {e}")
+            if excluded_context_keys:
+                # 不能在旧的字符串 fallback 中可靠识别稳定 key；宁可不注入上下文，
+                # 也不能把用户明确排除的资料重新送入 Writer。
+                return {
+                    "context": "(本次生成未加载上下文：上下文排除选择无法在 fallback 路径中安全应用)",
+                    "context_summary": {"excluded_context_keys": excluded_context_keys},
+                }
 
     # ── 回退：旧逻辑（文章模式 / 无章节号 / ChapterContextService 失败） ──
+    # 回退路径保证老接口、文章模式或异常情况下仍能尽量拿到可用上下文。
     has_selections = selected_outlines or selected_characters or selected_world_entries or selected_hidden_threads
+    if excluded_context_keys:
+        return {
+            "context": "(本次生成未加载上下文：当前 fallback 路径不支持逐项排除)",
+            "context_summary": {"excluded_context_keys": excluded_context_keys},
+        }
     logger.info(f"context_loader fallback: outlines={selected_outlines}, chars={selected_characters}, we={selected_world_entries}, has_selections={has_selections}")
 
     if has_selections:
@@ -399,9 +476,10 @@ async def context_loader_node(state: CreativeState) -> dict:
 
         context = "\n\n".join(parts) if parts else "(暂无上下文)"
         logger.info(f"context_loader fallback: loaded context length={len(context)}, parts={len(parts)}")
-        return {"context": context}
+        return {"context": context, "context_summary": {"excluded_context_keys": list(state.get("excluded_context_keys", []) or [])}}
 
-    # 最终 Fallback: 旧 RAG 向量搜索逻辑（向后兼容文章模式 / 无章节号场景）
+    # 最终 Fallback: 旧 RAG 向量搜索逻辑（向后兼容文章模式 / 无章节号场景）。
+    # 如果用户没有显式选择素材，也没有章节号，就由 ContextLoader 自动检索项目资料。
     loader = ContextLoader()
     context = await loader.load_context(
         project_id=state["project_id"],
@@ -411,7 +489,7 @@ async def context_loader_node(state: CreativeState) -> dict:
         include_previous_chapters=3,
         include_outline=True,
     )
-    return {"context": context}
+    return {"context": context, "context_summary": {"excluded_context_keys": list(state.get("excluded_context_keys", []) or [])}}
 
 
 async def writer_node(state: CreativeState) -> dict:
@@ -429,7 +507,10 @@ async def writer_node(state: CreativeState) -> dict:
 
 
 async def critic_node(state: CreativeState) -> dict:
-    """残酷大师：结构化审校"""
+    """残酷大师：结构化审校。
+
+    审校结果追加到 critiques，后续 review/revise 会把这些意见交回 writer。
+    """
     llm = get_llm_provider(state.get("llm_config"))
     llm = _maybe_wrap_llm(llm, state, agent_name="critic")
     pack, pack_summary = _build_workflow_skill_pack(state, node_name="critic", role_type="critic")
@@ -443,7 +524,11 @@ async def critic_node(state: CreativeState) -> dict:
 
 
 async def consistency_checker_node(state: CreativeState) -> dict:
-    """一致性检查：与世界观/角色/前文对照，输出结构化 GuardrailResult"""
+    """一致性检查：与世界观/角色/前文对照，输出结构化 GuardrailResult。
+
+    该节点关注“是否违背已有设定”，不是文学质量评价。输出会被 parse_guardrail_result
+    标准化为 dict，前端可以展示 severity/issues，而不是解析自然语言。
+    """
     from agents.guardrail import parse_guardrail_result
 
     llm = get_llm_provider(state.get("llm_config"))
@@ -470,7 +555,11 @@ async def human_review_node(state: CreativeState) -> dict:
 
 # --- 路由函数 ---
 def route_after_review(state: CreativeState) -> str:
-    """根据修订次数决定是否继续"""
+    """根据修订次数决定是否继续。
+
+    human_review 暂停后，如果用户选择 revise，routes.py 会把 revision_count + 1
+    写回 state，再从 human_review 继续。超过上限后直接 END，避免无限循环烧 token。
+    """
     if state.get("revision_count", 0) > 3:
         return END
     return "writer"
@@ -484,15 +573,20 @@ def build_creative_graph(enabled_experts: list | None = None) -> StateGraph:
         enabled_experts: 项目启用的专家列表（Expert ORM 对象）。
             若为 None 或空，使用默认静态流水线。
     """
+    # StateGraph 只描述节点和边，不立即执行。get_creative_app 会 compile 成可运行 app。
     graph = StateGraph(CreativeState)
 
-    # context_loader 和 human_review 始终存在
+    # context_loader 和 human_review 始终存在：
+    # 前者保证所有生成都有上下文，后者提供人工审核/批准/修订的暂停点。
     graph.add_node("context_loader", context_loader_node)
     graph.add_node("human_review", human_review_node)
     graph.set_entry_point("context_loader")
 
     if not enabled_experts:
-        # 无专家配置 → 默认流水线：context_loader → writer → [critic || consistency_checker] → human_review
+        # 无专家配置 → 默认流水线：
+        # context_loader → writer → [critic || consistency_checker] → human_review。
+        # writer 后有两条边，LangGraph 会让审校和一致性检查都消费同一个 draft，
+        # 最终在 human_review 前合并状态。
         graph.add_node("writer", writer_node)
         graph.add_node("critic", critic_node)
         graph.add_node("consistency_checker", consistency_checker_node)
@@ -506,6 +600,8 @@ def build_creative_graph(enabled_experts: list | None = None) -> StateGraph:
         return graph
 
     # --- 动态构建：根据 enabled_experts 的 workflow_position 决定节点和边 ---
+    # 用户可在 UI 中把专家放到 pre_writer/post_writer/replace_writer 等位置。
+    # 这里把配置转换成实际图拓扑，使“AI 团队”可以配置而不是写死。
     # 按位置分组
     replace_writer = None
     replace_critic = None
@@ -573,7 +669,7 @@ def build_creative_graph(enabled_experts: list | None = None) -> StateGraph:
         fn = _make_expert_node(str(exp.id), exp.role_type, exp.system_prompt, exp.temperature, exp.max_tokens, getattr(exp, "skill_dir", None))
         node_chain.append((name, fn))
 
-    # consistency_checker 始终使用默认
+    # consistency_checker 始终使用默认，避免用户自定义专家绕过设定一致性保护。
     node_chain.append(("consistency_checker", consistency_checker_node))
 
     # 添加所有节点到图
@@ -601,7 +697,11 @@ def build_creative_graph(enabled_experts: list | None = None) -> StateGraph:
 
 
 def get_creative_app(enabled_experts: list | None = None):
-    """获取编译后的工作流应用（带 checkpoint 和 HITL）"""
+    """获取编译后的工作流应用（带 checkpoint 和 HITL）。
+
+    interrupt_before=["human_review"] 表示图执行到 human_review 之前暂停。
+    routes.py 会把 thread_id 返回给前端，用户点击批准/修订时再调用 resume 接口继续。
+    """
     graph = build_creative_graph(enabled_experts)
     app = graph.compile(
         checkpointer=_CHECKPOINTER,
