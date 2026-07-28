@@ -15,6 +15,7 @@ v2 的核心变化是“先计划，再写正文”：architect 先把章节目�
 看一大段上下文自由生成更可控，也方便用户在生成前审核任务卡。
 """
 
+import asyncio
 import json
 import logging
 from typing import Annotated, TypedDict
@@ -348,7 +349,15 @@ async def chapter_architect_node(state: CreativeStateV2) -> dict:
     )
 
     try:
-        raw = await llm.generate(system_prompt, user_prompt, temperature=0.6, max_tokens=4096)
+        raw = await asyncio.wait_for(
+            llm.generate(system_prompt, user_prompt, temperature=0.6, max_tokens=4096),
+            timeout=180,
+        )
+    except asyncio.TimeoutError as e:
+        logger.warning("chapter_architect LLM 调用超过 180 秒，已取消本次任务卡生成")
+        raise TaskCardGenerationError(
+            "章节任务卡生成失败：模型服务超过 180 秒没有返回，请稍后重试或切换更快的模型配置。"
+        ) from e
     except Exception as e:
         logger.exception("chapter_architect LLM 调用失败: %s", e)
         raise TaskCardGenerationError(

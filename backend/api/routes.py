@@ -179,6 +179,75 @@ async def _discard_incomplete_generation_run(
         except Exception:
             logger.warning("清理工作流 checkpoint 失败 thread_id=%s", thread_id, exc_info=True)
 
+async def _astream_events_with_keepalive(
+    stream,
+    *,
+    request: Request,
+    heartbeat_message: str,
+    timeout_message: str,
+    timeout_seconds: float = 180,
+    heartbeat_seconds: float = 25,
+    logger_context: str = "workflow",
+):
+    """迭代 LangGraph 事件，并在长时间无事件时发出前端可见心跳。
+
+    不能直接用 ``asyncio.wait_for(aiter.__anext__(), timeout=heartbeat)`` 做心跳，
+    因为 wait_for 超时会取消正在等待的 ``__anext__``，进而可能把底层 LLM 调用也取消。
+    这里把 ``__anext__`` 放到独立 task 中等待：心跳超时只发送 keepalive，不取消模型调用；
+    只有客户端断开或达到总超时时才显式关闭流。
+    """
+    loop = asyncio.get_running_loop()
+    iterator = stream.__aiter__()
+    next_task = asyncio.create_task(iterator.__anext__())
+    last_event_at = loop.time()
+    should_close = True
+
+    try:
+        while True:
+            done, _ = await asyncio.wait({next_task}, timeout=heartbeat_seconds)
+            if not done:
+                elapsed = loop.time() - last_event_at
+                if timeout_seconds and elapsed >= timeout_seconds:
+                    logger.warning(
+                        "%s timed out waiting for workflow event after %.1fs",
+                        logger_context,
+                        elapsed,
+                    )
+                    yield {
+                        "event": "__workflow_timeout__",
+                        "message": timeout_message,
+                        "elapsed_seconds": round(elapsed, 1),
+                    }
+                    return
+                if await request.is_disconnected():
+                    logger.info("%s client disconnected while waiting for workflow event", logger_context)
+                    yield {"event": "__client_disconnected__"}
+                    return
+                yield {
+                    "event": "__sse_heartbeat__",
+                    "message": heartbeat_message,
+                    "elapsed_seconds": round(elapsed, 1),
+                }
+                continue
+
+            try:
+                event = next_task.result()
+            except StopAsyncIteration:
+                should_close = False
+                break
+
+            last_event_at = loop.time()
+            yield event
+            next_task = asyncio.create_task(iterator.__anext__())
+    finally:
+        if not next_task.done():
+            next_task.cancel()
+        if should_close:
+            aclose = getattr(stream, "aclose", None)
+            if aclose:
+                await aclose()
+
+
 # 只有 writer 角色的输出会写入章节正文。critic/editor/researcher 等专家输出
 # 一般用于审校、建议或中间状态，不应直接覆盖用户正文。
 WRITER_ROLES = ("writer",)
@@ -3551,10 +3620,38 @@ async def generate_chapter(
                     active_steps: dict[str, object] = {}
 
                     try:
-                        async for event in app.astream_events(initial_state, config=config, version="v2"):
+                        workflow_stream = app.astream_events(initial_state, config=config, version="v2")
+                        async for event in _astream_events_with_keepalive(
+                            workflow_stream,
+                            request=request,
+                            heartbeat_message="章节续写规划仍在执行，请稍候",
+                            timeout_message="章节续写规划超过 180 秒没有响应，请稍后重试或检查模型服务",
+                            logger_context=f"continue workflow thread_id={thread_id}",
+                        ):
+                            marker = event.get("event")
+                            if marker == "__sse_heartbeat__":
+                                yield f"event: progress\ndata: {json.dumps({'message': event.get('message')}, ensure_ascii=False)}\n\n"
+                                continue
+                            if marker == "__workflow_timeout__":
+                                await _discard_incomplete_generation_run(
+                                    db,
+                                    run_id=str(ai_run.id),
+                                    thread_id=workflow_thread_id,
+                                    reason=str(event.get("message") or "workflow timeout"),
+                                )
+                                yield f"event: error\ndata: {json.dumps({'message': event.get('message')}, ensure_ascii=False)}\n\n"
+                                return
+                            if marker == "__client_disconnected__":
+                                await _discard_incomplete_generation_run(
+                                    db,
+                                    run_id=str(ai_run.id),
+                                    thread_id=workflow_thread_id,
+                                    reason="客户端断开连接",
+                                )
+                                return
                             if await _check_cancelled():
                                 return
-                            kind = event.get("event")
+                            kind = marker
                             if kind == "on_chain_start":
                                 node_name = event.get("name", "")
                                 if node_name in _CONTINUE_NODE_EVENT_MAP:
@@ -4040,12 +4137,41 @@ async def generate_chapter(
             active_steps: dict[str, object] = {}  # node_name -> AiRunStep
             revision_round = 0
 
-            # 逐节点流式执行
-            async for event in app.astream_events(initial_state, config=config, version="v2"):
+            # 逐节点流式执行。任务卡规划属于非流式 LLM 调用，可能 1-3 分钟内没有
+            # LangGraph 事件；这里主动发送 keepalive，避免前端 90 秒 idle 看门狗误判断线。
+            workflow_stream = app.astream_events(initial_state, config=config, version="v2")
+            async for event in _astream_events_with_keepalive(
+                workflow_stream,
+                request=request,
+                heartbeat_message="任务卡生成仍在执行，请稍候",
+                timeout_message="任务卡生成节点超过 180 秒没有响应，请稍后重试或检查模型服务",
+                logger_context=f"chapter generate workflow thread_id={thread_id}",
+            ):
+                marker = event.get("event")
+                if marker == "__sse_heartbeat__":
+                    yield f"event: progress\ndata: {json.dumps({'message': event.get('message')}, ensure_ascii=False)}\n\n"
+                    continue
+                if marker == "__workflow_timeout__":
+                    await _discard_incomplete_generation_run(
+                        db,
+                        run_id=str(ai_run.id) if ai_run is not None else None,
+                        thread_id=workflow_thread_id,
+                        reason=str(event.get("message") or "workflow timeout"),
+                    )
+                    yield f"event: error\ndata: {json.dumps({'message': event.get('message')}, ensure_ascii=False)}\n\n"
+                    return
+                if marker == "__client_disconnected__":
+                    await _discard_incomplete_generation_run(
+                        db,
+                        run_id=str(ai_run.id) if ai_run is not None else None,
+                        thread_id=workflow_thread_id,
+                        reason="客户端断开连接",
+                    )
+                    return
                 # 客户端取消时立即停止，不继续跑后续节点
                 if await _check_cancelled():
                     return
-                kind = event.get("event")
+                kind = marker
 
                 if kind == "on_chain_start":
                     node_name = event.get("name", "")
