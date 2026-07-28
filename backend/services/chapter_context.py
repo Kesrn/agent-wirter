@@ -6,7 +6,8 @@
 - 结构化数据（角色、事件、大纲、设定、暗线）直接查原表，不落 project_sources。
 - selected_*_ids 作为附加加载，不替代自动聚合。
 - fanfic_rules / retrieved_sources 从 project_sources 加载，但默认不注入；
-  只有 include_knowledge_sources=True 时才加载资料库内容。
+  只有 include_knowledge_sources=True 时才加载资料库内容；
+  full_pipeline 只有 include_previous_summary=True 时才加载前文摘要。
 """
 
 from __future__ import annotations
@@ -470,6 +471,7 @@ async def build_chapter_context(
     selected_world_entry_ids: list[str] | None = None,
     selected_hidden_thread_ids: list[str] | None = None,
     include_knowledge_sources: bool = False,
+    include_previous_summary: bool = False,
 ) -> ChapterContext:
     """为指定章节聚合上下文。
 
@@ -481,11 +483,14 @@ async def build_chapter_context(
     - 暗线（HiddenThread.chapter_nums 包含当前章节）
     - 全局设定（WorldEntry.scope_type == "global"）
     - 章节设定（WorldEntry.scope_type == "chapter"）
-    - 最近 3 章已定稿前文（读取不可变定稿版本）
+    - 最近 3 章已定稿前文（读取不可变定稿版本；full_pipeline 需显式 include_previous_summary=True）
     - 用户通过 selected_*_ids 显式选择的条目（追加不替代）
 
     资料库 project_sources 默认不注入；调用方显式传 include_knowledge_sources=True 时，
     fanfic_rule / always_inject / 自动检索命中的资料才会进入 prompt。
+
+    full_pipeline 默认不注入“前文摘要”；只有调用方显式传 include_previous_summary=True 时，
+    才把最近 3 章定稿摘要加入 prompt。上章结尾锚点始终保留。
 
     这个函数是章节生成、方向建议、章节问答共用的上下文入口。统一入口的好处是：
     不同接口不会各自拼 prompt，减少“生成用了一套资料、问答又用另一套资料”的不一致。
@@ -497,8 +502,9 @@ async def build_chapter_context(
     normalized_intent = (intent or "").lower()
     # full_pipeline 是“按本章结构化资料重新生成完整章节”的严格模式。
     # 为避免模型抄/仿本地旧文，这里只允许注入：本章大纲、角色、角色事件、设定/暗线/长线结构、上章结尾锚点。
-    # 不注入当前章旧稿、最近三章前文摘要、资料库检索正文、已确认写作记忆。
+    # 不注入当前章旧稿、资料库检索正文、已确认写作记忆；最近三章前文摘要仅在用户显式勾选时注入。
     is_strict_full_generation = normalized_intent == "full_pipeline"
+    should_load_previous_summary = (not is_strict_full_generation) or bool(include_previous_summary)
 
     # ChapterContext 是结构化中间结果：先按数据类型聚合，最后再由
     # format_chapter_context_for_prompt 转成 prompt 文本。这样前端也能直接拿 ctx.to_dict()
@@ -550,9 +556,9 @@ async def build_chapter_context(
     await _load_world_entries(db, pid, ctx, stats)
 
     # ── 前文 ──
-    # full_pipeline 只保留“上章结尾锚点”（见下方 _load_previous_chapter_ending），
-    # 不再注入最近 3 章前文摘要，避免模型把本地旧文当作续写/仿写素材。
-    if not is_strict_full_generation:
+    # full_pipeline 默认只保留“上章结尾锚点”（见下方 _load_previous_chapter_ending）。
+    # 只有用户显式打开“前文摘要”时，才注入最近 3 章定稿摘要，避免模型把本地旧文当作续写/仿写素材。
+    if should_load_previous_summary:
         await _load_previous_chapters(db, pid, seq, ctx)
 
     # ── 用户显式选择的条目（追加） ──
@@ -908,7 +914,7 @@ async def _load_previous_chapter_ending(
     current_seq: int,
     ctx: ChapterContext,
     *,
-    max_chars: int = 500,
+    max_chars: int = 220,
 ) -> None:
     """加载最近已定稿章节的结尾作为开篇锚点（K-1: opening_anchor 自动提取）。
 
@@ -916,7 +922,7 @@ async def _load_previous_chapter_ending(
     1. 优先查紧邻的上一章，且该章已定稿
     2. 如果没有已定稿的紧邻章，回退到最近的已定稿前章
     3. 优先读取 final_version_id 指向的不可变版本；兼容旧数据时回退到 chapter.content
-    4. 正文为空则不注入，取末尾 500 字而不是开头 500 字
+    4. 正文为空则不注入，只提取精简结尾锚点，不把整章/长段旧文带回 prompt
     """
     from models.chapter import Chapter
 
@@ -953,7 +959,9 @@ async def _load_previous_chapter_ending(
     content = (await _finalized_chapter_content_map(db, [chapter])).get(str(chapter.id), "")
     if not content:
         return
-    ending_text = content[-max_chars:] if len(content) > max_chars else content
+    ending_text = _extract_ending_anchor(content, max_chars=max_chars)
+    if not ending_text:
+        return
 
     ctx.previous_chapter_ending = PreviousChapterEndingInfo(
         id=str(chapter.id),
@@ -962,6 +970,42 @@ async def _load_previous_chapter_ending(
         ending_text=ending_text,
     )
 
+
+
+def _extract_ending_anchor(content: str, *, max_chars: int = 220) -> str:
+    """提取上一章的短结尾锚点，避免把前文正文当作生成素材注入。
+
+    优先取最后一个非空段落；段落过长时保留最后若干句；仍过长或没有明显句界时，
+    只截取末尾 max_chars 字符。
+    """
+    import re
+
+    text = (content or "").strip()
+    if not text:
+        return ""
+
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n|\r\n\s*\r\n", text) if part.strip()]
+    candidate = paragraphs[-1] if paragraphs else text
+    if len(candidate) <= max_chars:
+        return candidate
+
+    sentence_parts = re.findall(r"[^。！？!?；;\n]+[。！？!?；;]?", candidate)
+    tail_sentences: list[str] = []
+    total = 0
+    for sentence in reversed([part.strip() for part in sentence_parts if part.strip()]):
+        next_total = total + len(sentence)
+        if tail_sentences and next_total > max_chars:
+            break
+        tail_sentences.append(sentence)
+        total = next_total
+        if total >= max_chars:
+            break
+    if tail_sentences:
+        compact = "".join(reversed(tail_sentences)).strip()
+        if compact:
+            return compact[-max_chars:] if len(compact) > max_chars else compact
+
+    return candidate[-max_chars:]
 
 async def _load_previous_chapters(
     db: AsyncSession, project_id: str, current_seq: int, ctx: ChapterContext

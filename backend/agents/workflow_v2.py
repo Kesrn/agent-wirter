@@ -76,6 +76,7 @@ class CreativeStateV2(TypedDict, total=False):
     selected_world_entry_ids: list[str]
     selected_hidden_thread_ids: list[str]
     include_knowledge_sources: bool
+    include_previous_summary: bool
     excluded_context_keys: list[str]
     target_words: int
     selected_direction: str
@@ -319,7 +320,7 @@ async def chapter_architect_node(state: CreativeStateV2) -> dict:
         state, node_name="chapter_architect", role_type="writer", skill_dir="chapter-architect",
     )
     base_prompt = (
-        "你是章节策划师。根据大纲、前文和设定产出结构化章节任务卡。"
+        "你是章节策划师。根据本章大纲、上章结尾锚点/可用前文摘要和设定产出结构化章节任务卡。"
         "只输出 ChapterTaskCard JSON，包含 chapter_number/chapter_title/core_task/"
         "opening_anchor/scenes[]/character_goals[]/information_rules/tension_design/word_budget/forbidden[]。"
         "所有字符串必须是合法 JSON；若内容需要换行，请使用 \\n 转义，不得在引号内直接换行。"

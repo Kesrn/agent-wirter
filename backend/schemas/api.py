@@ -270,6 +270,7 @@ class GenerateRequest(BaseModel):
     selected_world_entry_ids: list[str] | None = None
     selected_hidden_thread_ids: list[str] | None = None
     include_knowledge_sources: bool = False
+    include_previous_summary: bool = False
     target_words: int | None = None
     selected_direction: str | None = None
     direction_option_id: str | None = None

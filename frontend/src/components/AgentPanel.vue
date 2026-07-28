@@ -201,7 +201,7 @@ const showDirectionPicker = ref(false)
 const directionOptions = ref<Array<{ id: string; title: string; description: string; risk: string }>>([])
 const directionLoading = ref(false)
 let pendingContextPick: {
-  outlineIds: string[]; characterIds: string[]; worldEntryIds: string[]; hiddenThreadIds: string[]; targetWords: number; userNote: string; includeKnowledgeSources: boolean
+  outlineIds: string[]; characterIds: string[]; worldEntryIds: string[]; hiddenThreadIds: string[]; targetWords: number; userNote: string; includeKnowledgeSources: boolean; includePreviousSummary: boolean
 } | null = null
 
 async function fetchAndShowDirections() {
@@ -246,6 +246,7 @@ function handleDirectionConfirm(_directionId: string, directionTitle: string, us
     combinedUserNote,
     directionTitle, // selectedDirection
     pendingContextPick.includeKnowledgeSources,
+    pendingContextPick.includePreviousSummary,
   )
   pendingContextPick = null
 }
@@ -266,6 +267,7 @@ function handleDirectionSkip() {
     pendingContextPick.userNote,
     undefined,
     pendingContextPick.includeKnowledgeSources,
+    pendingContextPick.includePreviousSummary,
   )
   pendingContextPick = null
 }
@@ -531,14 +533,14 @@ function handleArticleCancel() {
   showArticleParams.value = false
 }
 
-function handleContextConfirm(outlineIds: string[], characterIds: string[], worldEntryIds: string[], hiddenThreadIds: string[], targetWords: number, userNote: string, includeKnowledgeSources: boolean) {
+function handleContextConfirm(outlineIds: string[], characterIds: string[], worldEntryIds: string[], hiddenThreadIds: string[], targetWords: number, userNote: string, includeKnowledgeSources: boolean, includePreviousSummary: boolean) {
   showContextPicker.value = false
-  pendingContextPick = { outlineIds, characterIds, worldEntryIds, hiddenThreadIds, targetWords, userNote, includeKnowledgeSources }
+  pendingContextPick = { outlineIds, characterIds, worldEntryIds, hiddenThreadIds, targetWords, userNote, includeKnowledgeSources, includePreviousSummary }
   // full_pipeline 直接生成，不走 DirectionPicker（v2 由 Clarification Loop 负责生成前提问）
   if (pendingMode.value === 'full_pipeline') {
     expertStore.startGenerating(pid.value)
     expertStore.setWorkflowSteps(pid.value, defaultWorkflow.map(s => ({ ...s, status: 'pending' as const })))
-    runGenerateStream(outlineIds, characterIds, worldEntryIds, hiddenThreadIds, targetWords, undefined, undefined, userNote, undefined, includeKnowledgeSources)
+    runGenerateStream(outlineIds, characterIds, worldEntryIds, hiddenThreadIds, targetWords, undefined, undefined, userNote, undefined, includeKnowledgeSources, includePreviousSummary)
     pendingContextPick = null
   } else {
     fetchAndShowDirections()
@@ -750,6 +752,7 @@ async function runGenerateStream(
   userNote?: string,
   selectedDirection?: string,
   includeKnowledgeSources?: boolean,
+  includePreviousSummary?: boolean,
 ) {
   const unit = currentWritingUnit.value
   if (!unit) {
@@ -782,6 +785,7 @@ async function runGenerateStream(
         selected_world_entry_ids: selectedWorldEntryIds,
         selected_hidden_thread_ids: selectedHiddenThreadIds,
         include_knowledge_sources: includeKnowledgeSources,
+        include_previous_summary: includePreviousSummary,
         target_words: targetWords,
         enhance_direction: enhanceDirection,
         turn_direction: turnDirection,

@@ -838,6 +838,7 @@ export interface GenerateRequest {
   selected_world_entry_ids?: string[]
   selected_hidden_thread_ids?: string[]
   include_knowledge_sources?: boolean
+  include_previous_summary?: boolean
   target_words?: number
   selected_direction?: string
   direction_option_id?: string

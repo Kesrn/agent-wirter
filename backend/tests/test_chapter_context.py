@@ -702,6 +702,46 @@ class TestFormatChapterContext:
         assert "## 上章定稿结尾锚点" in text
         assert "上章定稿结尾锚点。" in text
 
+    def test_full_pipeline_includes_previous_summary_only_when_user_opts_in(self):
+        """完整章节生成默认不带前文摘要；勾选后才注入最近定稿摘要。"""
+        pid = _create_project("前文摘要可选注入")
+        _create_chapter(
+            pid,
+            "第一章",
+            1,
+            "PREVIOUS_SUMMARY_OPT_IN_MARKER：主角在雨夜立下誓言。" + "B" * 700 + "上一章最后一句。",
+        )
+        _finalize_chapter(pid, 1)
+        _create_chapter(pid, "第二章", 2, "CURRENT_DRAFT_STILL_MUST_NOT_ENTER_PROMPT")
+        _create_outline(pid, 2, "第二章大纲", "本章只按大纲展开", "新危机出现")
+
+        async def _build(include_previous_summary: bool):
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(
+                    session,
+                    pid,
+                    2,
+                    intent="full_pipeline",
+                    include_previous_summary=include_previous_summary,
+                )
+                return ctx, format_chapter_context_for_prompt(ctx)
+
+        without_ctx, without_text = asyncio.new_event_loop().run_until_complete(_build(False))
+        with_ctx, with_text = asyncio.new_event_loop().run_until_complete(_build(True))
+
+        assert without_ctx.previous_chapters == []
+        assert "## 前文摘要" not in without_text
+        assert "PREVIOUS_SUMMARY_OPT_IN_MARKER" not in without_text
+        assert "## 上章定稿结尾锚点" in without_text
+        assert "上一章最后一句。" in without_text
+
+        assert [item.sequence_number for item in with_ctx.previous_chapters] == [1]
+        assert "## 前文摘要" in with_text
+        assert "PREVIOUS_SUMMARY_OPT_IN_MARKER" in with_text
+        assert "CURRENT_DRAFT_STILL_MUST_NOT_ENTER_PROMPT" not in with_text
+        assert "## 本章大纲" in with_text
+        assert "本章只按大纲展开" in with_text
+
     def test_continue_keeps_current_draft_snippet(self):
         """续写模式仍需读取当前正文，避免 full_pipeline 修复误伤续写。"""
         pid = _create_project("续写上下文保留")
@@ -791,9 +831,9 @@ class TestOpeningAnchor:
     """K-1: opening_anchor 自动提取测试"""
 
     def test_previous_chapter_ending_uses_tail_text(self):
-        """上章结尾锚点应取上一章正文末尾，不是开头。"""
+        """上章结尾锚点应取短尾部锚点，不是开头或长段旧文。"""
         pid = _create_project("上章结尾锚点测试")
-        _create_chapter(pid, "第一章", 1, "A" * 800)  # 800 字，取后 500
+        _create_chapter(pid, "第一章", 1, "START_SHOULD_NOT_APPEAR" + "A" * 800)
         _create_chapter(pid, "第二章", 2)
         _finalize_chapter(pid, 1)
 
@@ -806,9 +846,10 @@ class TestOpeningAnchor:
         assert ctx.previous_chapter_ending is not None
         assert ctx.previous_chapter_ending.sequence_number == 1
         assert ctx.previous_chapter_ending.title == "第一章"
-        # 应取末尾 500 字，不是开头
-        assert len(ctx.previous_chapter_ending.ending_text) == 500
-        assert ctx.previous_chapter_ending.ending_text.startswith("A" * 300)  # 800 - 500 = 300 offset
+        # 应取精简尾部锚点，不是开头，也不是完整前文
+        assert len(ctx.previous_chapter_ending.ending_text) == 220
+        assert ctx.previous_chapter_ending.ending_text == "A" * 220
+        assert "START_SHOULD_NOT_APPEAR" not in ctx.previous_chapter_ending.ending_text
 
         prompt = format_chapter_context_for_prompt(ctx)
         assert "## 上章定稿结尾锚点" in prompt

@@ -13,7 +13,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  confirm: [outlineIds: string[], characterIds: string[], worldEntryIds: string[], hiddenThreadIds: string[], targetWords: number, userNote: string, includeKnowledgeSources: boolean]
+  confirm: [outlineIds: string[], characterIds: string[], worldEntryIds: string[], hiddenThreadIds: string[], targetWords: number, userNote: string, includeKnowledgeSources: boolean, includePreviousSummary: boolean]
   cancel: []
 }>()
 
@@ -70,6 +70,7 @@ const selectedHiddenThreads = ref<string[]>(
 const targetWords = ref(2000)
 const userNote = ref('')
 const includeKnowledgeSources = ref(false)
+const includePreviousSummary = ref(false)
 
 const openSections = ref({ outlines: true, characters: false, worldEntries: false, hiddenThreads: false })
 
@@ -135,6 +136,7 @@ function handleConfirm() {
     targetWords.value,
     userNote.value.trim(),
     includeKnowledgeSources.value,
+    includePreviousSummary.value,
   )
 }
 </script>
@@ -244,6 +246,14 @@ function handleConfirm() {
             rows="4"
             placeholder="可选。例如：更强调主角心理变化；节奏快一点；少用旁白，多写动作和对话；不要提前揭示反派身份..."
           ></textarea>
+        </div>
+
+        <div class="knowledge-source-option">
+          <label class="knowledge-toggle">
+            <input v-model="includePreviousSummary" type="checkbox" />
+            <span>加入前文摘要</span>
+          </label>
+          <p>默认不加入前文摘要。勾选后才会把最近 3 章定稿摘要放进本次上下文；上章结尾锚点始终保留。</p>
         </div>
 
         <div class="knowledge-source-option">

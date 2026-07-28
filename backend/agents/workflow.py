@@ -74,6 +74,7 @@ class CreativeState(TypedDict):
     selected_world_entry_ids: list[str]  # 用户选中的世界观 ID
     selected_hidden_thread_ids: list[str]  # 用户选中的暗线 ID
     include_knowledge_sources: bool  # 是否将资料库 project_sources 注入上下文
+    include_previous_summary: bool  # full_pipeline 是否显式注入最近三章前文摘要
     excluded_context_keys: list[str]  # L-3: 本次生成明确排除的上下文条目
     target_words: int  # 目标字数
     selected_direction: str  # 用户选择的剧情走向（从 DirectionPicker 传入）
@@ -333,6 +334,7 @@ async def context_loader_node(state: CreativeState) -> dict:
                     selected_world_entry_ids=selected_world_entries or None,
                     selected_hidden_thread_ids=selected_hidden_threads or None,
                     include_knowledge_sources=bool(state.get("include_knowledge_sources", False)),
+                    include_previous_summary=bool(state.get("include_previous_summary", False)),
                 )
                 context_summary = ctx.context_summary(
                     selected_outline_ids=selected_outlines,
