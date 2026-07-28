@@ -617,6 +617,106 @@ class TestChapterContextService:
 class TestFormatChapterContext:
     """format_chapter_context_for_prompt 测试"""
 
+    def test_full_pipeline_excludes_local_article_material_but_keeps_chapter_materials(self):
+        """完整章节生成只传本章资料和前章结尾，不把本地旧文/资料库/记忆送入 Prompt。"""
+        pid = _create_project("完整生成上下文隔离")
+        _create_chapter(
+            pid,
+            "第一章",
+            1,
+            "PREVIOUS_FULL_ARTICLE_MUST_NOT_ENTER_PROMPT。" + "A" * 600 + "上章定稿结尾锚点。",
+        )
+        _finalize_chapter(pid, 1)
+        _create_chapter(pid, "第二章", 2, "CURRENT_DRAFT_MUST_NOT_ENTER_PROMPT")
+        _create_outline(pid, 2, "第二章大纲", "按既定大纲生成完整第二章", "本章转折")
+        char_id = _create_character(pid, "本章主角", "protagonist", "严格遵循人物设定")
+        _create_character_event(pid, char_id, 2, "执行本章事件", importance=5)
+        _create_world_entry(pid, "本章设定", "rule", "global", "不可违反的世界规则")
+        _create_source(
+            pid,
+            title="SHOULD_NOT_INJECT_FANFIC_RULE",
+            source_type="fanfic_rule",
+            content="FANFIC_RULE_LOCAL_ARTICLE_MUST_NOT_ENTER_PROMPT",
+            always_inject=True,
+        )
+        _create_source(
+            pid,
+            title="SHOULD_NOT_INJECT_SOURCE",
+            source_type="upload",
+            content="SOURCE_LOCAL_ARTICLE_MUST_NOT_ENTER_PROMPT",
+            always_inject=True,
+        )
+
+        async def _run():
+            from models.writing_memory_staging import WritingMemoryStaging
+            from models.harness_enums import MemoryStagingStatus, MemoryType
+
+            async with test_session_factory() as session:
+                session.add(WritingMemoryStaging(
+                    project_id=pid,
+                    memory_type=MemoryType.PLOT_FACT,
+                    title="SHOULD_NOT_INJECT_CONFIRMED_MEMORY",
+                    payload={"content": "MEMORY_LOCAL_ARTICLE_MUST_NOT_ENTER_PROMPT"},
+                    evidence="MEMORY_EVIDENCE_MUST_NOT_ENTER_PROMPT",
+                    status=MemoryStagingStatus.CONFIRMED,
+                    chapter_sequence_number=1,
+                ))
+                await session.commit()
+
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(
+                    session,
+                    pid,
+                    2,
+                    intent="full_pipeline",
+                    user_query="本章主角",
+                    include_knowledge_sources=True,
+                )
+                return ctx, format_chapter_context_for_prompt(ctx)
+
+        ctx, text = asyncio.new_event_loop().run_until_complete(_run())
+
+        assert ctx.chapter is not None
+        assert ctx.chapter.content_snippet == ""
+        assert ctx.previous_chapters == []
+        assert ctx.fanfic_rules == []
+        assert ctx.retrieved_sources == []
+        assert ctx.confirmed_memories == []
+        assert "CURRENT_DRAFT_MUST_NOT_ENTER_PROMPT" not in text
+        assert "PREVIOUS_FULL_ARTICLE_MUST_NOT_ENTER_PROMPT" not in text
+        assert "SOURCE_LOCAL_ARTICLE_MUST_NOT_ENTER_PROMPT" not in text
+        assert "FANFIC_RULE_LOCAL_ARTICLE_MUST_NOT_ENTER_PROMPT" not in text
+        assert "MEMORY_LOCAL_ARTICLE_MUST_NOT_ENTER_PROMPT" not in text
+        assert "MEMORY_EVIDENCE_MUST_NOT_ENTER_PROMPT" not in text
+        assert "SHOULD_NOT_INJECT" not in text
+        assert "已有正文片段" not in text
+        assert "## 前文摘要" not in text
+        assert "## 同人规则" not in text
+        assert "## 检索资料" not in text
+        assert "## 已确认记忆" not in text
+        assert "## 本章大纲" in text
+        assert "按既定大纲生成完整第二章" in text
+        assert "## 本章角色" in text
+        assert "## 本章角色事件" in text
+        assert "## 相关设定" in text
+        assert "## 上章定稿结尾锚点" in text
+        assert "上章定稿结尾锚点。" in text
+
+    def test_continue_keeps_current_draft_snippet(self):
+        """续写模式仍需读取当前正文，避免 full_pipeline 修复误伤续写。"""
+        pid = _create_project("续写上下文保留")
+        _create_chapter(pid, "第一章", 1, "CONTINUE_FROM_THIS_DRAFT")
+
+        async def _run():
+            async with test_session_factory() as session:
+                ctx = await build_chapter_context(session, pid, 1, intent="continue")
+                return format_chapter_context_for_prompt(ctx)
+
+        text = asyncio.new_event_loop().run_until_complete(_run())
+
+        assert "已有正文片段" in text
+        assert "CONTINUE_FROM_THIS_DRAFT" in text
+
     def test_format_includes_all_sections(self):
         """格式化输出包含所有 section"""
         pid = _create_project("格式化测试")

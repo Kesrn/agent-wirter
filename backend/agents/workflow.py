@@ -366,6 +366,13 @@ async def context_loader_node(state: CreativeState) -> dict:
             "context": "(本次生成未加载上下文：当前 fallback 路径不支持逐项排除)",
             "context_summary": {"excluded_context_keys": excluded_context_keys},
         }
+    if (state.get("mode", "") or "").lower() == "full_pipeline" and chapter_num:
+        # full_pipeline 的硬边界是“只传结构化本章资料 + 上章结尾锚点”。
+        # 如果 ChapterContextService 异常，不允许落回旧 RAG/最近三章正文路径，否则会再次把本地文章送入模型。
+        return {
+            "context": "(本次生成未加载旧 fallback 上下文：full_pipeline 严格模式禁止注入本地前文、旧稿或资料库正文；请检查 ChapterContextService 异常日志)",
+            "context_summary": {"excluded_context_keys": list(state.get("excluded_context_keys", []) or []), "strict_full_pipeline": True},
+        }
     logger.info(f"context_loader fallback: outlines={selected_outlines}, chars={selected_characters}, we={selected_world_entries}, has_selections={has_selections}")
 
     if has_selections:

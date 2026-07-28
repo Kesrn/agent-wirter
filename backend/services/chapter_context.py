@@ -494,6 +494,11 @@ async def build_chapter_context(
 
     pid = str(project_id) if isinstance(project_id, _uuid.UUID) else project_id
     seq = chapter_sequence_number
+    normalized_intent = (intent or "").lower()
+    # full_pipeline 是“按本章结构化资料重新生成完整章节”的严格模式。
+    # 为避免模型抄/仿本地旧文，这里只允许注入：本章大纲、角色、角色事件、设定/暗线/长线结构、上章结尾锚点。
+    # 不注入当前章旧稿、最近三章前文摘要、资料库检索正文、已确认写作记忆。
+    is_strict_full_generation = normalized_intent == "full_pipeline"
 
     # ChapterContext 是结构化中间结果：先按数据类型聚合，最后再由
     # format_chapter_context_for_prompt 转成 prompt 文本。这样前端也能直接拿 ctx.to_dict()
@@ -502,7 +507,9 @@ async def build_chapter_context(
     stats = ctx.stats
 
     # ── 当前章节 ──
-    # 当前章节只取前 500 字作为 snippet，避免用户正在编辑的大段正文把 prompt 挤爆。
+    # full_pipeline 表示“按本章资料重新生成完整章节”，不能把当前草稿正文送入
+    # clarification / architect / writer，否则模型很容易把任务理解成在旧稿上续写或
+    # 仿写。continue / enhance / summarize 仍保留正文片段，供对应模式参考。
     from models.chapter import Chapter
 
     chapter = (
@@ -515,7 +522,7 @@ async def build_chapter_context(
     ).scalar_one_or_none()
 
     if chapter:
-        content_snippet = (chapter.content or "")[:500]
+        content_snippet = "" if is_strict_full_generation else (chapter.content or "")[:500]
         ctx.chapter = ChapterInfo(
             id=str(chapter.id),
             sequence_number=chapter.sequence_number,
@@ -543,7 +550,10 @@ async def build_chapter_context(
     await _load_world_entries(db, pid, ctx, stats)
 
     # ── 前文 ──
-    await _load_previous_chapters(db, pid, seq, ctx)
+    # full_pipeline 只保留“上章结尾锚点”（见下方 _load_previous_chapter_ending），
+    # 不再注入最近 3 章前文摘要，避免模型把本地旧文当作续写/仿写素材。
+    if not is_strict_full_generation:
+        await _load_previous_chapters(db, pid, seq, ctx)
 
     # ── 用户显式选择的条目（追加） ──
     # 显式选择不替代自动聚合，而是额外追加。用户选中某个角色/设定，意味着希望本章重点参考。
@@ -562,12 +572,14 @@ async def build_chapter_context(
     # ── 接入 project_sources（同人规则 + 检索资料）：默认关闭，避免资料库污染本章 prompt ──
     # 普通知识库资料量可能很大、来源复杂，默认不注入可以减少无关材料影响写作。
     # 用户显式打开 include_knowledge_sources 时，再把 always_inject 和检索命中资料加入 prompt。
-    if include_knowledge_sources:
+    if include_knowledge_sources and not is_strict_full_generation:
         await _load_project_sources(db, pid, ctx, stats, user_query=user_query)
 
     # ── 已确认记忆（H3b）──
     # 生成后 story-recorder/memory-curator 提炼出的写作记忆，经用户确认后才会注入。
-    await _load_confirmed_memories(db, pid, seq, ctx, stats)
+    # full_pipeline 严格模式下也不注入，避免“由旧正文提炼出的记忆”把本地文章内容带回 prompt。
+    if not is_strict_full_generation:
+        await _load_confirmed_memories(db, pid, seq, ctx, stats)
 
     # ── 上章结尾锚点（K-1）──
     await _load_previous_chapter_ending(db, pid, seq, ctx)
@@ -1309,7 +1321,7 @@ def format_chapter_context_for_prompt(context: ChapterContext) -> str:
         )
         if context.chapter.content_snippet.strip():
             chapter_text += (
-                "\n已有正文片段（仅作本章草稿参考，不作为续写起点）：\n"
+                "\n已有正文片段：\n"
                 f"{context.chapter.content_snippet}"
             )
         else:
