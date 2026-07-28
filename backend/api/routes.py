@@ -5356,6 +5356,11 @@ async def resume_chapter_generation(
                         await db.commit()
 
                 # 继续执行（从 chapter_writer 开始）
+                if _resume_run:
+                    await mark_running(db, _resume_run)
+                    await db.commit()
+                    yield f"event: run_status\ndata: {json.dumps({'run_id': _resume_run_id, 'status': 'RUNNING'}, ensure_ascii=False)}\n\n"
+
                 resumed_content = ""
                 resume_skill_packs = list(current_values.get("skill_packs") or [])
                 seen_skill_pack_keys = {
@@ -5367,22 +5372,35 @@ async def resume_chapter_generation(
                 resume_stream = app.astream_events(None, config=config, version="v2")
                 resume_iter = resume_stream.__aiter__()
                 while True:
-                    try:
-                        event = await asyncio.wait_for(resume_iter.__anext__(), timeout=180)
-                    except StopAsyncIteration:
+                    wait_started_at = asyncio.get_running_loop().time()
+                    while True:
+                        try:
+                            event = await asyncio.wait_for(resume_iter.__anext__(), timeout=25)
+                            break
+                        except StopAsyncIteration:
+                            event = None
+                            break
+                        except asyncio.TimeoutError:
+                            elapsed = asyncio.get_running_loop().time() - wait_started_at
+                            if elapsed >= 180:
+                                logger.warning(
+                                    "task_card approve resume timed out waiting for workflow event: thread_id=%s next=%s",
+                                    thread_id,
+                                    post_next,
+                                )
+                                aclose = getattr(resume_stream, "aclose", None)
+                                if aclose:
+                                    await aclose()
+                                await _discard_resume_run("正文创作阶段超时")
+                                yield f"event: error\ndata: {json.dumps({'message': '正文创作节点超过 180 秒没有响应，请稍后重试或检查模型服务'}, ensure_ascii=False)}\n\n"
+                                return
+                            yield f"event: progress\ndata: {json.dumps({'message': '正文创作/审稿仍在执行，请稍候'}, ensure_ascii=False)}\n\n"
+                            if await request.is_disconnected():
+                                logger.info("客户端已断开连接，取消恢复生成")
+                                await _discard_resume_run("客户端断开连接")
+                                return
+                    if event is None:
                         break
-                    except asyncio.TimeoutError:
-                        logger.warning(
-                            "task_card approve resume timed out waiting for workflow event: thread_id=%s next=%s",
-                            thread_id,
-                            post_next,
-                        )
-                        aclose = getattr(resume_stream, "aclose", None)
-                        if aclose:
-                            await aclose()
-                        await _discard_resume_run("正文创作阶段超时")
-                        yield f"event: error\ndata: {json.dumps({'message': '正文创作节点超过 180 秒没有响应，请稍后重试或检查模型服务'}, ensure_ascii=False)}\n\n"
-                        return
                     if await request.is_disconnected():
                         logger.info("客户端已断开连接，取消恢复生成")
                         await _discard_resume_run("客户端断开连接")
@@ -5434,6 +5452,10 @@ async def resume_chapter_generation(
                                 resumed_content,
                                 {**current_values, **update_state, "skill_packs": resume_skill_packs},
                             )
+                            if _resume_run:
+                                await mark_waiting_human(db, _resume_run, step_name="human_review", thread_id=thread_id)
+                                await db.commit()
+                                yield f"event: run_status\ndata: {json.dumps({'run_id': _resume_run_id, 'status': 'WAITING_HUMAN'}, ensure_ascii=False)}\n\n"
                             yield _generation_record_event(record_id)
                             yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
                             return
@@ -5446,6 +5468,10 @@ async def resume_chapter_generation(
                         resumed_content,
                         {**current_values, **update_state, "skill_packs": resume_skill_packs},
                     )
+                    if _resume_run:
+                        await mark_waiting_human(db, _resume_run, step_name="human_review", thread_id=thread_id)
+                        await db.commit()
+                        yield f"event: run_status\ndata: {json.dumps({'run_id': _resume_run_id, 'status': 'WAITING_HUMAN'}, ensure_ascii=False)}\n\n"
                     yield _generation_record_event(record_id)
                     yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
                     return
@@ -5454,6 +5480,10 @@ async def resume_chapter_generation(
                     resumed_content,
                     {**current_values, **update_state, "skill_packs": resume_skill_packs},
                 )
+                if _resume_run:
+                    await mark_completed(db, _resume_run)
+                    await db.commit()
+                    yield f"event: run_status\ndata: {json.dumps({'run_id': _resume_run_id, 'status': 'COMPLETED'}, ensure_ascii=False)}\n\n"
                 yield _generation_record_event(record_id)
                 yield f"event: done\ndata: {json.dumps({'message': '任务卡确认，生成完成'}, ensure_ascii=False)}\n\n"
                 return
