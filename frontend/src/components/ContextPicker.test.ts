@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import source from './ContextPicker.vue?raw'
+import agentPanelSource from './AgentPanel.vue?raw'
 
 // 由于现有测试环境无 DOM（无 @vue/test-utils / happy-dom），这里沿用源码断言
 // 的方式（与 writingEditorLayout.test.ts 一致），验证默认选择逻辑存在且正确。
@@ -52,5 +53,24 @@ describe('ContextPicker knowledge source option', () => {
 
   it('emits includeKnowledgeSources when confirming generation', () => {
     expect(scriptBlock).toContain('includeKnowledgeSources.value')
+  })
+})
+
+
+describe('ContextPicker current-chapter scope', () => {
+  it('receives only current chapter materials from AgentPanel', async () => {
+    expect(agentPanelSource).toContain('const currentChapterOutlines = computed')
+    expect(agentPanelSource).toContain('const currentChapterCharacters = computed')
+    expect(agentPanelSource).toContain('const currentChapterWorldEntries = computed')
+    expect(agentPanelSource).toContain('const currentChapterHiddenThreads = computed')
+    expect(agentPanelSource).toContain(':outlines="currentChapterOutlines"')
+    expect(agentPanelSource).toContain(':characters="currentChapterCharacters"')
+    expect(agentPanelSource).toContain(':world-entries="currentChapterWorldEntries"')
+    expect(agentPanelSource).toContain(':hidden-threads="currentChapterHiddenThreads"')
+  })
+
+  it('filters characters by appeared events in the current chapter', async () => {
+    expect(agentPanelSource).toContain('event.chapter_sequence_number === currentUnitPosition.value')
+    expect(agentPanelSource).toContain('&& event.appeared')
   })
 })

@@ -126,7 +126,9 @@ def test_full_pipeline_leaves_run_and_steps():
             )).scalars().all()
             assert len(logs) >= 1
             log_agents = {l.agent_name for l in logs}
-            assert "writer" in log_agents or any("expert" in a for a in log_agents), f"writer/expert log missing: {log_agents}"
+            assert "chapter_writer" in log_agents or "writer" in log_agents or any("expert" in a for a in log_agents), (
+                f"writer/expert log missing: {log_agents}"
+            )
             for l in logs:
                 assert l.latency_ms is not None
                 assert l.rendered_prompt_snapshot is not None

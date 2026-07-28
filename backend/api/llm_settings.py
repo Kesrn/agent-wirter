@@ -1,42 +1,34 @@
-"""LLM 设置路由。
+"""LLM 多供应商配置路由。
 
-用户可以在设置页保存自己的模型供应商、base_url、model_id 和 API Key。
-运行生成任务时，api/llm_deps.py 会优先读取用户配置；如果用户未配置，
-再回退到 config/settings.py 中的全局默认值。
-
-安全策略：
-- API Key 使用 Fernet 加密后存库；
-- 任何 GET/status 接口只返回 api_key_set/has_api_key 布尔值；
-- 不把明文或密文 API Key 返回给前端。
+每个用户可以保存多个配置档案，并手动指定其中一条为当前启用配置。API Key
+始终以 Fernet 密文保存；返回给前端的只有是否已设置和安全掩码。
 """
 
-import json
 import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
+from api.auth import get_current_user
+from api.rate_limiter import auth_limiter
+from config.settings import settings
 from db.session import get_db
 from models.llm_config import LLMConfig
 from schemas.api import (
-    LLMConfigCreate, LLMConfigUpdate, LLMConfigResponse,
-    ModelListRequest, ModelInfo,
+    AuthUser,
+    LLMConfigCreate,
+    LLMConfigUpdate,
+    ModelInfo,
+    ModelListRequest,
 )
-from api.auth import get_current_user
-from api.rate_limiter import auth_limiter
-from schemas.api import AuthUser
-from utils.crypto import encrypt_api_key, decrypt_api_key
-from config.settings import settings
+from utils.crypto import decrypt_api_key, encrypt_api_key
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/api")
 
 PROVIDER_BASE_URLS = {
-    # 这些厂商都提供 OpenAI 兼容接口，因此后端可以复用同一套 OpenAI SDK 调用逻辑。
-    # custom 场景由用户手动填写 base_url，不放在这里。
     "openai": "https://api.openai.com/v1",
     "deepseek": "https://api.deepseek.com/v1",
     "siliconflow": "https://api.siliconflow.cn/v1",
@@ -48,24 +40,112 @@ PROVIDER_BASE_URLS = {
 }
 
 
-def _api_key_is_available(encrypted_key: str | None) -> bool:
-    """判断数据库里的加密 API Key 是否可用。
-
-    解密失败时返回 False，而不是把异常抛到前端。常见原因是 JWT_SECRET 变了，
-    旧密文无法用新的派生密钥解密。
-    """
+def _read_api_key(encrypted_key: str | None) -> str | None:
     if not encrypted_key:
-        return False
+        return None
     try:
-        return bool(decrypt_api_key(encrypted_key))
+        return decrypt_api_key(encrypted_key) or None
     except Exception:
         logger.warning("API Key 解密失败，将配置标记为未设置")
-        return False
+        return None
+
+
+def _api_key_is_available(encrypted_key: str | None) -> bool:
+    return bool(_read_api_key(encrypted_key))
+
+
+def _mask_plain_api_key(api_key: str | None) -> str | None:
+    if not api_key:
+        return None
+    prefix = "sk-" if api_key.startswith("sk-") else ""
+    suffix = api_key[-4:] if len(api_key) >= 4 else ""
+    return f"{prefix}{'•' * 12}{suffix}"
+
+
+def _mask_api_key(encrypted_key: str | None) -> str | None:
+    return _mask_plain_api_key(_read_api_key(encrypted_key))
 
 
 def _user_uuid(user: AuthUser) -> uuid.UUID:
-    """AuthUser 为接口响应友好的 str，这里转回数据库使用的 UUID。"""
     return uuid.UUID(user.id)
+
+
+def _serialize_config(config: LLMConfig) -> dict:
+    return {
+        "id": str(config.id),
+        "name": config.name,
+        "provider": config.provider,
+        "api_key_set": _api_key_is_available(config.encrypted_api_key),
+        "api_key_masked": _mask_api_key(config.encrypted_api_key),
+        "base_url": config.base_url,
+        "model_id": config.model_id,
+        "is_active": bool(config.is_active),
+        "source": "user",
+        "created_at": config.created_at.isoformat() if config.created_at else None,
+        "updated_at": config.updated_at.isoformat() if config.updated_at else None,
+    }
+
+
+def _environment_config() -> dict:
+    return {
+        "id": None,
+        "name": "环境变量默认配置",
+        "provider": settings.LLM_PROVIDER,
+        "api_key_set": bool(settings.LLM_API_KEY),
+        "api_key_masked": _mask_plain_api_key(settings.LLM_API_KEY),
+        "base_url": settings.LLM_BASE_URL or None,
+        "model_id": settings.LLM_MODEL,
+        "is_active": True,
+        "source": "environment",
+        "created_at": None,
+        "updated_at": None,
+    }
+
+
+async def _active_config(db: AsyncSession, user_id: uuid.UUID) -> LLMConfig | None:
+    result = await db.execute(
+        select(LLMConfig)
+        .where(LLMConfig.user_id == user_id, LLMConfig.is_active.is_(True))
+        .order_by(LLMConfig.updated_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _owned_config(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    config_id: uuid.UUID,
+) -> LLMConfig:
+    result = await db.execute(
+        select(LLMConfig).where(LLMConfig.id == config_id, LLMConfig.user_id == user_id)
+    )
+    config = result.scalar_one_or_none()
+    if not config:
+        raise HTTPException(status_code=404, detail="模型配置不存在")
+    return config
+
+
+async def _deactivate_all(db: AsyncSession, user_id: uuid.UUID) -> None:
+    await db.execute(
+        update(LLMConfig)
+        .where(LLMConfig.user_id == user_id, LLMConfig.is_active.is_(True))
+        .values(is_active=False)
+    )
+    await db.flush()
+
+
+def _apply_update(config: LLMConfig, req: LLMConfigUpdate) -> None:
+    if req.name is not None:
+        config.name = req.name.strip()
+    if req.provider is not None:
+        config.provider = req.provider
+    if req.api_key is not None:
+        config.encrypted_api_key = encrypt_api_key(req.api_key) if req.api_key else None
+    if "base_url" in req.model_fields_set:
+        config.base_url = req.base_url
+    if "model_id" in req.model_fields_set:
+        config.model_id = req.model_id
 
 
 @router.get("/llm-settings")
@@ -73,33 +153,111 @@ async def get_llm_settings(
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """读取当前用户的 LLM 配置。
+    """返回当前启用配置；没有用户配置时返回环境变量摘要。"""
+    auth_limiter.check(f"llm_settings:{user.id}")
+    config = await _active_config(db, _user_uuid(user))
+    return _serialize_config(config) if config else _environment_config()
 
-    有用户级配置时返回配置摘要；没有时返回环境变量默认值，让前端仍能展示
-    “当前将使用哪个 provider/model”。
-    """
+
+@router.get("/llm-settings/configs")
+async def list_llm_configs(
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """列出当前用户保存的全部供应商配置。"""
     auth_limiter.check(f"llm_settings:{user.id}")
     result = await db.execute(
-        select(LLMConfig).where(LLMConfig.user_id == _user_uuid(user))
+        select(LLMConfig)
+        .where(LLMConfig.user_id == _user_uuid(user))
+        .order_by(LLMConfig.is_active.desc(), LLMConfig.updated_at.desc())
     )
-    config = result.scalar_one_or_none()
-    if config:
-        return {
-            "id": str(config.id),
-            "provider": config.provider,
-            "api_key_set": _api_key_is_available(config.encrypted_api_key),
-            "base_url": config.base_url,
-            "model_id": config.model_id,
-            "created_at": config.created_at.isoformat(),
-            "updated_at": config.updated_at.isoformat(),
-        }
-    # 无配置时返回 env 默认值
-    return {
-        "provider": settings.LLM_PROVIDER,
-        "api_key_set": bool(settings.LLM_API_KEY),
-        "base_url": settings.LLM_BASE_URL or None,
-        "model_id": settings.LLM_MODEL,
-    }
+    return [_serialize_config(config) for config in result.scalars().all()]
+
+
+@router.post("/llm-settings/configs", status_code=201)
+async def create_llm_config(
+    req: LLMConfigCreate,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """新增配置档案；默认保存后立即切换为当前配置。"""
+    auth_limiter.check(f"llm_settings:{user.id}")
+    uid = _user_uuid(user)
+    if req.is_active:
+        await _deactivate_all(db, uid)
+    config = LLMConfig(
+        user_id=uid,
+        name=req.name.strip(),
+        provider=req.provider,
+        encrypted_api_key=encrypt_api_key(req.api_key) if req.api_key else None,
+        base_url=req.base_url,
+        model_id=req.model_id,
+        is_active=req.is_active,
+    )
+    db.add(config)
+    await db.commit()
+    await db.refresh(config)
+    return _serialize_config(config)
+
+
+@router.put("/llm-settings/configs/{config_id}")
+async def update_llm_config(
+    config_id: uuid.UUID,
+    req: LLMConfigUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    auth_limiter.check(f"llm_settings:{user.id}")
+    uid = _user_uuid(user)
+    config = await _owned_config(db, uid, config_id)
+    if req.is_active is True and not config.is_active:
+        await _deactivate_all(db, uid)
+        config.is_active = True
+    _apply_update(config, req)
+    await db.commit()
+    await db.refresh(config)
+    return _serialize_config(config)
+
+
+@router.post("/llm-settings/configs/{config_id}/activate")
+async def activate_llm_config(
+    config_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    auth_limiter.check(f"llm_settings:{user.id}")
+    uid = _user_uuid(user)
+    config = await _owned_config(db, uid, config_id)
+    await _deactivate_all(db, uid)
+    config.is_active = True
+    await db.commit()
+    await db.refresh(config)
+    return _serialize_config(config)
+
+
+@router.delete("/llm-settings/configs/{config_id}", status_code=204)
+async def delete_llm_config(
+    config_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    auth_limiter.check(f"llm_settings:{user.id}")
+    uid = _user_uuid(user)
+    config = await _owned_config(db, uid, config_id)
+    was_active = bool(config.is_active)
+    await db.delete(config)
+    await db.flush()
+    if was_active:
+        result = await db.execute(
+            select(LLMConfig)
+            .where(LLMConfig.user_id == uid)
+            .order_by(LLMConfig.updated_at.desc())
+            .limit(1)
+        )
+        replacement = result.scalar_one_or_none()
+        if replacement:
+            replacement.is_active = True
+    await db.commit()
 
 
 @router.put("/llm-settings")
@@ -108,85 +266,59 @@ async def upsert_llm_settings(
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """创建或更新当前用户的 LLM 配置。
-
-    api_key 字段有三种语义：
-    - None：不修改已有 key；
-    - ""：清空已有 key；
-    - 非空字符串：加密后覆盖保存。
-    """
+    """兼容旧客户端：更新当前启用配置；不存在时创建一条。"""
     auth_limiter.check(f"llm_settings:{user.id}")
-    result = await db.execute(
-        select(LLMConfig).where(LLMConfig.user_id == _user_uuid(user))
-    )
-    config = result.scalar_one_or_none()
-
-    if not config:
-        # 创建新配置
-        provider = req.provider or "mock"
-        encrypted_key = None
-        if req.api_key is not None and req.api_key != "":
-            encrypted_key = encrypt_api_key(req.api_key)
+    uid = _user_uuid(user)
+    config = await _active_config(db, uid)
+    if config is None:
+        provider = req.provider or settings.LLM_PROVIDER
         config = LLMConfig(
-            user_id=_user_uuid(user),
+            user_id=uid,
+            name=(req.name or f"{provider} 配置").strip(),
             provider=provider,
-            encrypted_api_key=encrypted_key,
+            encrypted_api_key=encrypt_api_key(req.api_key) if req.api_key else None,
             base_url=req.base_url,
             model_id=req.model_id,
+            is_active=True,
         )
         db.add(config)
     else:
-        # 更新已有配置
-        if req.provider is not None:
-            config.provider = req.provider
-        if req.api_key is not None:
-            if req.api_key == "":
-                config.encrypted_api_key = None
-            else:
-                config.encrypted_api_key = encrypt_api_key(req.api_key)
-        if req.base_url is not None:
-            config.base_url = req.base_url
-        if req.model_id is not None:
-            config.model_id = req.model_id
-
+        _apply_update(config, req)
     await db.commit()
     await db.refresh(config)
-    return {
-        "id": str(config.id),
-        "provider": config.provider,
-        "api_key_set": _api_key_is_available(config.encrypted_api_key),
-        "base_url": config.base_url,
-        "model_id": config.model_id,
-        "created_at": config.created_at.isoformat(),
-        "updated_at": config.updated_at.isoformat(),
-    }
+    return _serialize_config(config)
 
 
 @router.post("/llm-settings/models", response_model=list[ModelInfo])
 async def list_models(
     req: ModelListRequest,
+    db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """实时请求 provider 的 /models 列表，帮助用户检查 base_url/API Key 是否可用。
-
-    这个接口不落库，只用本次请求传入的 provider/base_url/api_key 试探模型列表。
-    """
+    """请求供应商模型列表；编辑已有档案时可复用其已保存密钥。"""
     auth_limiter.check(f"llm_settings:{user.id}")
-    base_url = req.base_url or PROVIDER_BASE_URLS.get(req.provider, "")
+    saved_config: LLMConfig | None = None
+    if req.config_id:
+        saved_config = await _owned_config(db, _user_uuid(user), req.config_id)
+
+    provider = req.provider or (saved_config.provider if saved_config else None)
+    if not provider or provider == "mock":
+        raise HTTPException(status_code=400, detail="请选择真实模型供应商")
+    api_key = req.api_key or (_read_api_key(saved_config.encrypted_api_key) if saved_config else None)
+    if not api_key:
+        raise HTTPException(status_code=400, detail="请填写 API Key 或选择已保存密钥的配置")
+    base_url = req.base_url or (saved_config.base_url if saved_config else None) or PROVIDER_BASE_URLS.get(provider, "")
     if not base_url:
         raise HTTPException(status_code=400, detail="无法确定 API base URL")
 
     try:
         from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=req.api_key, base_url=base_url, timeout=5.0)
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=5.0)
         resp = await client.models.list()
-        models = []
-        for m in resp.data:
-            models.append(ModelInfo(id=m.id, owned_by=getattr(m, "owned_by", None)))
-        return models
-    except Exception as e:
+        return [ModelInfo(id=model.id, owned_by=getattr(model, "owned_by", None)) for model in resp.data]
+    except Exception as exc:
         logger.exception("获取模型列表失败")
-        raise HTTPException(status_code=502, detail=f"获取模型列表失败: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"获取模型列表失败: {str(exc)}")
 
 
 @router.get("/llm-settings/status")
@@ -194,21 +326,21 @@ async def get_llm_status(
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """返回最小化状态，用于设置页或生成入口判断是否已配置可用模型。"""
     auth_limiter.check(f"llm_settings:{user.id}")
-    result = await db.execute(
-        select(LLMConfig).where(LLMConfig.user_id == _user_uuid(user))
-    )
-    config = result.scalar_one_or_none()
+    config = await _active_config(db, _user_uuid(user))
     if config:
         return {
             "has_config": True,
+            "config_id": str(config.id),
+            "config_name": config.name,
             "provider": config.provider,
             "model_id": config.model_id,
             "has_api_key": _api_key_is_available(config.encrypted_api_key),
         }
     return {
         "has_config": False,
+        "config_id": None,
+        "config_name": "环境变量默认配置",
         "provider": settings.LLM_PROVIDER,
         "model_id": settings.LLM_MODEL,
         "has_api_key": bool(settings.LLM_API_KEY),

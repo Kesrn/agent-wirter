@@ -204,9 +204,12 @@ class TestStoryRecordToFacts:
             "knowledge_state_changes": [{"description": "信息揭示"}],
         }
         facts = story_record_to_facts(record, chapter_seq=1)
-        # 所有都应该是 PLOT_FACT，不应有 EVENT
-        for f in facts:
-            assert f["memory_type"] == "PLOT_FACT"
+        # 普通事件/关系/知识是 PLOT_FACT；伏笔回收保留 FORESHADOWING 语义，
+        # 但不能退化成泛化 EVENT。
+        assert [f["memory_type"] for f in facts] == [
+            "PLOT_FACT", "PLOT_FACT", "FORESHADOWING", "PLOT_FACT",
+        ]
+        assert all(f["memory_type"] != "EVENT" for f in facts)
         assert len(facts) == 4  # events + relationship + foreshadowing_resolved + knowledge
 
     def test_empty_record_returns_empty(self):

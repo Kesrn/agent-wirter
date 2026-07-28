@@ -88,6 +88,90 @@ async def _ensure_incremental_columns(conn):
     await add_missing_columns("projects", {
         "overall_outline": "TEXT",
     })
+
+    # 028：一个用户可保存多条 LLM 配置，旧 SQLite 表的 user_id 带 UNIQUE，
+    # 仅 ADD COLUMN 无法移除该约束，因此需要安全重建一次表。
+    await add_missing_columns("llm_configs", {
+        "name": "VARCHAR(100)",
+        "is_active": "BOOLEAN NOT NULL DEFAULT 0",
+    })
+    await conn.execute(text(
+        "UPDATE llm_configs SET name = COALESCE(NULLIF(name, ''), provider || ' 配置') "
+        "WHERE name IS NULL OR name = ''"
+    ))
+    await conn.execute(text("""
+        UPDATE llm_configs
+        SET is_active = 1
+        WHERE rowid IN (
+            SELECT MIN(candidate.rowid)
+            FROM llm_configs candidate
+            WHERE NOT EXISTS (
+                SELECT 1 FROM llm_configs active
+                WHERE active.user_id = candidate.user_id AND active.is_active = 1
+            )
+            GROUP BY candidate.user_id
+        )
+    """))
+    # 部分升级或旧预览版本可能曾允许同一用户出现多条 active。先确定性保留
+    # 每个用户最早的一条，再创建部分唯一索引，避免桌面端启动时迁移失败。
+    await conn.execute(text("""
+        UPDATE llm_configs
+        SET is_active = 0
+        WHERE is_active = 1
+          AND rowid NOT IN (
+              SELECT MIN(active.rowid)
+              FROM llm_configs active
+              WHERE active.is_active = 1
+              GROUP BY active.user_id
+          )
+    """))
+
+    unique_user_index = False
+    index_rows = (await conn.execute(text("PRAGMA index_list(llm_configs)"))).fetchall()
+    for index_row in index_rows:
+        index_name = index_row[1]
+        is_unique = bool(index_row[2])
+        if not is_unique or index_name == "uq_llm_configs_active_user":
+            continue
+        index_columns = (await conn.execute(text(f"PRAGMA index_info('{index_name}')"))).fetchall()
+        if [row[2] for row in index_columns] == ["user_id"]:
+            unique_user_index = True
+            break
+
+    if unique_user_index:
+        await conn.execute(text("DROP TABLE IF EXISTS llm_configs_profiles_tmp"))
+        await conn.execute(text("""
+            CREATE TABLE llm_configs_profiles_tmp (
+                id CHAR(36) NOT NULL PRIMARY KEY,
+                user_id CHAR(36) NOT NULL,
+                name VARCHAR(100) NOT NULL,
+                provider VARCHAR(20) NOT NULL DEFAULT 'openai',
+                encrypted_api_key VARCHAR(500),
+                base_url VARCHAR(500),
+                model_id VARCHAR(100),
+                is_active BOOLEAN NOT NULL DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        await conn.execute(text("""
+            INSERT INTO llm_configs_profiles_tmp (
+                id, user_id, name, provider, encrypted_api_key, base_url, model_id,
+                is_active, created_at, updated_at
+            )
+            SELECT id, user_id, COALESCE(NULLIF(name, ''), provider || ' 配置'), provider,
+                   encrypted_api_key, base_url, model_id, is_active, created_at, updated_at
+            FROM llm_configs
+        """))
+        await conn.execute(text("DROP TABLE llm_configs"))
+        await conn.execute(text("ALTER TABLE llm_configs_profiles_tmp RENAME TO llm_configs"))
+
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_llm_configs_user_id ON llm_configs (user_id)"))
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_llm_configs_is_active ON llm_configs (is_active)"))
+    await conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_configs_active_user "
+        "ON llm_configs (user_id) WHERE is_active = 1"
+    ))
     await add_missing_columns("characters", {
         "scope_type": "VARCHAR(20) DEFAULT 'recurring'",
     })

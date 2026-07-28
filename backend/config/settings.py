@@ -51,6 +51,8 @@ class Settings:
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
+    # 生产默认禁用 Mock；自动化测试可显式开启，避免真实网络和 token 消耗。
+    ALLOW_MOCK_PROVIDER: bool = os.getenv("ALLOW_MOCK_PROVIDER", "false").lower() == "true"
 
     # --- JWT ---
     # JWT_SECRET 同时用于签发登录 token，以及派生 Fernet key 加密用户 API Key。

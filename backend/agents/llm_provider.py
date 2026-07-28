@@ -643,12 +643,15 @@ def get_llm_provider(config: dict | None = None) -> LLMProvider:
     1. 用户设置页保存的 LLMConfig（解密后传入 config）；
     2. 环境变量 settings.LLM_*。
 
-    当前版本禁用了 mock provider：如果检测到 mock 或缺少 API Key，直接抛出
-    LLMConfigError，让前端提示用户配置真实模型。
+    生产环境默认禁用 mock provider：如果检测到 mock 或缺少 API Key，直接抛出
+    LLMConfigError，让前端提示用户配置真实模型。自动化测试可通过
+    ALLOW_MOCK_PROVIDER=true 显式开启稳定的 MockProvider。
     """
     if config:
         provider = config.get("provider", settings.LLM_PROVIDER)
         if provider == "mock":
+            if settings.ALLOW_MOCK_PROVIDER:
+                return MockProvider()
             logger.warning("检测到 mock provider 配置，但 mock 已被禁用，将抛出错误")
             raise LLMConfigError("Mock provider 已被禁用，请配置真实的 LLM provider (OpenAI/DeepSeek等)")
         api_key = (config.get("api_key") or "").strip()
@@ -663,6 +666,8 @@ def get_llm_provider(config: dict | None = None) -> LLMProvider:
 
     # 无 config → 走 settings 默认值
     if settings.LLM_PROVIDER == "mock":
+        if settings.ALLOW_MOCK_PROVIDER:
+            return MockProvider()
         logger.warning("检测到 mock provider 配置，但 mock 已被禁用，将抛出错误")
         raise LLMConfigError("Mock provider 已被禁用，请在 .env 或前端设置中配置真实的 LLM provider")
     else:

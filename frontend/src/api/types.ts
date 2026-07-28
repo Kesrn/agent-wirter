@@ -1443,33 +1443,43 @@ export interface EvaluationRunCreatePayload {
 export type LLMProviderName = 'mock' | 'openai' | 'deepseek' | 'siliconflow' | 'zhipu' | 'moonshot' | 'qwen' | 'yi' | 'minimax' | 'custom'
 
 export interface LLMConfigResponse {
-  id: string
+  id: string | null
+  name: string
   provider: LLMProviderName
   api_key_set: boolean
+  /** 后端生成的安全掩码；完整 API Key 永不返回浏览器。 */
+  api_key_masked?: string | null
   base_url: string | null
   model_id: string | null
-  created_at: string
-  updated_at: string
+  is_active: boolean
+  source: 'user' | 'environment'
+  created_at: string | null
+  updated_at: string | null
 }
 
 export interface LLMConfigCreatePayload {
+  name: string
   provider: LLMProviderName
   api_key?: string
   base_url?: string | null
   model_id?: string | null
+  is_active?: boolean
 }
 
 export interface LLMConfigUpdatePayload {
+  name?: string
   provider?: LLMProviderName
   api_key?: string | null
   base_url?: string | null
   model_id?: string | null
+  is_active?: boolean
 }
 
 export interface ModelListRequest {
-  provider: LLMProviderName
-  api_key: string
+  provider?: LLMProviderName
+  api_key?: string
   base_url?: string | null
+  config_id?: string | null
 }
 
 export interface ModelInfo {
@@ -1479,6 +1489,8 @@ export interface ModelInfo {
 
 export interface LLMStatusResponse {
   has_config: boolean
+  config_id: string | null
+  config_name: string
   provider: string
   model_id: string | null
   has_api_key: boolean

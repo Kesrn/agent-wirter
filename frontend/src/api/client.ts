@@ -12,7 +12,7 @@ import {
   type StoryArcCreatePayload, type StoryArcUpdatePayload,
   type GenerateRequest, type SSEEnvelope,
   type ExpertUpdatePayload, type ProjectMode,
-  type LLMConfigCreatePayload, type ModelListRequest,
+  type LLMConfigCreatePayload, type LLMConfigUpdatePayload, type ModelListRequest,
   type LLMConfigResponse, type LLMStatusResponse, type ModelInfo,
   type LoginRequest, type LoginResponse, type MeResponse,
   type RegisterRequest, type RegisterResponse,
@@ -811,8 +811,15 @@ export const api = {
 
   // ─── LLM Settings ───
   getLLMConfig: () => request<LLMConfigResponse>('/llm-settings'),
-  updateLLMConfig: (data: LLMConfigCreatePayload) =>
-    request<LLMConfigResponse>('/llm-settings', { method: 'PUT', body: JSON.stringify(data) }),
+  listLLMConfigs: () => request<LLMConfigResponse[]>('/llm-settings/configs'),
+  createLLMConfig: (data: LLMConfigCreatePayload) =>
+    request<LLMConfigResponse>('/llm-settings/configs', { method: 'POST', body: JSON.stringify(data) }),
+  updateLLMConfig: (configId: string, data: LLMConfigUpdatePayload) =>
+    request<LLMConfigResponse>(`/llm-settings/configs/${configId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  activateLLMConfig: (configId: string) =>
+    request<LLMConfigResponse>(`/llm-settings/configs/${configId}/activate`, { method: 'POST' }),
+  deleteLLMConfig: (configId: string) =>
+    request<void>(`/llm-settings/configs/${configId}`, { method: 'DELETE' }),
   fetchModels: (data: ModelListRequest) =>
     request<ModelInfo[]>('/llm-settings/models', { method: 'POST', body: JSON.stringify(data) }),
   getLLMStatus: () => request<LLMStatusResponse>('/llm-settings/status'),

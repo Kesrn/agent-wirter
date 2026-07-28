@@ -808,7 +808,9 @@ def test_chapter_detail_and_update():
     }, headers=headers)
     assert resp6.status_code == 200
     assert resp6.json()["title"] == "第一章（修改版）"
-    assert resp6.json()["status"] == "approved"
+    # approved 是旧客户端兼容输入；后端统一落为 final，并生成定稿快照。
+    assert resp6.json()["status"] == "final"
+    assert resp6.json()["final_version_id"] is not None
 
 
 def test_chapter_detail_isolation():
@@ -1046,10 +1048,21 @@ def test_chapter_patch_invalid_status_rejected():
     resp2 = client.patch(f"/api/projects/{project_id}/chapters/1", json={"status": "bad"}, headers=headers)
     assert resp2.status_code == 422
 
-    for valid_status in ("draft", "reviewing", "revision", "final", "approved"):
+    for valid_status in ("draft", "reviewing", "revision"):
         resp3 = client.patch(f"/api/projects/{project_id}/chapters/1", json={"status": valid_status}, headers=headers)
         assert resp3.status_code == 200
         assert resp3.json()["status"] == valid_status
+
+    # final/approved 都要求有正文，并统一返回 final。
+    for compatible_final_status in ("final", "approved"):
+        resp3 = client.patch(
+            f"/api/projects/{project_id}/chapters/1",
+            json={"status": compatible_final_status, "content": "可定稿的章节正文。"},
+            headers=headers,
+        )
+        assert resp3.status_code == 200
+        assert resp3.json()["status"] == "final"
+        assert resp3.json()["final_version_id"] is not None
 
 
 def test_duplicate_sequence_number_detail():

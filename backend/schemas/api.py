@@ -581,36 +581,48 @@ class CharacterRelationResponse(BaseModel):
 
 
 # --- LLM 配置 ---
+LLM_PROVIDER_PATTERN = r"^(mock|openai|deepseek|siliconflow|zhipu|moonshot|qwen|yi|minimax|custom)$"
+
+
 class LLMConfigCreate(BaseModel):
-    provider: str = Field(pattern=r"^(mock|openai|deepseek|siliconflow|zhipu|moonshot|qwen|yi|minimax|custom)$")
+    name: str = Field(min_length=1, max_length=100)
+    provider: str = Field(pattern=LLM_PROVIDER_PATTERN)
     api_key: str = Field(default="", max_length=500)
     base_url: str | None = Field(default=None, max_length=500)
     model_id: str | None = Field(default=None, max_length=100)
+    is_active: bool = True
 
 
 class LLMConfigUpdate(BaseModel):
-    provider: str | None = Field(default=None, pattern=r"^(mock|openai|deepseek|siliconflow|zhipu|moonshot|qwen|yi|minimax|custom)$")
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    provider: str | None = Field(default=None, pattern=LLM_PROVIDER_PATTERN)
     api_key: str | None = Field(default=None, max_length=500)  # null=keep existing, ""=clear
     base_url: str | None = Field(default=None, max_length=500)
     model_id: str | None = Field(default=None, max_length=100)
+    is_active: bool | None = None
 
 
 class LLMConfigResponse(BaseModel):
-    id: uuid.UUID
+    id: uuid.UUID | None = None
+    name: str
     provider: str
     api_key_set: bool
+    api_key_masked: str | None = None
     base_url: str | None
     model_id: str | None
-    created_at: datetime
-    updated_at: datetime
+    is_active: bool = False
+    source: str = "user"
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
 
 class ModelListRequest(BaseModel):
-    provider: str = Field(pattern=r"^(openai|deepseek|siliconflow|zhipu|moonshot|qwen|yi|minimax|custom)$")
-    api_key: str = Field(min_length=1, max_length=500)
+    provider: str | None = Field(default=None, pattern=LLM_PROVIDER_PATTERN)
+    api_key: str | None = Field(default=None, max_length=500)
     base_url: str | None = Field(default=None, max_length=500)
+    config_id: uuid.UUID | None = None
 
 
 class ModelInfo(BaseModel):

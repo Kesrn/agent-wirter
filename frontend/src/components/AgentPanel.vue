@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { useChapterStore, useDocumentStore, useExpertStore, useUiStore, useOutlineStore, useCharacterStore, useWorldEntryStore, useHiddenThreadStore, useGenerationHistoryStore, friendlyError } from '../stores'
+import { useChapterStore, useDocumentStore, useExpertStore, useUiStore, useOutlineStore, useCharacterStore, useCharacterEventStore, useWorldEntryStore, useHiddenThreadStore, useGenerationHistoryStore, friendlyError } from '../stores'
 import type { WorkflowStep, SSEEnvelope, GenerateMode, ProjectMode, ArticleGenerateParams, WritingUnit } from '../api/types'
 import type { AgentStartPayload, AgentOutputPayload, AgentDonePayload, ProgressPayload, ErrorPayload, WriterOutputPayload, CriticOutputPayload, ConsistencyCheckPayload, EnhanceDirectionsPayload, TurnSuggestionsPayload, RevisionSuggestionsPayload, SkillPackPayload, ArticleReviewPayload, GenerationRecordPayload, RunCreatedPayload, ClarificationRequiredPayload, ClarificationEmbedded, TaskCardClarificationStatus, TaskCardContextSummary, TaskCardPayload, TaskCardReviewRequiredPayload, PreGenerationMode } from '../api/types'
 import { api } from '../api/client'
@@ -22,6 +22,7 @@ const documentStore = useDocumentStore()
 const expertStore = useExpertStore()
 const outlineStore = useOutlineStore()
 const characterStore = useCharacterStore()
+const characterEventStore = useCharacterEventStore()
 const worldEntryStore = useWorldEntryStore()
 const hiddenThreadStore = useHiddenThreadStore()
 const generationHistoryStore = useGenerationHistoryStore()
@@ -46,6 +47,52 @@ const panelTitle = computed(() => isNovel.value ? '章节助手' : '内容助手
 const unitTypeLabel = computed(() => isNovel.value ? '当前章节' : '当前稿件')
 const currentUnitTitle = computed(() => currentWritingUnit.value?.title?.trim() || (isNovel.value ? '未选择章节' : '未选择稿件'))
 const currentUnitOrdinal = computed(() => currentWritingUnit.value ? (isNovel.value ? `第 ${currentUnitPosition.value} 章` : `第 ${currentUnitPosition.value} 篇`) : '未选择')
+
+// 章节生成的素材选择器只展示当前章节可用的资料。
+// 之前这里直接把整个项目的角色/大纲/暗线传给弹窗，导致生成第一章时也能看到后续章节资料，
+// 并且默认选中了全部角色，最终这些跨章节资料还会进入任务卡上下文。
+const currentChapterOutlines = computed(() => {
+  if (!isNovel.value || !currentUnitPosition.value) return []
+  return outlineStore.entriesForProject(pid.value)
+    .filter(outline => outline.chapter_num === currentUnitPosition.value)
+})
+const currentChapterCharacterIds = computed(() => {
+  if (!isNovel.value || !currentUnitPosition.value) return new Set<string>()
+  return new Set(
+    characterEventStore.eventsForProject(pid.value)
+      .filter(event =>
+        event.chapter_sequence_number === currentUnitPosition.value
+        && event.appeared
+      )
+      .map(event => event.character_id),
+  )
+})
+const currentChapterCharacters = computed(() => {
+  if (!isNovel.value || !currentUnitPosition.value) return []
+  return characterStore.charactersForProject(pid.value)
+    .filter(character => currentChapterCharacterIds.value.has(character.id))
+})
+const currentChapterWorldEntries = computed(() => {
+  // WorldEntry 当前只有 global/chapter scope，没有章节序号字段。
+  // 生成选择器只展示可安全复用的全局设定，避免把无法确认归属的章节设定混入本章。
+  if (!isNovel.value) return []
+  return worldEntryStore.entriesForProject(pid.value)
+    .filter(entry => entry.scope_type === 'global')
+})
+const currentChapterHiddenThreads = computed(() => {
+  if (!isNovel.value || !currentUnitPosition.value) return []
+  return hiddenThreadStore.threadsForProject(pid.value)
+    .filter(thread => {
+      if (thread.status === 'DROPPED') return false
+      if (thread.status === 'RESOLVED' && thread.resolved_chapter !== currentUnitPosition.value) return false
+      return thread.chapter_nums.includes(currentUnitPosition.value!)
+        || (thread.planted_chapter != null
+          && thread.reveal_chapter != null
+          && thread.planted_chapter <= currentUnitPosition.value!
+          && currentUnitPosition.value! <= thread.reveal_chapter)
+    })
+})
+
 const reviewComments = computed(() => {
   if (!isNovel.value || !currentWritingUnit.value) return []
   return chapterStore.reviewCommentsForProjectChapter(pid.value, currentUnitPosition.value)
@@ -1630,10 +1677,10 @@ defineExpose({ testExpert, cancelStream })
     <ContextPicker
       v-if="showContextPicker"
       :project-id="projectId"
-      :outlines="outlineStore.entriesForProject(projectId)"
-      :characters="characterStore.charactersForProject(projectId)"
-       :world-entries="worldEntryStore.entriesForProject(projectId)"
-      :hidden-threads="hiddenThreadStore.threadsForProject(projectId)"
+      :outlines="currentChapterOutlines"
+      :characters="currentChapterCharacters"
+      :world-entries="currentChapterWorldEntries"
+      :hidden-threads="currentChapterHiddenThreads"
       :current-chapter-num="currentUnitPosition"
       :mode="props.mode"
       @confirm="handleContextConfirm"
