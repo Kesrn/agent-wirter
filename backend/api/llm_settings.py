@@ -340,7 +340,8 @@ async def list_models(
         from openai import AsyncOpenAI
         # openai SDK 默认会跟随重定向，这里换成显式的 http_client 关掉它，
         # 避免被跳到内网地址；超时仍是 5 秒。
-        http_client = httpx.AsyncClient(follow_redirects=False, timeout=5.0, trust_env=False)
+        # trust_env=True：恢复“遵循系统代理”的行为——用户经常需要经代理访问境外接口。
+        http_client = httpx.AsyncClient(follow_redirects=False, timeout=5.0, trust_env=True)
         client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=5.0, http_client=http_client)
         try:
             resp = await client.models.list()

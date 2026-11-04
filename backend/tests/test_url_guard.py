@@ -333,7 +333,7 @@ def test_content_type_outside_whitelist_is_rejected(monkeypatch):
 
 
 def test_request_is_pinned_to_validated_ip_with_host_header(monkeypatch):
-    """连接用的是解析出的 IP，Host 头仍是原主机名。"""
+    """直连模式（WEB_FETCH_TRUST_ENV_PROXY=False）下，连接用解析出的 IP，Host 头仍是原主机名。"""
     monkeypatch.setattr(url_guard, "_resolve_host", _fake_dns({"pinned.example": ["93.184.216.34"]}))
     seen: dict = {}
 
@@ -343,15 +343,16 @@ def test_request_is_pinned_to_validated_ip_with_host_header(monkeypatch):
         seen["sni"] = request.extensions.get("sni_hostname")
         return httpx.Response(200, headers={"content-type": "text/html"}, content=b"ok")
 
-    asyncio.run(
-        guarded_get(
-            "https://pinned.example/page?x=1",
-            allow_private=False,
-            max_bytes=1024,
-            allowed_content_types={"text/html"},
-            transport=httpx.MockTransport(handler),
+    with settings_override(WEB_FETCH_TRUST_ENV_PROXY=False):
+        asyncio.run(
+            guarded_get(
+                "https://pinned.example/page?x=1",
+                allow_private=False,
+                max_bytes=1024,
+                allowed_content_types={"text/html"},
+                transport=httpx.MockTransport(handler),
+            )
         )
-    )
 
     assert seen["url"] == "https://93.184.216.34/page?x=1"
     assert seen["host"] == "pinned.example"
@@ -563,3 +564,186 @@ def test_desktop_server_enables_private_llm_endpoints(monkeypatch, tmp_path):
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+# ---------------------------------------------------------------- I1：代理模式
+
+
+def test_proxy_mode_uses_original_hostname(monkeypatch):
+    """WEB_FETCH_TRUST_ENV_PROXY=True：不发 IP，保持原主机名交给代理解析。"""
+    monkeypatch.setattr(
+        url_guard, "_resolve_host", _fake_dns({"proxied.example": ["93.184.216.34"]})
+    )
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["host"] = request.headers.get("host")
+        return httpx.Response(200, headers={"content-type": "text/html"}, content=b"ok")
+
+    with settings_override(WEB_FETCH_TRUST_ENV_PROXY=True):
+        asyncio.run(
+            guarded_get(
+                "https://proxied.example/page?x=1",
+                allow_private=False,
+                max_bytes=1024,
+                allowed_content_types={"text/html"},
+                transport=httpx.MockTransport(handler),
+            )
+        )
+
+    assert seen["url"] == "https://proxied.example/page?x=1"
+    assert seen["host"] == "proxied.example"
+
+
+def test_proxy_mode_still_rejects_private_targets(monkeypatch):
+    with settings_override(WEB_FETCH_TRUST_ENV_PROXY=True):
+        # 预校验：内网地址仍然直接拒绝
+        with pytest.raises(UnsafeURLError):
+            asyncio.run(
+                guarded_get(
+                    "http://127.0.0.1:8080/admin",
+                    allow_private=False,
+                    max_bytes=1024,
+                )
+            )
+
+    # 重定向到内网：逐跳校验仍然生效
+    monkeypatch.setattr(
+        url_guard, "_resolve_host", _fake_dns({"start.example": ["93.184.216.34"]})
+    )
+    transport = _mock_transport(
+        {
+            "start.example": httpx.Response(
+                302, headers={"location": "http://169.254.169.254/latest/meta-data/"}
+            )
+        }
+    )
+
+    with settings_override(WEB_FETCH_TRUST_ENV_PROXY=True):
+        with pytest.raises(UnsafeURLError):
+            asyncio.run(
+                guarded_get(
+                    "http://start.example/",
+                    allow_private=False,
+                    max_bytes=1024,
+                    max_redirects=3,
+                    transport=transport,
+                )
+            )
+
+
+# ---------------------------------------------------------------- I3：IPv6 前缀缺口
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "64:ff9b::7f00:1",  # NAT64 包着 127.0.0.1
+        "64:ff9b::a00:1",  # NAT64 包着 10.0.0.1
+        "2002:7f00:1::",  # 6to4 包着 127.0.0.1
+        "2002:a00:1::",  # 6to4 包着 10.0.0.1
+    ],
+)
+@pytest.mark.parametrize("allow_private", [False, True])
+def test_nat64_and_6to4_are_always_rejected(address, allow_private):
+    assert is_ip_allowed(address, allow_private=allow_private) is False
+    with pytest.raises(UnsafeURLError):
+        asyncio.run(validate_url(_url_for(address), allow_private=allow_private))
+
+
+# ---------------------------------------------------------------- I2：历史配置运行时校验
+
+
+def _seed_llm_config(db_path, base_url: str) -> tuple[str, str]:
+    """建库并插入一条带 base_url 的用户配置，返回 (dsn, user_id)。"""
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from models.llm_config import LLMConfig
+
+    dsn = f"sqlite+aiosqlite:///{db_path}"
+    user_id = str(uuid.uuid4())
+
+    async def _setup():
+        engine = create_async_engine(dsn)
+        async with engine.begin() as conn:
+            await conn.run_sync(LLMConfig.__table__.create, checkfirst=True)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with factory() as db:
+            db.add(
+                LLMConfig(
+                    user_id=user_id,
+                    name="历史配置",
+                    provider="openai",
+                    base_url=base_url,
+                    is_active=True,
+                )
+            )
+            await db.commit()
+        await engine.dispose()
+
+    asyncio.run(_setup())
+    return dsn, user_id
+
+
+def _fetch_runtime_config(dsn: str, user_id: str):
+    """在独立的 session 里调用 get_user_llm_config。"""
+    from api.llm_deps import get_user_llm_config
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    async def _call():
+        engine = create_async_engine(dsn)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        try:
+            async with factory() as db:
+                return await get_user_llm_config(user_id, db)
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_call())
+
+
+@pytest.mark.parametrize("base_url", ["http://10.1.2.3/v1", "http://127.0.0.1:11434/v1"])
+def test_runtime_config_rejects_private_base_url_in_production(tmp_path, base_url):
+    from fastapi import HTTPException
+
+    dsn, user_id = _seed_llm_config(tmp_path / "llm.sqlite3", base_url)
+
+    with settings_override(ALLOW_PRIVATE_LLM_ENDPOINTS=False):
+        with pytest.raises(HTTPException) as excinfo:
+            _fetch_runtime_config(dsn, user_id)
+
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.detail == "模型服务地址不被允许，请到模型设置中修改"
+
+
+def test_runtime_config_allows_private_when_enabled(tmp_path):
+    dsn, user_id = _seed_llm_config(tmp_path / "llm-ok.sqlite3", "http://127.0.0.1:11434/v1")
+
+    with settings_override(ALLOW_PRIVATE_LLM_ENDPOINTS=True):
+        resolved = _fetch_runtime_config(dsn, user_id)
+
+    assert resolved["base_url"] == "http://127.0.0.1:11434/v1"
+
+
+def test_runtime_config_allows_public_address(tmp_path):
+    dsn, user_id = _seed_llm_config(tmp_path / "llm-pub.sqlite3", "http://93.184.216.34/v1")
+
+    with settings_override(ALLOW_PRIVATE_LLM_ENDPOINTS=False):
+        resolved = _fetch_runtime_config(dsn, user_id)
+
+    assert resolved["base_url"] == "http://93.184.216.34/v1"
+
+
+def test_openai_provider_client_does_not_follow_redirects():
+    from agents.llm_provider import OpenAIProvider
+
+    provider = OpenAIProvider(
+        api_key="sk-test", base_url="https://api.example.com/v1", model="test-model"
+    )
+
+    http_client = provider.client._client
+    assert http_client.follow_redirects is False
+    # 保持原有系统代理行为（没有显式 touch trust_env）
+    assert http_client.trust_env is True
+    assert provider.client.timeout == 120.0

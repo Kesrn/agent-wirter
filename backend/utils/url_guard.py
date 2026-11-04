@@ -10,6 +10,8 @@
   链路本地/元数据地址、以及不允许的端口；
 - `guarded_get()`：在 `validate_url()` 之上手动处理重定向（每一跳都重新校验）、
   限制响应体大小与 Content-Type，并**把连接钉在校验过的 IP 上**（DNS 重绑定防护）。
+  若开启代理模式（WEB_FETCH_TRUST_ENV_PROXY），则退回“原主机名 + 代理解析”，
+  不再有 IP 固定能力。
 
 错误信息只写原因类别，不回显解析出的内网 IP 或完整 URL；日志只记主机名。
 """
@@ -24,6 +26,8 @@ from dataclasses import dataclass
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
+
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +52,14 @@ _METADATA_HOSTNAMES = frozenset(
 
 # 运营商级 NAT 段：不是全局可路由，按“私网”对待。
 _SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
+
+# IPv6 里可以“装下”IPv4 地址的前缀：64:ff9b::/96（NAT64）与 2002::/16（6to4）。
+# 它们能把内网 IPv4 编码进一个看似正常的 IPv6 地址里，绕过 IPv4 判断，因此无论
+# allow_private 是否开启都直接拒绝。
+_ALWAYS_BLOCKED_NETWORKS = (
+    ipaddress.ip_network("64:ff9b::/96"),
+    ipaddress.ip_network("2002::/16"),
+)
 
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
@@ -75,6 +87,8 @@ def is_ip_allowed(ip: str, allow_private: bool = False) -> bool:
     if address is None:
         return False
     if address in _METADATA_IPS:
+        return False
+    if any(address in network for network in _ALWAYS_BLOCKED_NETWORKS):
         return False
     if address.is_multicast or address.is_unspecified or address.is_reserved:
         return False
@@ -282,6 +296,12 @@ async def guarded_get(
 ) -> httpx.Response:
     """带校验的 GET：逐跳校验重定向、限制大小与类型、把连接钉在校验过的 IP 上。
 
+    代理模式（settings.WEB_FETCH_TRUST_ENV_PROXY=True）：
+        走 HTTP(S)_PROXY 转发，请求地址保持原主机名，由代理解析域名。此时**无法**把
+        连接钉在 validate_url 校验过的那个 IP 上——预校验与每一跳重定向校验仍然生效，
+        但 DNS 重绑定（校验通过后域名改指向内网、由代理去解析）我们防不住。
+        生产环境建议保持 false（默认），除非确实需要出网代理且信任代理侧策略。
+
     Args:
         transport: 仅测试用，注入 `httpx.MockTransport` 以免发真实请求。
     """
@@ -289,12 +309,13 @@ async def guarded_get(
     current = url
     redirects = 0
 
-    # trust_env=False：不继承 HTTP(S)_PROXY。否则代理会自己去解析域名并建连，
-    # IP 固定与“每跳校验”都会失效，等于把 SSRF 防护交给代理的判断。
+    # trust_env：直连模式必须为 False，否则代理会自己解析域名并建连，IP 固定与
+    # “每跳校验”都会失效；代理模式才放开，此时改用原主机名发请求（见下方注释）。
+    trust_env = bool(settings.WEB_FETCH_TRUST_ENV_PROXY)
     async with httpx.AsyncClient(
         follow_redirects=False,
         timeout=timeout,
-        trust_env=False,
+        trust_env=trust_env,
         transport=transport,
     ) as client:
         while True:
@@ -303,7 +324,14 @@ async def guarded_get(
                 allow_private=allow_private,
                 allowed_ports=allowed_ports,
             )
-            request = _build_pinned_request(client, resolved, headers=request_headers)
+            if trust_env:
+                # 代理模式：不发 IP，保持原主机名让代理解析。残余风险（DNS 重绑定、
+                # 代理自身可访问内网）只能靠代理侧策略兜，代码这一层做不到。
+                request = client.build_request(
+                    "GET", resolved.url, headers=request_headers
+                )
+            else:
+                request = _build_pinned_request(client, resolved, headers=request_headers)
             response = await client.send(request, stream=True)
             try:
                 if response.status_code in _REDIRECT_STATUSES:

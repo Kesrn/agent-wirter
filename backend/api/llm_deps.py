@@ -3,10 +3,14 @@
 import logging
 import uuid
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config.settings import settings
 from models.llm_config import LLMConfig
+from utils.url_guard import UnsafeURLError, validate_url
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,6 +29,23 @@ async def get_user_llm_config(user_id: str, db: AsyncSession) -> dict | None:
     config = result.scalar_one_or_none()
     if not config:
         return None
+
+    # 运行时兜底：保存时的校验挡不住“升级前就已存进库里的内网地址”，所以每次取用
+    # 用户配置都再校验一次。环境变量里的默认配置（settings.LLM_BASE_URL）不走这里，
+    # 那是管理员可信配置。
+    base_url = (config.base_url or "").strip()
+    if base_url:
+        try:
+            await validate_url(
+                base_url,
+                allow_private=settings.ALLOW_PRIVATE_LLM_ENDPOINTS,
+            )
+        except UnsafeURLError as exc:
+            logger.warning("用户保存的模型地址不被允许 config_id=%s", config.id)
+            raise HTTPException(
+                status_code=400,
+                detail="模型服务地址不被允许，请到模型设置中修改",
+            ) from exc
 
     return {
         "config_id": str(config.id),

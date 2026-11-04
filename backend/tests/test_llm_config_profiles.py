@@ -18,6 +18,17 @@ from schemas.api import AuthUser, LLMConfigCreate
 from utils.crypto import decrypt_api_key
 
 
+@pytest.fixture(autouse=True)
+def _stub_dns(monkeypatch):
+    """get_user_llm_config 会校验保存的 base_url，这里把 DNS 打桩，测试不依赖真实网络。"""
+    from utils import url_guard
+
+    async def _resolve(host: str, port: int) -> list[str]:
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(url_guard, "_resolve_host", _resolve)
+
+
 @pytest.mark.asyncio
 async def test_user_can_save_multiple_profiles_and_switch_active_provider():
     engine = create_async_engine(
