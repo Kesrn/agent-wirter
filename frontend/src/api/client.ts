@@ -31,7 +31,9 @@ import {
   type EvaluationCaseCreatePayload, type EvaluationCaseUpdatePayload, type EvaluationRunCreatePayload,
   type ClarificationState, type ClarificationAnswerRequest,
 } from './types'
-import { clearAuthSession, getAuthToken } from '../utils/authSession'
+import { getAuthToken, handleUnauthorized } from '../utils/authSession'
+
+export { handleUnauthorized } from '../utils/authSession'
 
 function getToken(): string | null {
   return getAuthToken()
@@ -58,22 +60,29 @@ function formAuthHeaders(): Record<string, string> {
   return headers
 }
 
-function redirectToLogin(): void {
-  if (import.meta.env.VITE_DESKTOP === 'true') {
-    window.location.hash = '#/login'
-    return
-  }
-  window.location.href = '/login'
+export function parseRetryAfter(res: Response): number | undefined {
+  const header = res.headers.get('Retry-After')
+  if (!header) return undefined
+  const trimmed = header.trim()
+  if (!/^\d+$/.test(trimmed)) return undefined
+  const seconds = parseInt(trimmed, 10)
+  return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : undefined
 }
 
 /** Parse backend error body into a user-friendly Chinese message */
-function parseApiError(status: number, body: string): string {
+export function parseApiError(status: number, body: string, retryAfterSeconds?: number): string {
+  if (status === 429 && retryAfterSeconds !== undefined) {
+    return `操作过于频繁，请 ${retryAfterSeconds} 秒后重试`
+  }
+
   const statusMap: Record<number, string> = {
     400: '请求参数有误',
     401: '登录已失效，请重新登录',
     403: '没有操作权限',
     404: '资源不存在',
+    413: '上传内容过大',
     422: '输入内容不符合要求',
+    429: '操作过于频繁，请稍后再试',
     500: '服务器异常，请稍后重试',
   }
 
@@ -107,25 +116,32 @@ function parseApiError(status: number, body: string): string {
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  retryAfterSeconds?: number
+  constructor(status: number, message: string, retryAfterSeconds?: number) {
     super(message)
     this.status = status
+    this.retryAfterSeconds = retryAfterSeconds
     this.name = 'ApiError'
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export interface ApiRequestOptions extends RequestInit {
+  skipAuthRedirect?: boolean
+}
+
+async function request<T>(path: string, init?: ApiRequestOptions): Promise<T> {
+  const { skipAuthRedirect, ...fetchInit } = init ?? {}
   const res = await fetch(`${API_BASE_URL}${path}`, {
     headers: authHeaders(),
-    ...init,
+    ...fetchInit,
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    if (res.status === 401) {
-      clearAuthSession()
-      redirectToLogin()
+    const retryAfter = parseRetryAfter(res)
+    if (res.status === 401 && !skipAuthRedirect) {
+      handleUnauthorized()
     }
-    throw new ApiError(res.status, parseApiError(res.status, body))
+    throw new ApiError(res.status, parseApiError(res.status, body, retryAfter), retryAfter)
   }
   if (res.status === 204 || res.headers.get('content-length') === '0') {
     return undefined as T
@@ -208,9 +224,17 @@ export type CharacterAppearanceItem = {
 export const api = {
   // ─── Auth ───
   login: (data: LoginRequest) =>
-    request<LoginResponse>('/auth/login', { method: 'POST', body: JSON.stringify(data) }),
+    request<LoginResponse>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      skipAuthRedirect: true,
+    }),
   register: (data: RegisterRequest) =>
-    request<RegisterResponse>('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
+    request<RegisterResponse>('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      skipAuthRedirect: true,
+    }),
   me: () => request<MeResponse>('/auth/me'),
 
   // ─── Projects ───
@@ -237,10 +261,10 @@ export const api = {
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       if (res.status === 401) {
-        clearAuthSession()
-        redirectToLogin()
+        handleUnauthorized()
       }
-      throw new ApiError(res.status, parseApiError(res.status, body))
+      const retryAfter = parseRetryAfter(res)
+      throw new ApiError(res.status, parseApiError(res.status, body, retryAfter), retryAfter)
     }
     return res.json() as Promise<TxtImportResponse>
   },
@@ -253,10 +277,14 @@ export const api = {
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       if (res.status === 401) {
-        clearAuthSession()
-        redirectToLogin()
+        handleUnauthorized()
       }
-      throw new ApiError(res.status, parseApiError(res.status, body))
+      const retryAfter = parseRetryAfter(res)
+      let msg = parseApiError(res.status, body, retryAfter)
+      if (res.status === 413 && msg === '上传内容过大') {
+        msg = '图片过大'
+      }
+      throw new ApiError(res.status, msg, retryAfter)
     }
     return res.json() as Promise<ProjectImageUploadResponse>
   },
@@ -400,8 +428,12 @@ export const api = {
     }
     return fetch(url, fetchOpts).then(async (res) => {
       if (!res.ok) {
+        if (res.status === 401) {
+          handleUnauthorized()
+        }
         const text = await res.text().catch(() => '')
-        throw new ApiError(res.status, parseApiError(res.status, text))
+        const retryAfter = parseRetryAfter(res)
+        throw new ApiError(res.status, parseApiError(res.status, text, retryAfter), retryAfter)
       }
       if (!res.body) throw new ApiError(502, '服务未返回生成流，请重试')
       return parseSSEStream(res.body.getReader(), onEvent)
@@ -423,8 +455,12 @@ export const api = {
       signal,
     }).then(async (res) => {
       if (!res.ok) {
+        if (res.status === 401) {
+          handleUnauthorized()
+        }
         const text = await res.text().catch(() => '')
-        throw new ApiError(res.status, parseApiError(res.status, text))
+        const retryAfter = parseRetryAfter(res)
+        throw new ApiError(res.status, parseApiError(res.status, text, retryAfter), retryAfter)
       }
       return parseSSEStream(res.body!.getReader(), onEvent)
     })
@@ -446,8 +482,12 @@ export const api = {
       signal,
     }).then(async (res) => {
       if (!res.ok) {
+        if (res.status === 401) {
+          handleUnauthorized()
+        }
         const text = await res.text().catch(() => '')
-        throw new ApiError(res.status, parseApiError(res.status, text))
+        const retryAfter = parseRetryAfter(res)
+        throw new ApiError(res.status, parseApiError(res.status, text, retryAfter), retryAfter)
       }
       return parseSSEStream(res.body!.getReader(), onEvent)
     })
@@ -633,8 +673,11 @@ export const api = {
     })
     if (!res.ok) {
       const body = await res.text().catch(() => '')
-      if (res.status === 401) { clearAuthSession(); redirectToLogin() }
-      throw new ApiError(res.status, parseApiError(res.status, body))
+      if (res.status === 401) {
+        handleUnauthorized()
+      }
+      const retryAfter = parseRetryAfter(res)
+      throw new ApiError(res.status, parseApiError(res.status, body, retryAfter), retryAfter)
     }
     return res.json() as Promise<{ id: string; title: string; chunk_count: number }>
   },

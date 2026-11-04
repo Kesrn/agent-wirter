@@ -4,7 +4,9 @@ import {
   getAuthToken,
   getRememberLoginPreference,
   getRememberedUsername,
+  handleUnauthorized,
   hasAuthSession,
+  resetUnauthorizedFlag,
   saveAuthSession,
 } from './authSession'
 
@@ -65,5 +67,36 @@ describe('authSession', () => {
     expect(getAuthToken()).toBeNull()
     expect(hasAuthSession()).toBe(false)
     expect(getRememberedUsername()).toBe('admin')
+  })
+
+  it('handleUnauthorized clears session and redirects to login once even when called concurrently', () => {
+    resetUnauthorizedFlag()
+    saveAuthSession({ token: 'local-token', username: 'admin', remember: true })
+
+    const assignMock = vi.fn()
+    let targetHref = 'http://localhost/'
+    const mockWindow = {
+      location: {
+        get href() { return targetHref },
+        set href(val: string) {
+          assignMock(val)
+          targetHref = val
+        },
+      },
+    }
+    vi.stubGlobal('window', mockWindow)
+
+    try {
+      handleUnauthorized()
+      handleUnauthorized()
+
+      expect(getAuthToken()).toBeNull()
+      expect(hasAuthSession()).toBe(false)
+      expect(assignMock).toHaveBeenCalledTimes(1)
+      expect(assignMock).toHaveBeenCalledWith('/login')
+    } finally {
+      vi.unstubAllGlobals()
+      resetUnauthorizedFlag()
+    }
   })
 })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, ApiError } from '../api/client'
 import { getRememberLoginPreference, getRememberedUsername, saveAuthSession } from '../utils/authSession'
@@ -9,8 +9,44 @@ const username = ref('')
 const password = ref('')
 const rememberLogin = ref(getRememberLoginPreference())
 const loginError = ref('')
+const countdown = ref(0)
+let countdownTimer: ReturnType<typeof setInterval> | null = null
+
+const demoAccount = import.meta.env.DEV
+  ? {
+      user: 'admin',
+      pass: 'admin123',
+      label: 'admin / admin123',
+      buttonText: '使用演示账号',
+    }
+  : null
+
+function clearCountdown() {
+  if (countdownTimer) {
+    clearInterval(countdownTimer)
+    countdownTimer = null
+  }
+  countdown.value = 0
+}
+
+function startCountdown(seconds?: number) {
+  clearCountdown()
+  if (!seconds || seconds <= 0) return
+  countdown.value = seconds
+  countdownTimer = setInterval(() => {
+    countdown.value -= 1
+    if (countdown.value <= 0) {
+      clearCountdown()
+    }
+  }, 1000)
+}
+
+onBeforeUnmount(() => {
+  clearCountdown()
+})
 
 async function doLogin(user: string, pass: string) {
+  if (countdown.value > 0) return
   loginError.value = ''
   try {
     const payload = { username: user, password: pass }
@@ -23,10 +59,11 @@ async function doLogin(user: string, pass: string) {
     router.push('/projects')
   } catch (e: unknown) {
     if (e instanceof ApiError) {
-      if (e.status === 401 || e.status === 403) {
-        loginError.value = '账号或密码错误'
-      } else if (e.status === 422) {
+      if (e.status === 422) {
         loginError.value = '请输入账号和密码'
+      } else if (e.status === 429) {
+        loginError.value = e.message
+        startCountdown(e.retryAfterSeconds)
       } else {
         loginError.value = e.message
       }
@@ -37,6 +74,7 @@ async function doLogin(user: string, pass: string) {
 }
 
 async function handleLogin() {
+  if (countdown.value > 0) return
   loginError.value = ''
   if (!username.value.trim()) {
     loginError.value = '请输入账号'
@@ -50,9 +88,10 @@ async function handleLogin() {
 }
 
 async function handleDemoLogin() {
-  username.value = 'admin'
-  password.value = 'admin123'
-  await doLogin('admin', 'admin123')
+  if (!demoAccount || countdown.value > 0) return
+  username.value = demoAccount.user
+  password.value = demoAccount.pass
+  await doLogin(demoAccount.user, demoAccount.pass)
 }
 
 onMounted(() => {
@@ -95,12 +134,23 @@ const features = [
               <span>记住登录用户</span>
             </label>
             <div v-if="loginError" class="login-error" role="alert">{{ loginError }}</div>
-            <button type="submit" class="btn-login">登录</button>
-            <button type="button" class="btn-demo" @click="handleDemoLogin">使用演示账号</button>
+            <button type="submit" class="btn-login" :disabled="countdown > 0">
+              {{ countdown > 0 ? `登录 (${countdown}s)` : '登录' }}
+            </button>
+            <button
+              v-if="demoAccount"
+              type="button"
+              class="btn-demo"
+              :disabled="countdown > 0"
+              @click="handleDemoLogin"
+            >
+              {{ demoAccount.buttonText }}
+            </button>
           </form>
 
           <div class="card-footer">
-            <span>admin / admin123</span>
+            <span v-if="demoAccount">{{ demoAccount.label }}</span>
+            <span v-else></span>
             <router-link to="/register" class="switch-link">注册新账号</router-link>
           </div>
         </div>
