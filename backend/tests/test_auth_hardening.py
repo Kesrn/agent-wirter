@@ -568,6 +568,9 @@ def _run_settings_with_dotenv(tmp_path: Path, dotenv_body: str) -> subprocess.Co
     (tree / ".env").write_text(dotenv_body, encoding="utf-8")
 
     env = {key: value for key, value in os.environ.items() if key not in SECRET_ENV_KEYS}
+    # 子进程只运行 tmp_path 下复制的 settings.py 和测试生成的假 .env；真实仓库 .env
+    # 不在该目录树中，因此允许它加载临时夹具，不继承测试运行器的全局禁用开关。
+    env.pop("PYTHON_DOTENV_DISABLED", None)
     env["PYTHONPATH"] = str(tree / "backend")
     env["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
     return subprocess.run(

@@ -43,7 +43,7 @@ colorama==0.4.6 ; sys_platform == 'win32'
     #   click
     #   pytest
     #   tqdm
-cryptography==48.0.1
+cryptography==50.0.0
     # via -r requirements.in
 defusedxml==0.7.1
     # via fpdf2
@@ -74,6 +74,7 @@ httpcore==1.0.9
 httpx==0.28.1
     # via
     #   -r requirements.in
+    #   langchain-core
     #   langfuse
     #   langgraph-sdk
     #   langsmith
@@ -93,19 +94,22 @@ jsonpatch==1.33
     # via langchain-core
 jsonpointer==3.1.1
     # via jsonpatch
-langchain-core==1.4.0
+langchain-core==1.6.10
     # via
     #   -r requirements.in
     #   langgraph
     #   langgraph-checkpoint
     #   langgraph-prebuilt
-langchain-protocol==0.0.15
-    # via langchain-core
+    #   langgraph-sdk
+langchain-protocol==0.0.20
+    # via
+    #   langchain-core
+    #   langgraph-sdk
 langfuse==4.18.0 ; python_full_version < '3.11'
     # via -r requirements.in
 langfuse==5.1.0 ; python_full_version >= '3.11'
     # via -r requirements.in
-langgraph==1.2.0
+langgraph==1.2.13
     # via -r requirements.in
 langgraph-checkpoint==4.3.1
     # via
@@ -120,7 +124,7 @@ langgraph-checkpoint-sqlite==3.1.1
     # via -r requirements.in
 langgraph-prebuilt==1.1.0
     # via langgraph
-langgraph-sdk==0.3.15
+langgraph-sdk==0.4.6
     # via
     #   -r requirements.in
     #   langgraph
@@ -296,10 +300,10 @@ uuid-utils==0.15.0
     #   langsmith
 uvicorn==0.46.0
     # via -r requirements.in
-websockets==16.1.1 ; python_full_version < '3.11'
-    # via langsmith
-websockets==17.4 ; python_full_version >= '3.11'
-    # via langsmith
+websockets==16.1.1
+    # via
+    #   langgraph-sdk
+    #   langsmith
 wrapt==2.5.2
     # via langfuse
 xxhash==3.7.0
