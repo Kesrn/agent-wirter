@@ -396,9 +396,27 @@ def test_logout_clears_media_cookie(media_env):
     cleared = response.headers["set-cookie"]
     assert "media_token=" in cleared
     assert "Max-Age=0" in cleared or "expires=" in cleared.lower()
+    # 清除指令的属性要与下发时一致，浏览器才认这是同一个 Cookie
+    assert "Path=/media" in cleared
+    assert "HttpOnly" in cleared
+    assert "Secure" not in cleared
     # 客户端不再携带该 Cookie，之后的图片请求变回 401
     assert client.cookies.get("media_token") in (None, "")
     assert client.get(media_env.media_url(media_env.image_rel)).status_code == 401
+
+
+def test_logout_cookie_is_secure_when_configured(media_env):
+    client = media_env.owner_cookie_client()
+    assert client.cookies.get("media_token")
+
+    with settings_override(COOKIE_SECURE=True):
+        response = client.post("/api/auth/logout")
+
+    assert response.status_code == 204
+    cleared = response.headers["set-cookie"]
+    assert "Secure" in cleared
+    assert "Path=/media" in cleared
+    assert "HttpOnly" in cleared
 
 
 def test_media_token_of_deleted_user_is_401(media_env):

@@ -386,5 +386,13 @@ async def logout(response: Response) -> None:
     """清除 /media 专用 Cookie。
 
     只清 Cookie，不动登录 token（前端自己丢弃 access_token）。status_code=204 无响应体。
+    清除指令的属性必须与下发时一致（尤其生产环境的 Secure），否则浏览器会认为
+    不是同一个 Cookie 而拒绝删除。
     """
-    response.delete_cookie(key=MEDIA_COOKIE_NAME, path=MEDIA_COOKIE_PATH)
+    response.delete_cookie(
+        key=MEDIA_COOKIE_NAME,
+        path=MEDIA_COOKIE_PATH,
+        secure=settings.COOKIE_SECURE,
+        httponly=True,
+        samesite="lax",
+    )
