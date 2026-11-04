@@ -34,6 +34,10 @@ export interface RegisterResponse {
   username: string
 }
 
+export interface AuthConfigResponse {
+  registration_enabled: boolean
+}
+
 export interface ProjectImageUploadResponse {
   url: string
   filename: string

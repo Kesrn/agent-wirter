@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, ApiError } from '../api/client'
 import { getRememberLoginPreference, getRememberedUsername, saveAuthSession } from '../utils/authSession'
+import { loadAuthConfig, getCachedAuthConfig } from '../utils/authConfig'
 
 const router = useRouter()
 const username = ref('')
@@ -11,6 +12,7 @@ const rememberLogin = ref(getRememberLoginPreference())
 const loginError = ref('')
 const countdown = ref(0)
 let countdownTimer: ReturnType<typeof setInterval> | null = null
+const canRegister = ref(getCachedAuthConfig()?.registration_enabled ?? true)
 
 const demoAccount = import.meta.env.DEV
   ? {
@@ -94,8 +96,10 @@ async function handleDemoLogin() {
   await doLogin(demoAccount.user, demoAccount.pass)
 }
 
-onMounted(() => {
+onMounted(async () => {
   username.value = getRememberedUsername()
+  const config = await loadAuthConfig()
+  canRegister.value = config.registration_enabled
 })
 
 const features = [
@@ -151,7 +155,7 @@ const features = [
           <div class="card-footer">
             <span v-if="demoAccount">{{ demoAccount.label }}</span>
             <span v-else></span>
-            <router-link to="/register" class="switch-link">注册新账号</router-link>
+            <router-link v-if="canRegister" to="/register" class="switch-link">注册新账号</router-link>
           </div>
         </div>
       </section>
