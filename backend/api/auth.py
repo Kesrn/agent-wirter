@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +37,12 @@ from models.user import User
 from api.rate_limiter import auth_ip_limiter, auth_limiter, get_client_ip
 
 router = APIRouter(prefix="/api/auth")
+
+# 媒体 Cookie 的名字、路径与 token 用途标记。所有用到的地方都从这里取，
+# 避免 login（下发）、logout（清除）、api/media.py（校验）三处写死不一致。
+MEDIA_COOKIE_NAME = "media_token"
+MEDIA_COOKIE_PATH = "/media"
+MEDIA_TOKEN_SCOPE = "media"
 
 _jwt_secret = settings.JWT_SECRET
 if not _jwt_secret:
@@ -123,17 +129,50 @@ def _create_token(user_id: str, username: str) -> str:
     return jwt.encode(payload, _jwt_secret, algorithm="HS256")
 
 
-def _decode_token(token: str) -> dict:
-    """验证并解码 JWT token，失败时抛出 HTTPException。
+def _create_media_token(user_id: str) -> str:
+    """签发媒体专用 token（写进 media_token Cookie）。
 
-    路由层收到 HTTPException 后会直接返回 401，前端据此跳回登录或提示登录过期。
+    与登录 token 用同一签名密钥，但带 scope="media"：它只能访问 /media，
+    不能当登录 token 调普通接口（_decode_token 会拒绝它）。
     """
+    now = datetime.now(timezone.utc)
+    payload = {
+        "user_id": user_id,
+        "scope": MEDIA_TOKEN_SCOPE,
+        "exp": now + timedelta(hours=settings.JWT_EXPIRE_HOURS),
+        "iat": now,
+    }
+    return jwt.encode(payload, _jwt_secret, algorithm="HS256")
+
+
+def _parse_token(token: str) -> dict:
+    """校验签名与有效期，返回 payload（不区分 token 用途）。"""
     try:
         return jwt.decode(token, _jwt_secret, algorithms=["HS256"])
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="登录已过期")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="登录已失效")
+
+
+def _decode_token(token: str) -> dict:
+    """验证并解码“登录 token”，失败时抛出 HTTPException。
+
+    路由层收到 HTTPException 后会直接返回 401，前端据此跳回登录或提示登录过期。
+    media_token（scope="media"）在这里一律拒绝，避免被拿来调普通 API。
+    """
+    payload = _parse_token(token)
+    if payload.get("scope") == MEDIA_TOKEN_SCOPE:
+        raise HTTPException(status_code=401, detail="登录已失效")
+    return payload
+
+
+def _decode_media_token(token: str) -> dict:
+    """验证并解码“媒体 token”；登录 token 或 scope 不符一律 401。"""
+    payload = _parse_token(token)
+    if payload.get("scope") != MEDIA_TOKEN_SCOPE:
+        raise HTTPException(status_code=401, detail="媒体访问凭证无效")
+    return payload
 
 
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> AuthUser:
@@ -232,8 +271,36 @@ async def register(
     )
 
 
+def _login_response(response: Response, user: User) -> LoginResponse:
+    """构造登录响应，并下发 /media 专用 Cookie。
+
+    <img> 标签请求图片时带不了 Authorization 头，所以这里额外发一个只能访问
+    /media 的 token（scope="media"）放在 HttpOnly Cookie 里。响应体字段保持不变。
+    """
+    token = _create_token(str(user.id), user.username)
+    media_token = _create_media_token(str(user.id))
+    response.set_cookie(
+        key=MEDIA_COOKIE_NAME,
+        value=media_token,
+        max_age=settings.JWT_EXPIRE_HOURS * 3600,
+        path=MEDIA_COOKIE_PATH,
+        httponly=True,
+        samesite="lax",
+        secure=settings.COOKIE_SECURE,
+    )
+    return LoginResponse(
+        access_token=token,
+        user=AuthUser(id=str(user.id), username=user.username, display_name=user.username),
+    )
+
+
 @router.post("/login", response_model=LoginResponse)
-async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def login(
+    req: LoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     """用户登录
 
     - 如果 User 表中有记录，则验证用户名和密码
@@ -277,11 +344,7 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
         await db.commit()
         await db.refresh(user)
 
-        token = _create_token(str(user.id), user.username)
-        return LoginResponse(
-            access_token=token,
-            user=AuthUser(id=str(user.id), username=user.username, display_name=user.username),
-        )
+        return _login_response(response, user)
 
     # 正常登录：查询用户并验证密码
     result = await db.execute(select(User).where(User.username == identity))
@@ -310,13 +373,26 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
     if not user.is_active:
         raise HTTPException(status_code=401, detail="用户已被禁用")
 
-    token = _create_token(str(user.id), user.username)
-    return LoginResponse(
-        access_token=token,
-        user=AuthUser(id=str(user.id), username=user.username, display_name=user.username),
-    )
+    return _login_response(response, user)
 
 
 @router.get("/me", response_model=AuthUser)
 async def get_me(user: AuthUser = Depends(get_current_user)):
     return user
+
+
+@router.post("/logout", status_code=204)
+async def logout(response: Response) -> None:
+    """清除 /media 专用 Cookie。
+
+    只清 Cookie，不动登录 token（前端自己丢弃 access_token）。status_code=204 无响应体。
+    清除指令的属性必须与下发时一致（尤其生产环境的 Secure），否则浏览器会认为
+    不是同一个 Cookie 而拒绝删除。
+    """
+    response.delete_cookie(
+        key=MEDIA_COOKIE_NAME,
+        path=MEDIA_COOKIE_PATH,
+        secure=settings.COOKIE_SECURE,
+        httponly=True,
+        samesite="lax",
+    )

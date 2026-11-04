@@ -183,6 +183,9 @@ class Settings:
     # --- 应用 ---
     # CORS_ORIGINS 包含 null 是为了兼容 Electron/file origin；纯 Web 部署时可收紧。
     SQL_ECHO: bool = os.getenv("SQL_ECHO", "false").lower() == "true"
+    # /media 鉴权 Cookie 是否加 Secure 属性。生产环境（HTTPS）默认开启，开发默认关闭，
+    # 否则 http://localhost 下浏览器不会回传 Cookie。
+    COOKIE_SECURE: bool = _env_flag("COOKIE_SECURE", _IS_PRODUCTION)
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:3000,null")
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
     MAX_UPLOAD_BYTES: int = int(os.getenv("MAX_UPLOAD_BYTES", str(5 * 1024 * 1024)))
