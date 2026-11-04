@@ -29,7 +29,8 @@ describe('Electron configuration hardening', () => {
     expect(preloadSource).not.toContain('child_process')
   })
 
-  it('wires navigation security handlers in main.cjs', () => {
+  it('wires navigation security handlers in main.cjs using standard pathToFileURL', () => {
+    expect(mainSource).toContain('pathToFileURL')
     expect(mainSource).toContain('handleWindowOpen')
     expect(mainSource).toContain('handleWillNavigate')
     expect(mainSource).toContain('win.webContents.setWindowOpenHandler')

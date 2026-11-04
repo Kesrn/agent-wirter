@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { pathToFileURL } from 'node:url'
 // @ts-expect-error CommonJS module import without d.ts
 import navSecurity = require('./navigationSecurity.cjs')
 
@@ -56,6 +57,50 @@ describe('Electron navigation security helpers', () => {
       expect(isInternalAppUrl('file:///etc/passwd', opts)).toBe(false)
       expect(isInternalAppUrl('file:///C:/Windows/System32/calc.exe', opts)).toBe(false)
       expect(isInternalAppUrl('https://example.com', opts)).toBe(false)
+    })
+
+    it('correctly handles paths containing spaces and Chinese characters via pathToFileURL', () => {
+      const realAppDir = '/Applications/AI 创作平台.app/Contents/Resources/app/dist-desktop'
+      const appFilePrefix = pathToFileURL(realAppDir).href + '/'
+
+      // Valid internal page with percent-encoded Chinese and spaces
+      const validPageUrl = pathToFileURL(realAppDir + '/index.html').href
+      expect(validPageUrl).toContain('AI%20%E5%88%9B%E4%BD%9C%E5%B9%B3%E5%8F%B0.app')
+      expect(isInternalAppUrl(validPageUrl, { isDev: false, appFilePrefix })).toBe(true)
+
+      // Internal page with hash route
+      const pageWithHash = validPageUrl + '#/projects'
+      expect(isInternalAppUrl(pageWithHash, { isDev: false, appFilePrefix })).toBe(true)
+
+      // Internal page with query params
+      const pageWithQuery = validPageUrl + '?theme=dark'
+      expect(isInternalAppUrl(pageWithQuery, { isDev: false, appFilePrefix })).toBe(true)
+    })
+
+    it('rejects file:///etc/passwd even if dist-desktop or prefix is disguised in query or hash', () => {
+      const appFilePrefix = 'file:///Applications/AIWriter.app/dist-desktop/'
+      const opts = { isDev: false, appFilePrefix }
+
+      expect(isInternalAppUrl('file:///etc/passwd', opts)).toBe(false)
+      expect(isInternalAppUrl('file:///etc/passwd?x=dist-desktop', opts)).toBe(false)
+      expect(isInternalAppUrl('file:///etc/passwd?x=file:///Applications/AIWriter.app/dist-desktop/', opts)).toBe(false)
+      expect(isInternalAppUrl('file:///etc/passwd#dist-desktop', opts)).toBe(false)
+      expect(isInternalAppUrl('file:///etc/passwd#file:///Applications/AIWriter.app/dist-desktop/', opts)).toBe(false)
+    })
+
+    it('rejects sibling directories with similar prefix like dist-desktop-evil', () => {
+      const appDir = '/Applications/AI 创作平台.app/Contents/Resources/app/dist-desktop'
+      const appFilePrefix = pathToFileURL(appDir).href + '/'
+
+      const evilDirUrl = pathToFileURL('/Applications/AI 创作平台.app/Contents/Resources/app/dist-desktop-evil/index.html').href
+      expect(isInternalAppUrl(evilDirUrl, { isDev: false, appFilePrefix })).toBe(false)
+    })
+
+    it('rejects any file:// URL when appFilePrefix is missing or empty', () => {
+      expect(isInternalAppUrl('file:///Applications/app/dist-desktop/index.html', { isDev: false })).toBe(false)
+      expect(isInternalAppUrl('file:///Applications/app/dist-desktop/index.html', { isDev: false, appFilePrefix: '' })).toBe(false)
+      expect(isInternalAppUrl('file:///etc/passwd', { isDev: false })).toBe(false)
+      expect(isInternalAppUrl('file:///etc/passwd?x=dist-desktop', { isDev: false })).toBe(false)
     })
   })
 

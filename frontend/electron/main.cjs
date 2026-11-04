@@ -2,6 +2,7 @@ const { app, BrowserWindow, Menu, ipcMain, shell, session } = require('electron'
 const { spawn } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
+const { pathToFileURL } = require('node:url')
 const {
   isValidToken,
   isValidSenderUrl,
@@ -223,7 +224,11 @@ function createMainWindow() {
     }
   })
 
-  const appFilePrefix = 'file://' + path.resolve(__dirname, '../dist-desktop')
+  const distDesktopDir = path.resolve(__dirname, '../dist-desktop')
+  let appFilePrefix = pathToFileURL(distDesktopDir).href
+  if (!appFilePrefix.endsWith('/')) {
+    appFilePrefix += '/'
+  }
   win.webContents.on('will-navigate', (event, url) => {
     handleWillNavigate(
       url,

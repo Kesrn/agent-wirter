@@ -26,16 +26,19 @@ function isInternalAppUrl(url, options = {}) {
   const devRendererUrl = options.devRendererUrl || 'http://127.0.0.1:5173'
   const appFilePrefix = options.appFilePrefix || ''
 
+  // Compare only the URL without query string or hash to prevent disguising prefixes in ? or #
+  const cleanUrl = url.split(/[?#]/)[0]
+
   if (isDev) {
-    return url.startsWith(devRendererUrl)
+    return cleanUrl.startsWith(devRendererUrl)
   }
 
-  if (appFilePrefix) {
-    return url.startsWith(appFilePrefix)
+  if (!appFilePrefix) {
+    return false
   }
 
-  // Fallback: file:// protocol with dist-desktop in path
-  return url.startsWith('file://') && url.includes('dist-desktop')
+  const normalizedPrefix = appFilePrefix.endsWith('/') ? appFilePrefix : appFilePrefix + '/'
+  return cleanUrl.startsWith(normalizedPrefix) || cleanUrl === normalizedPrefix.slice(0, -1)
 }
 
 /**
