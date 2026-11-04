@@ -200,6 +200,17 @@ class Settings:
     WEB_SEARCH_BASE_URL: str = os.getenv("WEB_SEARCH_BASE_URL", "")
     WEB_SEARCH_MAX_RESULTS: int = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
     WEB_SEARCH_TIMEOUT_SECONDS: float = float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "8"))
+    # 抓取网页正文时的单次响应体上限与最大重定向跳数（SSRF 防护的配套限制）。
+    WEB_FETCH_MAX_BYTES: int = int(os.getenv("WEB_FETCH_MAX_BYTES", str(2 * 1024 * 1024)))
+    WEB_FETCH_MAX_REDIRECTS: int = int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))
+    # 用户填写的“大模型地址 / 搜索服务地址”是否允许指向回环、私网、链路本地地址。
+    # 生产环境默认禁止（防止把服务端变成内网探针）；桌面端与本地开发需要连本机
+    # Ollama / LM Studio（http://127.0.0.1:11434/v1），所以开发默认允许。
+    # 注意：即使打开这个开关，云元数据地址（169.254.169.254 / metadata.google.internal）
+    # 与网页正文抓取仍然一律拒绝。
+    ALLOW_PRIVATE_LLM_ENDPOINTS: bool = _env_flag(
+        "ALLOW_PRIVATE_LLM_ENDPOINTS", not _IS_PRODUCTION
+    )
 
 
 settings = Settings()
