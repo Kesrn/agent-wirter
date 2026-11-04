@@ -1,6 +1,43 @@
 // @vitest-environment happy-dom
-import { describe, expect, it } from 'vitest'
-import { escapeHtml, renderInlineMarkdown, renderMarkdown, sanitizeMarkdownUrl } from './markdown'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  escapeHtml,
+  renderInlineMarkdown,
+  renderMarkdown,
+  sanitizeMarkdownUrl,
+  _setPurifierDisabledForTesting,
+} from './markdown'
+
+function ensureHappyDomNodeName() {
+  if (typeof window === 'undefined' || !window.Node?.prototype) return
+  const desc = Object.getOwnPropertyDescriptor(window.Node.prototype, 'nodeName')
+  if (desc && desc.get) {
+    const dummy = window.document?.createElement('div')
+    if (dummy && desc.get.call(dummy) === '') {
+      Object.defineProperty(window.Node.prototype, 'nodeName', {
+        get() {
+          switch (this.nodeType) {
+            case 1:
+              return this.tagName || ''
+            case 3:
+              return '#text'
+            case 8:
+              return '#comment'
+            case 9:
+              return '#document'
+            case 11:
+              return '#document-fragment'
+            default:
+              return ''
+          }
+        },
+        configurable: true,
+      })
+    }
+  }
+}
+
+ensureHappyDomNodeName()
 
 describe('markdown renderer', () => {
   it('escapes HTML special characters', () => {
@@ -16,13 +53,16 @@ describe('markdown renderer', () => {
     expect(sanitizeMarkdownUrl('#section')).toBe('#section')
   })
 
-  it('rejects unsafe markdown URL schemes and encoded protocol variants', () => {
+  it('rejects unsafe markdown URL schemes, protocol-relative URLs, and encoded variants', () => {
     expect(sanitizeMarkdownUrl('javascript:alert(1)')).toBe('')
     expect(sanitizeMarkdownUrl('vbscript:msgbox(1)')).toBe('')
     expect(sanitizeMarkdownUrl('data:text/html,<svg onload=alert(1)>')).toBe('')
     expect(sanitizeMarkdownUrl('%6Aavascript:alert(1)')).toBe('')
     expect(sanitizeMarkdownUrl('java%0Ascript:alert(1)')).toBe('')
     expect(sanitizeMarkdownUrl('https://example.com/a b')).toBe('')
+    expect(sanitizeMarkdownUrl('//evil.com')).toBe('')
+    expect(sanitizeMarkdownUrl('//evil.com/a.png')).toBe('')
+    expect(sanitizeMarkdownUrl('/\\evil.com')).toBe('')
   })
 
   it('escapes raw HTML when rendering markdown', () => {
@@ -75,8 +115,7 @@ describe('markdown renderer', () => {
     expect(html).toContain('<h1>Title</h1>')
     expect(html).toContain('<blockquote><p>Quote</p></blockquote>')
     expect(html).toContain('<ul class="task-list">')
-    expect(html).toContain('<li class="task-list-item">')
-    expect(html).toContain('done</li>')
+    expect(html).toContain('<li class="task-list-item">☑ done</li>')
     expect(html).not.toContain('<input')
     expect(html).toContain('<pre><code>&lt;tag&gt;</code></pre>')
     expect(html).toContain('<table>')
@@ -178,6 +217,73 @@ describe('markdown renderer', () => {
       const html = renderMarkdown('[外部参考](https://example.com/reference)')
       expect(html).toContain('target="_blank"')
       expect(html).toContain('rel="noopener noreferrer"')
+    })
+
+    it('strictly forbids protocol-relative URLs (//...) in links and images while keeping valid paths', () => {
+      // Protocol-relative URLs must not generate <a> or <img> tags
+      const protoRelLink = renderMarkdown('[x](//evil.com)')
+      expect(protoRelLink).not.toContain('<a')
+      expect(protoRelLink).not.toContain('evil.com</a>')
+
+      const protoRelImg = renderMarkdown('![x](//evil.com/a.png)')
+      expect(protoRelImg).not.toContain('<img')
+      expect(protoRelImg).toContain('x')
+
+      // Safe paths must continue to work normally
+      expect(renderMarkdown('[link](/path)')).toContain('<a href="/path"')
+      expect(renderMarkdown('[link](#anchor)')).toContain('<a href="#anchor"')
+      expect(renderMarkdown('[link](./a)')).toContain('<a href="./a"')
+      expect(renderMarkdown('[link](../a)')).toContain('<a href="../a"')
+      expect(renderMarkdown('![pic](/media/x.png)')).toContain('<img src="/media/x.png"')
+    })
+
+    it('renders task list items with unicode checkbox text (☑ / ☐)', () => {
+      const markdown = [
+        '- [ ] 待办任务一',
+        '- [x] 已完成任务二',
+        '- [X] 大写勾选任务三',
+        '- 普通列表项',
+      ].join('\n')
+      const html = renderMarkdown(markdown)
+      expect(html).toContain('<ul class="task-list">')
+      expect(html).toContain('<li class="task-list-item">☐ 待办任务一</li>')
+      expect(html).toContain('<li class="task-list-item">☑ 已完成任务二</li>')
+      expect(html).toContain('<li class="task-list-item">☑ 大写勾选任务三</li>')
+      expect(html).toContain('<li>普通列表项</li>')
+      expect(html).not.toContain('<input')
+    })
+
+    it('fails closed when DOMPurify is unavailable and logs a warning', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      _setPurifierDisabledForTesting(true)
+      try {
+        const dirty = '<script>alert(1)</script>\n<img src=x onerror=alert(1)>'
+        const output = renderMarkdown(dirty)
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('[markdown] DOMPurify sanitizer is unavailable')
+        )
+        // Wraps in <p> with escaped text, no executable elements or on* attributes
+        expect(output).toBe('<p>&lt;script&gt;alert(1)&lt;/script&gt;\n&lt;img src=x onerror=alert(1)&gt;</p>')
+
+        // Verify that in DOM, no executable elements or on* attributes exist
+        const doc = new DOMParser().parseFromString(output, 'text/html')
+        expect(doc.querySelector('script')).toBeNull()
+        expect(doc.querySelector('img')).toBeNull()
+        const allElements = doc.querySelectorAll('*')
+        for (const el of allElements) {
+          for (const attr of el.getAttributeNames()) {
+            expect(attr.toLowerCase().startsWith('on')).toBe(false)
+          }
+        }
+
+        // Inner text contains no raw unescaped < or >
+        const inner = output.replace(/^<p>/, '').replace(/<\/p>$/, '')
+        expect(inner).not.toContain('<')
+        expect(inner).not.toContain('>')
+      } finally {
+        _setPurifierDisabledForTesting(false)
+        warnSpy.mockRestore()
+      }
     })
 
     it('renders comprehensive standard markdown features consistently', () => {

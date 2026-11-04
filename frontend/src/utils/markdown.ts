@@ -3,9 +3,9 @@
  * 本模块导出的渲染结果已通过 DOMPurify 进行严格的白名单标签与属性消毒，防御 XSS 攻击。
  * 项目中新增任何使用 v-html 的场景，必须统一通过本模块的 renderMarkdown 函数输出，切勿绕过消毒机制。
  */
-import DOMPurify from 'dompurify'
+import DOMPurify, { type Config, type DOMPurify as DOMPurifyInstance } from 'dompurify'
 
-const SANITIZE_CONFIG = {
+const SANITIZE_CONFIG: Config = {
   ALLOWED_TAGS: [
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
     'p', 'br', 'hr', 'blockquote',
@@ -27,45 +27,25 @@ const SANITIZE_CONFIG = {
   FORBID_ATTR: [
     'style',
   ],
-  ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|[\/#]|\.\.?\/)/i,
+  ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|\/(?![\\\/])|#|\.\.?\/)/i,
 }
 
-let purifierInstance: any = null
+let purifierInstance: DOMPurifyInstance | null = null
+let isSanitizerDisabledForTesting = false
 
-function ensureHappyDomNodeName() {
-  if (typeof window === 'undefined' || !window.Node?.prototype) return
-  const desc = Object.getOwnPropertyDescriptor(window.Node.prototype, 'nodeName')
-  if (desc && desc.get) {
-    const dummy = window.document?.createElement('div')
-    if (dummy && desc.get.call(dummy) === '') {
-      Object.defineProperty(window.Node.prototype, 'nodeName', {
-        get() {
-          switch (this.nodeType) {
-            case 1:
-              return this.tagName || ''
-            case 3:
-              return '#text'
-            case 8:
-              return '#comment'
-            case 9:
-              return '#document'
-            case 11:
-              return '#document-fragment'
-            default:
-              return ''
-          }
-        },
-        configurable: true,
-      })
-    }
+export function _setPurifierDisabledForTesting(disabled: boolean): void {
+  isSanitizerDisabledForTesting = disabled
+}
+
+function getPurifier(): DOMPurifyInstance | null {
+  if (isSanitizerDisabledForTesting) {
+    return null
   }
-}
-
-function getPurifier(): any {
   if (!purifierInstance) {
     if (typeof window !== 'undefined') {
-      ensureHappyDomNodeName()
-      const instance = typeof DOMPurify === 'function' ? (DOMPurify as any)(window) : DOMPurify
+      const instance = typeof DOMPurify === 'function'
+        ? (DOMPurify as (root?: unknown) => DOMPurifyInstance)(window)
+        : DOMPurify
       if (instance && typeof instance.addHook === 'function') {
         instance.addHook('afterSanitizeAttributes', (node: Element) => {
           const tag = node.tagName?.toLowerCase()
@@ -113,10 +93,11 @@ export function sanitizeMarkdownUrl(rawUrl: string): string {
   const decoded = decodeForProtocolCheck(value).trim()
   if (/[\u0000-\u001F\u007F\s]/.test(decoded)) return ''
   if (/^(?:javascript|vbscript|data):/i.test(decoded)) return ''
+  if (decoded.startsWith('//') || decoded.startsWith('/\\') || decoded.startsWith('\\/')) return ''
 
   const allowed =
     /^(?:https?:|mailto:|tel:)/i.test(value) ||
-    value.startsWith('/') ||
+    (value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/\\')) ||
     value.startsWith('#') ||
     value.startsWith('./') ||
     value.startsWith('../')
@@ -222,14 +203,15 @@ function renderMarkdownList(lines: string[], start: number, ordered: boolean): {
     const match = lines[i].match(regex)
     if (!match) break
     let content = match[1]
-    let checkbox = ''
     const task = content.match(/^\[([ xX])\]\s+(.+)$/)
     if (task) {
       hasTask = true
-      content = task[2]
-      checkbox = `<input type="checkbox" disabled${task[1].toLowerCase() === 'x' ? ' checked' : ''}> `
+      const isChecked = task[1].toLowerCase() === 'x'
+      const icon = isChecked ? '☑ ' : '☐ '
+      items.push(`<li class="task-list-item">${icon}${renderInlineMarkdown(task[2])}</li>`)
+    } else {
+      items.push(`<li>${renderInlineMarkdown(content)}</li>`)
     }
-    items.push(`<li${checkbox ? ' class="task-list-item"' : ''}>${checkbox}${renderInlineMarkdown(content)}</li>`)
     i += 1
   }
   const tag = ordered ? 'ol' : 'ul'
@@ -324,5 +306,6 @@ export function renderMarkdown(markdown: string): string {
   if (purifier && typeof purifier.sanitize === 'function') {
     return purifier.sanitize(rawHtml, SANITIZE_CONFIG)
   }
-  return rawHtml
+  console.warn('[markdown] DOMPurify sanitizer is unavailable; falling back to safe escaped plain text.')
+  return `<p>${escapeHtml(markdown)}</p>`
 }
