@@ -1,3 +1,88 @@
+/**
+ * Markdown 渲染与安全消毒模块。
+ * 本模块导出的渲染结果已通过 DOMPurify 进行严格的白名单标签与属性消毒，防御 XSS 攻击。
+ * 项目中新增任何使用 v-html 的场景，必须统一通过本模块的 renderMarkdown 函数输出，切勿绕过消毒机制。
+ */
+import DOMPurify from 'dompurify'
+
+const SANITIZE_CONFIG = {
+  ALLOWED_TAGS: [
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'p', 'br', 'hr', 'blockquote',
+    'ul', 'ol', 'li',
+    'pre', 'code',
+    'strong', 'em', 'del',
+    'a', 'img',
+    'table', 'thead', 'tbody', 'tr', 'th', 'td',
+  ],
+  FORBID_TAGS: [
+    'script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'svg', 'math',
+  ],
+  ALLOWED_ATTR: [
+    'href', 'src', 'alt', 'title', 'class', 'referrerpolicy', 'target', 'rel', 'align',
+  ],
+  ADD_URI_SAFE_ATTR: [
+    'target', 'rel', 'referrerpolicy', 'align',
+  ],
+  FORBID_ATTR: [
+    'style',
+  ],
+  ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|[\/#]|\.\.?\/)/i,
+}
+
+let purifierInstance: any = null
+
+function ensureHappyDomNodeName() {
+  if (typeof window === 'undefined' || !window.Node?.prototype) return
+  const desc = Object.getOwnPropertyDescriptor(window.Node.prototype, 'nodeName')
+  if (desc && desc.get) {
+    const dummy = window.document?.createElement('div')
+    if (dummy && desc.get.call(dummy) === '') {
+      Object.defineProperty(window.Node.prototype, 'nodeName', {
+        get() {
+          switch (this.nodeType) {
+            case 1:
+              return this.tagName || ''
+            case 3:
+              return '#text'
+            case 8:
+              return '#comment'
+            case 9:
+              return '#document'
+            case 11:
+              return '#document-fragment'
+            default:
+              return ''
+          }
+        },
+        configurable: true,
+      })
+    }
+  }
+}
+
+function getPurifier(): any {
+  if (!purifierInstance) {
+    if (typeof window !== 'undefined') {
+      ensureHappyDomNodeName()
+      const instance = typeof DOMPurify === 'function' ? (DOMPurify as any)(window) : DOMPurify
+      if (instance && typeof instance.addHook === 'function') {
+        instance.addHook('afterSanitizeAttributes', (node: Element) => {
+          const tag = node.tagName?.toLowerCase()
+          if (tag === 'a' && node.hasAttribute('target')) {
+            node.setAttribute('rel', 'noopener noreferrer')
+          }
+          if (tag === 'img') {
+            node.setAttribute('referrerpolicy', 'no-referrer')
+          }
+        })
+      }
+      purifierInstance = instance
+    }
+  }
+  return purifierInstance
+}
+
 export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -110,7 +195,7 @@ function renderMarkdownTable(lines: string[], start: number): { html: string; ne
         : cell.startsWith(':')
           ? 'left'
           : ''
-    return align ? ` style="text-align:${align}"` : ''
+    return align ? ` align="${align}"` : ''
   }
   const head = header
     .map((cell, index) => `<th${alignAttr(separator[index] ?? '')}>${renderInlineMarkdown(cell)}</th>`)
@@ -234,5 +319,10 @@ export function renderMarkdown(markdown: string): string {
     }
   }
 
-  return blocks.join('\n')
+  const rawHtml = blocks.join('\n')
+  const purifier = getPurifier()
+  if (purifier && typeof purifier.sanitize === 'function') {
+    return purifier.sanitize(rawHtml, SANITIZE_CONFIG)
+  }
+  return rawHtml
 }
