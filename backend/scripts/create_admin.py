@@ -34,6 +34,7 @@ from sqlalchemy import select  # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 
 from api.auth import _hash_password  # noqa: E402  与 register 使用同一套 bcrypt 哈希
+from api.auth import PASSWORD_TOO_LONG_DETAIL, password_within_byte_limit  # noqa: E402
 from config.settings import settings  # noqa: E402
 from models.user import User  # noqa: E402
 
@@ -50,7 +51,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--username", help="用户名（3-50 字符）；省略则交互输入")
     parser.add_argument(
         "--password",
-        help="密码（6-100 字符）；省略则交互输入（不回显）",
+        help="密码（6-100 字符，且 UTF-8 编码后不超过 72 字节）；省略则交互输入（不回显）",
     )
     parser.add_argument(
         "--database-url",
@@ -78,6 +79,10 @@ def _validate(username: str, password: str) -> str | None:
         return f"用户名长度需在 {USERNAME_MIN}-{USERNAME_MAX} 之间"
     if not (PASSWORD_MIN <= len(password) <= PASSWORD_MAX):
         return f"密码长度需在 {PASSWORD_MIN}-{PASSWORD_MAX} 之间"
+    # bcrypt 只处理 72 字节，超长会在 hashpw 里抛 ValueError，这里提前拒绝。
+    # 注意不要回显密码本身，只说长度。
+    if not password_within_byte_limit(password):
+        return PASSWORD_TOO_LONG_DETAIL
     return None
 
 

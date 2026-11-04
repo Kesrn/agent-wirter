@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
 import time
 import uuid
 from contextlib import contextmanager
@@ -71,7 +73,11 @@ def _reset_limiters():
     auth_ip_limiter.reset()
 
 
-def _prepare_db(db_path: Path, users: tuple[tuple[str, str], ...] = ()):
+def _prepare_db(
+    db_path: Path,
+    users: tuple[tuple[str, str], ...] = (),
+    disabled_users: tuple[tuple[str, str], ...] = (),
+):
     """建一个临时 SQLite 库（可选预置用户），返回服务用的 session 工厂。
 
     用文件库而不是内存库：TestClient 在独立线程/事件循环里跑，文件库每次新建连接
@@ -84,7 +90,7 @@ def _prepare_db(db_path: Path, users: tuple[tuple[str, str], ...] = ()):
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with engine.begin() as conn:
             await conn.run_sync(User.__table__.create, checkfirst=True)
-        if users:
+        if users or disabled_users:
             async with factory() as db:
                 for username, password in users:
                     db.add(
@@ -92,6 +98,14 @@ def _prepare_db(db_path: Path, users: tuple[tuple[str, str], ...] = ()):
                             username=username,
                             hashed_password=_hash_password(password),
                             is_active=True,
+                        )
+                    )
+                for username, password in disabled_users:
+                    db.add(
+                        User(
+                            username=username,
+                            hashed_password=_hash_password(password),
+                            is_active=False,
                         )
                     )
                 await db.commit()
@@ -391,3 +405,157 @@ def test_failed_login_responses_are_identical(tmp_path):
 
     assert empty_db_response.status_code == 401
     assert empty_db_response.json() == wrong_password.json()
+
+
+# ---------------------------------------------------------------- 验收返修：禁用账号
+# C1：禁用账号不能成为“用户名存在”的探针——密码错误时必须与其它 401 完全一致。
+
+_DISABLED_DETAIL = "用户已被禁用"
+
+
+def test_disabled_account_with_wrong_password_is_indistinguishable(tmp_path):
+    _, factory = _prepare_db(
+        tmp_path / "disabled.sqlite3",
+        users=(("active-user", "active-pw"),),
+        disabled_users=(("disabled-user", "disabled-pw"),),
+    )
+    client = _make_client(factory, "203.0.113.70")
+
+    wrong_password = client.post(
+        "/api/auth/login", json={"username": "active-user", "password": "wrong-pw"}
+    )
+    disabled_wrong = client.post(
+        "/api/auth/login", json={"username": "disabled-user", "password": "wrong-pw"}
+    )
+    unknown_user = client.post(
+        "/api/auth/login", json={"username": "nobody-here", "password": "wrong-pw"}
+    )
+
+    assert wrong_password.status_code == disabled_wrong.status_code == unknown_user.status_code == 401
+    assert wrong_password.json() == disabled_wrong.json() == unknown_user.json()
+    assert _DISABLED_DETAIL not in disabled_wrong.text
+
+
+def test_disabled_account_with_correct_password_reports_disabled(tmp_path):
+    _, factory = _prepare_db(
+        tmp_path / "disabled-ok.sqlite3",
+        disabled_users=(("disabled-user", "disabled-pw"),),
+    )
+    client = _make_client(factory, "203.0.113.71")
+
+    response = client.post(
+        "/api/auth/login", json={"username": "disabled-user", "password": "disabled-pw"}
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": _DISABLED_DETAIL}
+
+
+# ---------------------------------------------------------------- 验收返修：72 字节密码
+# C2：bcrypt 5.x 对 >72 字节抛 ValueError，必须变成可预期的 400 / 401，而不是 500。
+
+PASSWORD_TOO_LONG = "密码过长：编码后最多 72 字节（约 24 个汉字或 72 个英文字符）"
+
+
+def test_register_accepts_exactly_72_bytes(tmp_path):
+    _, factory = _prepare_db(tmp_path / "pw72.sqlite3")
+    client = _make_client(factory, "203.0.113.80")
+
+    response = client.post(
+        "/api/auth/register", json={"username": "edge72", "password": "a" * 72}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["username"] == "edge72"
+
+
+def test_register_rejects_73_bytes(tmp_path):
+    _, factory = _prepare_db(tmp_path / "pw73.sqlite3")
+    client = _make_client(factory, "203.0.113.81")
+
+    response = client.post(
+        "/api/auth/register", json={"username": "edge73", "password": "a" * 73}
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": PASSWORD_TOO_LONG}
+
+
+def test_register_rejects_25_chinese_chars(tmp_path):
+    """25 个汉字 = 75 字节，字符数看着不多但已经超限。"""
+    _, factory = _prepare_db(tmp_path / "pwcn.sqlite3")
+    client = _make_client(factory, "203.0.113.82")
+    password = "密" * 24 + "码"
+
+    response = client.post(
+        "/api/auth/register", json={"username": "chinesepw", "password": password}
+    )
+
+    assert len(password.encode("utf-8")) == 75
+    assert response.status_code == 400
+    assert response.json() == {"detail": PASSWORD_TOO_LONG}
+
+
+def test_login_with_over_long_password_returns_401_not_500(tmp_path):
+    _, factory = _prepare_db(tmp_path / "pwlogin.sqlite3", users=(("alice", "correct-pw"),))
+    client = _make_client(factory, "203.0.113.83")
+
+    long_password = "a" * 100
+    existing_user = client.post(
+        "/api/auth/login", json={"username": "alice", "password": long_password}
+    )
+    unknown_user = client.post(
+        "/api/auth/login", json={"username": "nobody", "password": long_password}
+    )
+    normal_wrong = client.post(
+        "/api/auth/login", json={"username": "alice", "password": "wrong-pw"}
+    )
+
+    assert existing_user.status_code == 401
+    assert existing_user.json() == unknown_user.json() == normal_wrong.json()
+
+
+def test_login_bootstrap_rejects_over_long_password_without_creating_user(tmp_path):
+    """空库首次建号分支：超长密码返回 400，且不能建出用户。"""
+    db_path = tmp_path / "bootstrap.sqlite3"
+    _, factory = _prepare_db(db_path)
+    client = _make_client(factory, "203.0.113.84")
+
+    with settings_override(ALLOW_FIRST_USER_BOOTSTRAP=True):
+        response = client.post(
+            "/api/auth/login", json={"username": "firstuser", "password": "a" * 73}
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": PASSWORD_TOO_LONG}
+
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("select count(*) from users").fetchone()[0] == 0
+
+
+def test_create_admin_script_rejects_over_long_password(tmp_path):
+    """命令行建号脚本同样要挡住超长密码，且不能把密码打进输出。"""
+    password = "a" * 73
+    db_path = tmp_path / "admin-long.sqlite3"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parents[1] / "scripts" / "create_admin.py"),
+            "--username",
+            "toolong",
+            "--password",
+            password,
+            "--database-url",
+            f"sqlite+aiosqlite:///{db_path}",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert result.returncode != 0
+    assert PASSWORD_TOO_LONG in result.stderr
+    assert password not in result.stdout + result.stderr
