@@ -48,7 +48,9 @@ def configure_desktop_environment() -> Path:
     """配置桌面端运行环境，并返回数据目录。
 
     这里创建 SQLite 数据库路径、上传目录和持久化 jwt_secret 文件。
-    jwt_secret 写到用户数据目录，可以保证应用重启后 token/API Key 解密仍然有效。
+    jwt_secret 写到用户数据目录（权限 0600），可以保证应用重启后 token/API Key 解密
+    仍然有效；同时放开首次登录建号（ALLOW_FIRST_USER_BOOTSTRAP），否则单用户本地
+    场景第一次启动没有任何账号可登录。
     """
     data_dir = Path(os.getenv("AI_CREATIVE_DESKTOP_DATA_DIR", _default_data_dir()))
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -65,8 +67,20 @@ def configure_desktop_environment() -> Path:
     secret_path = data_dir / "jwt_secret"
     if not secret_path.exists():
         secret_path.write_text(secrets.token_urlsafe(48), encoding="utf-8")
+        # 密钥文件只允许当前用户读写：数据目录在多用户机器上是共享可遍历的。
+        os.chmod(secret_path, 0o600)
+    else:
+        # 老版本写出的密钥文件默认是 0644，这里纠正一次，不改内容。
+        try:
+            if secret_path.stat().st_mode & 0o077:
+                os.chmod(secret_path, 0o600)
+        except OSError:
+            pass
     # 同样固定使用随桌面数据目录持久化的密钥，保证重启后本地登录态有效。
     os.environ["JWT_SECRET"] = secret_path.read_text(encoding="utf-8").strip()
+    # 桌面端是单用户本地使用，第一次启动必须先能建出账号，否则用户连界面都进不去。
+    # 仅桌面入口放开该开关，不影响服务端部署（默认仍是 development 的保守值由 APP_ENV 决定）。
+    os.environ.setdefault("ALLOW_FIRST_USER_BOOTSTRAP", "true")
     # 检索索引 embedding 配置（真实 embedding 端点）：数据目录下存在
     # embedding.env 时逐行注入环境变量（EMBEDDING_PROVIDER / EMBEDDING_API_KEY /
     # EMBEDDING_BASE_URL / EMBEDDING_MODEL / EMBEDDING_DIMENSION / RETRIEVAL_MODE）。

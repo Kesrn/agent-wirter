@@ -5,8 +5,14 @@
 - POST /auth/login — 登录（验证密码）
 - GET  /auth/me — 获取当前用户
 
-MVP 兼容：如果 User 表为空（首次使用），仍然允许任意账号密码登录并自动创建用户。
-生产环境务必设置 JWT_SECRET 环境变量，否则重启后所有 token 失效。
+两个安全开关（见 config/settings.py）：
+- ALLOW_REGISTRATION：关闭时 /auth/register 直接 403，服务端部署默认关闭，
+  账号由 `python scripts/create_admin.py` 创建。
+- ALLOW_FIRST_USER_BOOTSTRAP：仅开发/桌面端（默认开启）在 User 表为空时允许
+  首次登录自动建号，避免本地第一次启动打不开；生产环境默认关闭，空表登录一律 401。
+
+JWT_SECRET 未配置时开发环境会自动生成随机密钥（重启后 token 失效），生产环境
+启动阶段即失败，见 config/settings.py 的 validate_security_config。
 
 本模块只处理“谁在访问”的问题，不处理项目权限。具体项目是否属于当前用户，
 由 api/routes.py 里的 _verify_project_owner 在每个业务接口里校验。
@@ -132,7 +138,13 @@ async def register(
 
     注册时先校验 username/email 唯一性，然后写入 bcrypt hash。这里不自动登录，
     前端可在注册后跳转登录页或复用 login 流程。
+
+    生产环境（ALLOW_REGISTRATION=false）直接拒绝：自助注册会让任何人都能占用
+    服务端资源，账号应由管理员用 scripts/create_admin.py 创建。
     """
+    if not settings.ALLOW_REGISTRATION:
+        raise HTTPException(status_code=403, detail="注册已关闭")
+
     auth_limiter.check(f"auth:{req.username}")
     # 校验 username 不重复
     result = await db.execute(select(User).where(User.username == req.username))
@@ -168,7 +180,9 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     """用户登录
 
     - 如果 User 表中有记录，则验证用户名和密码
-    - MVP 兼容：如果 User 表为空（首次使用），允许任意账号密码登录并自动创建用户
+    - 首次启动兼容：User 表为空且 ALLOW_FIRST_USER_BOOTSTRAP 开启时，允许用
+      任意账号密码建立第一个用户（开发/桌面端）；生产环境关闭该开关，空表登录
+      一律 401，账号只能由 scripts/create_admin.py 创建
     """
     identity = req.username or req.email
     auth_limiter.check(f"auth:{identity}")
@@ -180,7 +194,11 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     user_count = count_result.scalar()
 
     if user_count == 0:
-        # MVP 兼容：首次使用，自动创建用户
+        if not settings.ALLOW_FIRST_USER_BOOTSTRAP:
+            # 不创建用户、不透露“库里还没有账号”，避免变成任人取号的后门。
+            raise HTTPException(status_code=401, detail="用户名或密码错误")
+
+        # 开发/桌面端首次使用，自动创建用户
         user = User(
             username=identity,
             hashed_password=_hash_password(req.password),
