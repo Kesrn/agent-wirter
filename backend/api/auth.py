@@ -19,6 +19,7 @@ JWT_SECRET 未配置时开发环境会自动生成随机密钥（重启后 token
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -379,6 +380,22 @@ async def login(
 @router.get("/me", response_model=AuthUser)
 async def get_me(user: AuthUser = Depends(get_current_user)):
     return user
+
+
+@router.get("/config")
+async def auth_config() -> Response:
+    """返回登录页需要的公开配置：注册是否开放。
+
+    前端据此决定是否显示“注册新账号”入口。只暴露这一个布尔值，
+    不返回 APP_ENV、首次建号开关等其它配置。数据是静态的，不加限流，
+    也不要占用登录/注册的限流配额。
+    """
+    body = {"registration_enabled": bool(settings.ALLOW_REGISTRATION)}
+    return Response(
+        content=json.dumps(body),
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.post("/logout", status_code=204)
