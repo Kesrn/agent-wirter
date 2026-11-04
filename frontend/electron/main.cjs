@@ -8,6 +8,10 @@ const {
   shouldInjectAuthHeader,
   buildHeadersWithAuth,
 } = require('./mediaAuthHeader.cjs')
+const {
+  handleWindowOpen,
+  handleWillNavigate,
+} = require('./navigationSecurity.cjs')
 
 const isDev = !app.isPackaged
 app.setName('AI 创作平台')
@@ -198,16 +202,15 @@ function createMainWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   })
   mainWindow = win
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      shell.openExternal(url)
-    }
-    return { action: 'deny' }
+    return handleWindowOpen(url, {
+      openExternal: (targetUrl) => shell.openExternal(targetUrl),
+    })
   })
 
   // Cmd/Ctrl+S 在浏览器进程层捕获（早于页面 keydown），避免应用菜单或
@@ -220,15 +223,20 @@ function createMainWindow() {
     }
   })
 
+  const appFilePrefix = 'file://' + path.resolve(__dirname, '../dist-desktop')
   win.webContents.on('will-navigate', (event, url) => {
-    const allowedDevUrl = isDev && url.startsWith(process.env.ELECTRON_RENDERER_URL || 'http://127.0.0.1:5173')
-    const allowedFileUrl = !isDev && url.startsWith('file://')
-    if (allowedDevUrl || allowedFileUrl) return
-
-    event.preventDefault()
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      shell.openExternal(url)
-    }
+    handleWillNavigate(
+      url,
+      {
+        isDev,
+        devRendererUrl: process.env.ELECTRON_RENDERER_URL || 'http://127.0.0.1:5173',
+        appFilePrefix,
+      },
+      {
+        openExternal: (targetUrl) => shell.openExternal(targetUrl),
+        preventDefault: () => event.preventDefault(),
+      },
+    )
   })
 
   if (isDev) {

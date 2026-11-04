@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, ApiError } from '../api/client'
 import { saveAuthSession } from '../utils/authSession'
+import { passwordByteLength, MAX_PASSWORD_BYTES } from '../utils/password'
 
 const router = useRouter()
 const username = ref('')
@@ -18,6 +19,10 @@ async function handleRegister() {
   }
   if (!password.value || password.value.length < 6) {
     registerError.value = '密码至少6个字符'
+    return
+  }
+  if (passwordByteLength(password.value) > MAX_PASSWORD_BYTES) {
+    registerError.value = '密码过长：最多 72 字节（约 24 个汉字或 72 个英文字符）'
     return
   }
   try {
