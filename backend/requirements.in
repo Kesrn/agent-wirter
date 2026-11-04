@@ -1,0 +1,51 @@
+# 直接依赖清单（改这里，然后重新编译锁文件，不要手改 requirements.lock）
+#
+# 收录范围：
+# 1. 代码里直接 import 的第三方包（tests/test_requirements_declared.py 会强制校验）；
+# 2. SQLAlchemy / FastAPI 在运行时动态加载、AST 扫描看不到的包（方言、multipart 解析）；
+# 3. backend/alembic 迁移工具链使用的包（alembic/env.py 导入）。
+#
+# 版本约束尽量宽；精确版本在 requirements.lock / requirements-dev.lock 里，
+# 由 `uv pip compile requirements.in -o requirements.lock --universal --python-version 3.10` 生成。
+
+# --- Web 框架 ---
+fastapi
+python-multipart          # FastAPI 文件上传解析（运行时动态导入）
+uvicorn
+
+# --- 数据库 ---
+sqlalchemy[asyncio]       # [asyncio] extra 无平台条件地安装 greenlet（SQLAlchemy async 必需；
+                          # 裸 sqlalchemy 在 macOS arm64 上因官方 marker 不含 arm64 而漏装）
+aiosqlite                 # sqlite+aiosqlite:// 方言（动态加载）
+asyncpg                   # postgresql+asyncpg:// 方言（动态加载）
+alembic                   # backend/alembic 迁移工具链（alembic/env.py 导入）
+
+# --- 数据校验与配置 ---
+pydantic
+python-dotenv
+typing-extensions         # services/intent_models.py 直接导入
+
+# --- 认证与加密 ---
+bcrypt
+cryptography              # utils/crypto.py 的 Fernet（任务 0.2 起直接导入）
+PyJWT
+
+# --- LLM / Agent ---
+langgraph
+langgraph-checkpoint-sqlite
+langgraph-checkpoint-postgres
+langchain-core
+openai                    # api/llm_settings.py、agents/llm_provider.py（任务 0.2 起直接导入）
+langfuse                  # observability/langfuse.py 延迟可选导入（缺失时静默降级）
+
+# --- HTTP ---
+httpx
+
+# --- 知识库文档解析 ---
+openpyxl
+pypdf
+python-docx
+jieba
+
+# --- 数值 ---
+numpy                     # services/embedding_provider.py 直接导入
