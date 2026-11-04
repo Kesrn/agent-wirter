@@ -13,4 +13,6 @@ contextBridge.exposeInMainWorld('desktopApp', {
     ipcRenderer.on('desktop:save-requested', listener)
     return () => ipcRenderer.removeListener('desktop:save-requested', listener)
   },
+  setMediaAuthToken: (token) => ipcRenderer.invoke('desktop:set-media-auth-token', token),
+  clearMediaAuthToken: () => ipcRenderer.invoke('desktop:clear-media-auth-token'),
 })

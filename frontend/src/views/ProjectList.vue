@@ -4,7 +4,7 @@ import { useProjectStore, useCharacterStore, useCharacterEventStore, useWorldEnt
 import { useRouter } from 'vue-router'
 import type { Project, ProjectMode } from '../api/types'
 import { api } from '../api/client'
-import { clearAuthSession } from '../utils/authSession'
+import { performLogout } from '../utils/authSession'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import BaseMultiSelect from '../components/BaseMultiSelect.vue'
 import NovelConfig from '../components/NovelConfig.vue'
@@ -20,9 +20,8 @@ const router = useRouter()
 
 onMounted(() => { store.loadProjects() })
 
-function handleLogout() {
-  clearAuthSession()
-  router.push('/login')
+async function handleLogout() {
+  await performLogout()
 }
 
 function formatDate(iso: string): string {

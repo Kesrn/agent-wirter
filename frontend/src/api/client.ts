@@ -236,6 +236,21 @@ export const api = {
       skipAuthRedirect: true,
     }),
   me: () => request<MeResponse>('/auth/me'),
+  logout: async () => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 2000)
+    try {
+      await fetch(`${API_BASE_URL}/auth/logout`, {
+        method: 'POST',
+        headers: authHeaders(),
+        signal: controller.signal,
+      })
+    } catch {
+      // Best-effort
+    } finally {
+      clearTimeout(timer)
+    }
+  },
 
   // ─── Projects ───
   listProjects: () => request<ApiProject[]>('/projects'),

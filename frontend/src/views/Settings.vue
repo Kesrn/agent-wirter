@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { useLLMSettingsStore, useUiStore, friendlyError } from '../stores'
 import type { LLMConfigCreatePayload, LLMConfigResponse, LLMConfigUpdatePayload, LLMProviderName } from '../api/types'
 import BaseSelect from '../components/BaseSelect.vue'
-import { clearAuthSession } from '../utils/authSession'
+import { performLogout } from '../utils/authSession'
 
-const router = useRouter()
 const store = useLLMSettingsStore()
 const ui = useUiStore()
 
@@ -218,9 +216,8 @@ function onClickOutsideModel(event: MouseEvent) {
 onMounted(() => document.addEventListener('click', onClickOutsideModel))
 onBeforeUnmount(() => document.removeEventListener('click', onClickOutsideModel))
 
-function handleLogout() {
-  clearAuthSession()
-  router.push('/login')
+async function handleLogout() {
+  await performLogout()
 }
 </script>
 

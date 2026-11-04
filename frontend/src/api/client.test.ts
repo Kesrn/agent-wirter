@@ -273,4 +273,14 @@ describe('api generation routes', () => {
       message: '不支持的文件类型',
     })
   })
+
+  it('calls POST /auth/logout gracefully on api.logout', async () => {
+    vi.mocked(fetch).mockImplementation(async () => new Response(null, { status: 204 }))
+    await expect(api.logout()).resolves.toBeUndefined()
+    const fetchMock = vi.mocked(fetch)
+    expect(fetchMock).toHaveBeenCalled()
+    const lastCall = fetchMock.mock.calls[fetchMock.mock.calls.length - 1]
+    expect(String(lastCall[0])).toContain('/auth/logout')
+    expect(lastCall[1]?.method).toBe('POST')
+  })
 })

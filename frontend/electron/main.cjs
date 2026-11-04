@@ -1,7 +1,13 @@
-const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, Menu, ipcMain, shell, session } = require('electron')
 const { spawn } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
+const {
+  isValidToken,
+  isValidSenderUrl,
+  shouldInjectAuthHeader,
+  buildHeadersWithAuth,
+} = require('./mediaAuthHeader.cjs')
 
 const isDev = !app.isPackaged
 app.setName('AI 创作平台')
@@ -9,6 +15,8 @@ app.setPath('userData', path.join(app.getPath('appData'), 'AI 创作平台'))
 const backendHost = process.env.AI_CREATIVE_BACKEND_HOST || '127.0.0.1'
 const backendPort = process.env.AI_CREATIVE_BACKEND_PORT || '8765'
 const backendBaseUrl = process.env.AI_CREATIVE_BACKEND_URL || `http://${backendHost}:${backendPort}`
+const backendOrigin = new URL(backendBaseUrl).origin
+let currentMediaToken = null
 let mainWindow = null
 let backendProcess = null
 
@@ -241,7 +249,43 @@ ipcMain.handle('desktop:get-info', () => ({
 
 ipcMain.handle('desktop:check-backend', checkBackendStatus)
 
+ipcMain.handle('desktop:set-media-auth-token', (event, token) => {
+  const senderUrl = event.senderFrame?.url || ''
+  if (!isValidSenderUrl(senderUrl, { isDev, devRendererUrl: process.env.ELECTRON_RENDERER_URL })) {
+    return false
+  }
+  if (!isValidToken(token)) {
+    return false
+  }
+  currentMediaToken = token.trim()
+  return true
+})
+
+ipcMain.handle('desktop:clear-media-auth-token', (event) => {
+  const senderUrl = event.senderFrame?.url || ''
+  if (!isValidSenderUrl(senderUrl, { isDev, devRendererUrl: process.env.ELECTRON_RENDERER_URL })) {
+    return false
+  }
+  currentMediaToken = null
+  return true
+})
+
+function setupMediaAuthHeaders() {
+  const filter = {
+    urls: [`${backendOrigin}/media/*`],
+  }
+  session.defaultSession.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
+    if (!shouldInjectAuthHeader(details.url, backendOrigin, currentMediaToken)) {
+      callback({ requestHeaders: details.requestHeaders })
+      return
+    }
+    const requestHeaders = buildHeadersWithAuth(details.requestHeaders, currentMediaToken)
+    callback({ requestHeaders })
+  })
+}
+
 app.whenReady().then(() => {
+  setupMediaAuthHeaders()
   buildMenu()
   startBackend()
   waitForBackend().finally(() => {

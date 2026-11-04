@@ -145,4 +145,12 @@ describe('writing editor save keyboard shortcut', () => {
     expect(script).toContain('saveRequestDisposer?.()')
     expect(script).toContain('saveRequestDisposer = undefined')
   })
+
+  it('preserves relative /media/... path format when inserting and saving images without backend origin', () => {
+    // Inserting image writes markdown string `![${alt}](${uploaded.url})` directly
+    expect(script).toContain('const replacement = `${prefix}![${alt}](${uploaded.url})${suffix}`')
+    // Saving routes through chapterStore / documentStore without rewriting markdown storage
+    expect(script).toContain('await chapterStore.saveCurrentChapter(props.projectId)')
+    expect(script).toContain('await documentStore.saveCurrentDocument(props.projectId)')
+  })
 })

@@ -5,6 +5,8 @@ import {
   renderInlineMarkdown,
   renderMarkdown,
   sanitizeMarkdownUrl,
+  getBackendOrigin,
+  resolveMediaUrl,
   _setPurifierDisabledForTesting,
 } from './markdown'
 
@@ -235,6 +237,62 @@ describe('markdown renderer', () => {
       expect(renderMarkdown('[link](./a)')).toContain('<a href="./a"')
       expect(renderMarkdown('[link](../a)')).toContain('<a href="../a"')
       expect(renderMarkdown('![pic](/media/x.png)')).toContain('<img src="/media/x.png"')
+    })
+
+    describe('resolveMediaUrl and desktop image rewriting', () => {
+      it('returns original url unchanged in web build environment', () => {
+        vi.stubEnv('VITE_DESKTOP', 'false')
+        vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8765/api')
+        try {
+          expect(resolveMediaUrl('/media/projects/a/images/b.png')).toBe('/media/projects/a/images/b.png')
+          expect(resolveMediaUrl('//media/x.png')).toBe('//media/x.png')
+          expect(resolveMediaUrl('/mediafoo/x.png')).toBe('/mediafoo/x.png')
+          expect(resolveMediaUrl('https://x.com/media/x.png')).toBe('https://x.com/media/x.png')
+          expect(resolveMediaUrl('./media/x.png')).toBe('./media/x.png')
+
+          const html = renderMarkdown('![场景](/media/projects/a/images/b.png)')
+          expect(html).toContain('<img src="/media/projects/a/images/b.png" alt="场景" referrerpolicy="no-referrer">')
+        } finally {
+          vi.unstubAllEnvs()
+        }
+      })
+
+      it('rewrites /media/... in desktop mode to backend origin with port from env', () => {
+        vi.stubEnv('VITE_DESKTOP', 'true')
+        vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8765/api')
+        try {
+          expect(getBackendOrigin()).toBe('http://127.0.0.1:8765')
+          expect(resolveMediaUrl('/media/projects/a/images/b.png')).toBe(
+            'http://127.0.0.1:8765/media/projects/a/images/b.png',
+          )
+          // Other paths remain unchanged
+          expect(resolveMediaUrl('//media/x.png')).toBe('//media/x.png')
+          expect(resolveMediaUrl('/mediafoo/x.png')).toBe('/mediafoo/x.png')
+          expect(resolveMediaUrl('https://x.com/media/x.png')).toBe('https://x.com/media/x.png')
+          expect(resolveMediaUrl('./media/x.png')).toBe('./media/x.png')
+
+          // Renders complete URL in <img> and preserves referrerpolicy
+          const html = renderMarkdown('![场景](/media/projects/a/images/b.png)')
+          expect(html).toContain(
+            '<img src="http://127.0.0.1:8765/media/projects/a/images/b.png" alt="场景" referrerpolicy="no-referrer">',
+          )
+        } finally {
+          vi.unstubAllEnvs()
+        }
+      })
+
+      it('respects dynamic port in VITE_API_BASE_URL', () => {
+        vi.stubEnv('VITE_DESKTOP', 'true')
+        vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:9090/api')
+        try {
+          expect(getBackendOrigin()).toBe('http://127.0.0.1:9090')
+          expect(resolveMediaUrl('/media/projects/1/images/2.png')).toBe(
+            'http://127.0.0.1:9090/media/projects/1/images/2.png',
+          )
+        } finally {
+          vi.unstubAllEnvs()
+        }
+      })
     })
 
     it('renders task list items with unicode checkbox text (☑ / ☐)', () => {

@@ -105,6 +105,31 @@ export function sanitizeMarkdownUrl(rawUrl: string): string {
   return allowed ? escapeHtml(value) : ''
 }
 
+export function getBackendOrigin(): string {
+  const baseUrl = (import.meta.env.VITE_API_BASE_URL as string) || ''
+  if (!baseUrl) return ''
+  try {
+    const parsed = new URL(baseUrl)
+    return parsed.origin
+  } catch {
+    return baseUrl.replace(/\/api\/?$/, '')
+  }
+}
+
+export function resolveMediaUrl(url: string): string {
+  if (import.meta.env.VITE_DESKTOP !== 'true') {
+    return url
+  }
+  if (!url.startsWith('/media/') || url.startsWith('//media/') || url.startsWith('/\\media/')) {
+    return url
+  }
+  const origin = getBackendOrigin()
+  if (!origin) {
+    return url
+  }
+  return `${origin}${url}`
+}
+
 export function renderInlineMarkdown(raw: string): string {
   const tokens: string[] = []
   const urlPattern = '((?:[^\\s()]+|\\([^()\\s]*\\))+)(?:\\s+"[^"]*")?'
@@ -117,7 +142,8 @@ export function renderInlineMarkdown(raw: string): string {
   let text = raw
     .replace(/`([^`\n]+)`/g, (_match, code: string) => stash(`<code>${escapeHtml(code)}</code>`))
     .replace(new RegExp(`!\\[([^\\]]*)\\]\\(${urlPattern}\\)`, 'g'), (_match, alt: string, url: string) => {
-      const safeUrl = sanitizeMarkdownUrl(url)
+      const resolvedUrl = resolveMediaUrl(url)
+      const safeUrl = sanitizeMarkdownUrl(resolvedUrl)
       return safeUrl ? stash(`<img src="${safeUrl}" alt="${escapeHtml(alt)}" referrerpolicy="no-referrer">`) : escapeHtml(alt)
     })
     .replace(new RegExp(`\\[([^\\]]+)\\]\\(${urlPattern}\\)`, 'g'), (_match, label: string, url: string) => {
