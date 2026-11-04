@@ -202,6 +202,16 @@ function createMainWindow() {
     return { action: 'deny' }
   })
 
+  // Cmd/Ctrl+S 在浏览器进程层捕获（早于页面 keydown），避免应用菜单或
+  // Chromium 默认行为吞掉快捷键；再通过 IPC 通知渲染进程执行保存。
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.isAutoRepeat) return
+    if ((input.meta || input.control) && input.key.toLowerCase() === 's') {
+      event.preventDefault()
+      win.webContents.send('desktop:save-requested')
+    }
+  })
+
   win.webContents.on('will-navigate', (event, url) => {
     const allowedDevUrl = isDev && url.startsWith(process.env.ELECTRON_RENDERER_URL || 'http://127.0.0.1:5173')
     const allowedFileUrl = !isDev && url.startsWith('file://')

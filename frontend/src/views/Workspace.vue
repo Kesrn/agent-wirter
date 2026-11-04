@@ -7,6 +7,7 @@ import { api } from '../api/client'
 import WritingEditor from '../components/WritingEditor.vue'
 import ChapterConfig from "../components/ChapterConfig.vue"
 import AgentPanel from '../components/AgentPanel.vue'
+import ConversationCreativeWorkspace from '../components/ConversationCreativeWorkspace.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import StructureExtractPreview from '../components/StructureExtractPreview.vue'
 import BaseSelect from '../components/BaseSelect.vue'
@@ -29,6 +30,22 @@ const expertStore = useExpertStore()
 const ui = useUiStore()
 
 const agentPanelRef = ref<InstanceType<typeof AgentPanel> | null>(null)
+const creativeShellRef = ref<InstanceType<typeof ConversationCreativeWorkspace> | null>(null)
+
+// 新版对话式创作壳层 / 经典三栏工作台切换：默认 creative，localStorage 持久化，可随时回退 legacy
+const SHELL_MODE_KEY = 'workspace_shell_mode'
+const shellMode = ref<'creative' | 'legacy'>(loadShellMode())
+function loadShellMode(): 'creative' | 'legacy' {
+  try {
+    const v = localStorage.getItem(SHELL_MODE_KEY)
+    if (v === 'creative' || v === 'legacy') return v
+  } catch { /* 隐私模式 */ }
+  return 'creative'
+}
+function toggleShellMode() {
+  shellMode.value = shellMode.value === 'creative' ? 'legacy' : 'creative'
+  try { localStorage.setItem(SHELL_MODE_KEY, shellMode.value) } catch { /* ignore */ }
+}
 
 const projectId = computed(() => route.params.id as string)
 const currentProject = computed(() => projectStore.projects.find(p => p.id === projectId.value))
@@ -393,7 +410,29 @@ onUnmounted(() => {
 
 function cancelGenerationAndProceed(callback: () => void) {
   agentPanelRef.value?.cancelStream()
+  creativeShellRef.value?.cancelGeneration()
   callback()
+}
+
+/** 新版壳层左侧“＋新增章节/稿件”入口：复用现有 store 创建接口，业务逻辑留在 Workspace */
+async function handleCreativeCreateUnit(payload: { title: string; position: number; summary?: string }) {
+  try {
+    const ch = projectMode.value === 'article'
+      ? await documentStore.createDocumentRemote(projectId.value, {
+          title: payload.title,
+          position: payload.position,
+        })
+      : await chapterStore.createChapterRemote(projectId.value, {
+          title: payload.title,
+          chapter_num: payload.position,
+          summary: payload.summary,
+        })
+    if (ch) selectWritingUnit(unitPosition(ch))
+    ui.showToast(`${unitLabel.value}创建成功`, 'success')
+  } catch (e: unknown) {
+    const msg = friendlyError(e, `创建${unitLabel.value}失败`)
+    ui.showToast(msg, 'error')
+  }
 }
 
 function confirmLeaveIfGenerating(callback: () => void) {
@@ -407,8 +446,7 @@ function confirmLeaveIfGenerating(callback: () => void) {
 onBeforeRouteLeave(() => {
   if (isGenerating.value) {
     showConfirm(`当前正在${projectMode.value === 'article' ? '生成内容' : '生成小说'}，退出将取消生成，是否继续？`, () => {
-      agentPanelRef.value?.cancelStream()
-      router.push('/projects')
+      cancelGenerationAndProceed(() => router.push('/projects'))
     }, '继续退出', true)
     return false
   }
@@ -1154,6 +1192,13 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
         </div>
       </div>
       <div class="top-right">
+        <button
+          class="top-btn"
+          :title="shellMode === 'creative' ? '切换回经典三栏工作台' : '切换回新版对话式工作台'"
+          @click="toggleShellMode"
+        >
+          {{ shellMode === 'creative' ? '经典视图' : '新版视图' }}
+        </button>
         <router-link v-if="projectMode === 'novel'" class="top-btn top-btn-link" :to="`/projects/${projectId}/knowledge`">资料库</router-link>
         <router-link class="top-btn top-btn-link" :to="`/projects/${projectId}/evaluations`">评测集</router-link>
         <div class="export-group">
@@ -1167,7 +1212,20 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
       </div>
     </header>
 
-    <div class="workspace" :class="{ 'sidebar-collapsed': !sidebarOpen, 'agent-collapsed': !agentOpen }">
+    <!-- 新版对话式创作壳层（默认；经典三栏可随时回退） -->
+    <ConversationCreativeWorkspace
+      v-if="shellMode === 'creative'"
+      ref="creativeShellRef"
+      class="creative-shell"
+      :project-id="projectId"
+      :mode="projectMode"
+      @create-unit="handleCreativeCreateUnit"
+      @open-config="openChapterConfig"
+      @extract-memory="extractChapterMemory"
+    />
+
+    <!-- 经典三栏布局（回退视图，原样保留） -->
+    <div v-else class="workspace" :class="{ 'sidebar-collapsed': !sidebarOpen, 'agent-collapsed': !agentOpen }">
       <!-- Left sidebar column (always in DOM for grid integrity) -->
       <aside class="sidebar" :class="{ 'sidebar-hidden': !sidebarOpen }">
         <button class="sidebar-toggle" @click="sidebarOpen = !sidebarOpen" :title="sidebarOpen ? '收起侧栏' : '展开侧栏'">
@@ -2732,4 +2790,11 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 .ctx-item:hover { background: var(--bg-hover); }
 .ctx-item-danger { color: var(--status-error); }
 .ctx-item-danger:hover { background: var(--sev-critical-bg); }
+
+/* 新版对话式创作壳层：占满顶栏下方区域 */
+.creative-shell {
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+}
 </style>

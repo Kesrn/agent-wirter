@@ -422,7 +422,8 @@ onMounted(async () => {
 function characterName(characterId: string): string {
   const charStore = useCharacterStore()
   const char = charStore.characters.find(c => c.id === characterId)
-  return char?.name ?? characterId.slice(0, 8)
+  // 角色可能已被删除（历史遗留的悬空事件），此时明确提示而非显示乱码 id
+  return char?.name ?? '已删除角色'
 }
 </script>
 

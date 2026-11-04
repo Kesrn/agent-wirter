@@ -1,0 +1,611 @@
+{
+  "meta": {
+    "runner": "retrieval_eval/shadow_compare.py",
+    "created_at": "2026-08-03T03:25:31+00:00",
+    "db_path": "/Users/zcx/ai-creative-platform/backend/dev-web.sqlite3",
+    "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+    "project_title": "111",
+    "new_chain": "services.knowledge_source.search_project_knowledge (RETRIEVAL_MODE=lexical -> LexicalRetriever, retrieval_chunks)",
+    "old_chain": "rag/context_loader.ContextLoader.search_similar / load_context (SHA256 哈希伪向量 embedding)",
+    "top_k_new": 5,
+    "top_n_old": 5,
+    "old_db_url": "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_creative",
+    "matching": "ID 级 / 标题指纹 / 片段指纹 / 文本包含（较短>=20字符）任一命中即算同一证据",
+    "retrieval_mode": "lexical",
+    "new_chain_warmup_latency_ms": 681.79
+  },
+  "environment": {
+    "new_chain_index": {
+      "retrieval_chunks": 7276,
+      "retrieval_vectors": 7276
+    },
+    "old_chain_data": {
+      "world_entries": 0,
+      "world_entries_with_embedding": 0,
+      "characters": 0,
+      "characters_with_embedding": 0,
+      "chapters": 0,
+      "project_sources": 1
+    },
+    "old_chain_schema": {
+      "world_entries_missing": [],
+      "characters_missing": [],
+      "dialect": "postgresql"
+    },
+    "old_chain_schema_broken": false,
+    "load_context_diag": {
+      "chapter_id": null,
+      "load_context_kwargs": {
+        "include_world": true,
+        "include_characters": true,
+        "include_previous_chapters": 3,
+        "include_outline": true
+      },
+      "latency_ms": 2.7,
+      "context_len": 7,
+      "context_preview": "(暂无上下文)"
+    }
+  },
+  "summary": {
+    "n_queries": 10,
+    "queries_with_old_results": 0,
+    "queries_with_overlap": 0,
+    "mean_overlap_ratio": 0.0,
+    "total_overlap": 0,
+    "total_union": 50,
+    "new_covers_old_mean": 0.0,
+    "old_covers_new_mean": 0.0,
+    "new_latency": {
+      "mean_ms": 43.99,
+      "p95_ms": 73.4,
+      "max_ms": 73.4
+    },
+    "old_latency": {
+      "mean_ms": 4.56,
+      "p95_ms": 30.52,
+      "max_ms": 30.52
+    }
+  },
+  "per_query": [
+    {
+      "query_id": "shadow-001",
+      "category": "ability",
+      "query": "莫凡觉醒的是什么系？",
+      "notes": "角色能力：莫凡觉醒雷系/火系，正文高频出现",
+      "new_count": 5,
+      "old_count": 0,
+      "overlap": 0,
+      "union": 5,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": null,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 73.4,
+      "old_latency_ms": 30.52,
+      "new_top": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "14d8a540-81ce-4400-ab3e-5753968f01c6",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 9.2959
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "9be1c532-b123-492f-a555-e9fc2a093042",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 9.1622
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "f6120be3-be47-4cee-86f5-8fe4bb5ff1d9",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 9.1578
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "1f4f691f-f008-4ca0-a3be-29ed44ff037e",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 9.1403
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "367f4c00-163d-496b-b938-0fe6e37288e1",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 9.1204
+        }
+      ],
+      "old_top": []
+    },
+    {
+      "query_id": "shadow-002",
+      "category": "ability",
+      "query": "张小侯的风系初阶技能叫什么？",
+      "notes": "角色能力：风系初阶技能=风轨（第19章『风之力，风轨！』）",
+      "new_count": 5,
+      "old_count": 0,
+      "overlap": 0,
+      "union": 5,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": null,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 43.1,
+      "old_latency_ms": 1.85,
+      "new_top": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "24a52c79-15d7-4a29-a35c-27a6376ea8d2",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 15.7267
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "e90cf723-bec9-45a7-bb30-bbbaa891b213",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 14.3741
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2d8ff967-0eca-4b3d-aa32-71e8e3e7b0d8",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 14.1824
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "51287a1b-01f2-4dd5-818b-664d083dc796",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 14.1784
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "5c91ba3a-78e9-44f4-8aef-d2d9c8ce5e89",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 14.0065
+        }
+      ],
+      "old_top": []
+    },
+    {
+      "query_id": "shadow-003",
+      "category": "relationship",
+      "query": "莫凡的父亲是谁？",
+      "notes": "人物关系：莫家兴",
+      "new_count": 5,
+      "old_count": 0,
+      "overlap": 0,
+      "union": 5,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": null,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 41.49,
+      "old_latency_ms": 1.93,
+      "new_top": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "e6f68c01-caf1-4587-81cc-3d139fb911d3",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 8.578
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "78527eba-a651-4f60-8b91-c6efab46a377",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 7.9634
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "26aab2ed-52c4-4bce-9d8c-6163f765b0b7",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 7.9216
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "c719d43f-2d78-498d-a325-6f76ebb3a928",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 7.87
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "3f85b95c-c058-484c-8415-82e30d8f539a",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 7.7582
+        }
+      ],
+      "old_top": []
+    },
+    {
+      "query_id": "shadow-004",
+      "category": "event",
+      "query": "魔法觉醒仪式在哪里举行？",
+      "notes": "事件：水兰中学开学典礼上的魔法觉醒仪式",
+      "new_count": 5,
+      "old_count": 0,
+      "overlap": 0,
+      "union": 5,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": null,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 37.91,
+      "old_latency_ms": 1.82,
+      "new_top": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "5128089a-06d5-4dbc-9a85-a5c15ecea3a3",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 14.0488
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "68061e70-bd68-42c0-8836-982fd37a271e",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 13.8903
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "3b24c69a-3ea6-4009-a199-9537f6d7c537",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 13.6604
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "5263e3d7-1551-4dcb-a123-53fde5437a39",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 13.2019
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "0e1eb86e-da2a-45df-82d4-57cf5b2f8714",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 12.4499
+        }
+      ],
+      "old_top": []
+    },
+    {
+      "query_id": "shadow-005",
+      "category": "event",
+      "query": "新来的女老师是谁？",
+      "notes": "事件：第16章新女老师唐月",
+      "new_count": 5,
+      "old_count": 0,
+      "overlap": 0,
+      "union": 5,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": null,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 41.02,
+      "old_latency_ms": 2.61,
+      "new_top": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "d8cd95bd-7ceb-433f-9915-15a8318f8425",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 10.7228
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "5f0c1794-fe2c-40a7-a701-1f4f1cf456c1",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 9.0205
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "26247f80-e320-4835-a3c0-d65c170372d9",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 8.7768
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "509ad691-26b8-4027-b7c3-90a3adbcc95d",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 8.4735
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a46380e2-fde1-45cc-9a3f-1738571405d9",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 8.2727
+        }
+      ],
+      "old_top": []
+    },
+    {
+      "query_id": "shadow-006",
+      "category": "world",
+      "query": "元素魔法有哪些系？",
+      "notes": "世界观：元素魔法七系（冰火雷土水风光…）",
+      "new_count": 5,
+      "old_count": 0,
+      "overlap": 0,
+      "union": 5,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": null,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 41.12,
+      "old_latency_ms": 1.94,
+      "new_top": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "e5b2ab25-3664-4ed1-8674-4136480816a1",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 9.564
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "20bfa6b0-434a-4bbb-b23d-9e66e459ad23",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 9.1886
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "05bd56a5-9b01-4321-a427-bf9b5a7f81b7",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 8.2404
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "3213e210-d715-4629-b134-e50a777e182e",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 7.89
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "6d720283-29c6-4871-9067-0a37481aa58b",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 7.4772
+        }
+      ],
+      "old_top": []
+    },
+    {
+      "query_id": "shadow-007",
+      "category": "alias",
+      "query": "猴子是什么系的法师？",
+      "notes": "别名：猴子=张小侯，风系",
+      "new_count": 5,
+      "old_count": 0,
+      "overlap": 0,
+      "union": 5,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": null,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 40.24,
+      "old_latency_ms": 1.29,
+      "new_top": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "62b67e9c-69d3-43af-8ea9-042bde2306ac",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 10.0217
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "203cf943-fa1c-4c7c-9610-5bd4a3454dcf",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 7.826
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "90e64a6b-2fe4-4086-9741-4bb9d194c2f5",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 7.6135
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "4c81a5ea-6ba7-437a-afc9-b04cdc174374",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 7.4713
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "356aa8a4-9312-4be7-8e1d-faa98613d394",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 7.2427
+        }
+      ],
+      "old_top": []
+    },
+    {
+      "query_id": "shadow-008",
+      "category": "event",
+      "query": "穆贺和莫家兴谈了什么？",
+      "notes": "事件/对话：穆贺登门与莫家兴交谈",
+      "new_count": 5,
+      "old_count": 0,
+      "overlap": 0,
+      "union": 5,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": null,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 38.43,
+      "old_latency_ms": 1.24,
+      "new_top": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "7aa05904-e1ad-47be-a5e0-02d72d2daa6f",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 10.9391
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "9b13d897-ccf7-4951-83ab-2cb785845527",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 9.402
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "917f8e4f-6d61-466b-9a6a-bfbf62219a36",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 9.1823
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "bdb25891-a880-4112-a7f4-304e426cf356",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 8.9102
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "d1a527a5-c115-44fc-ab8d-043e5ce082d0",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 8.8045
+        }
+      ],
+      "old_top": []
+    },
+    {
+      "query_id": "shadow-009",
+      "category": "world",
+      "query": "这个世界里魔法体系的规则是什么？",
+      "notes": "世界观：魔法体系规则（法师可觉醒多种系）",
+      "new_count": 5,
+      "old_count": 0,
+      "overlap": 0,
+      "union": 5,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": null,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 49.57,
+      "old_latency_ms": 1.2,
+      "new_top": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "0d462661-7ba3-4414-80cc-bb85276f4fd5",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 15.4349
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "fd9f3063-8816-477b-a7d0-563e3f99a282",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 14.0777
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "4bec0732-b698-4ad4-8f99-e53f4f64e67a",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 11.2691
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "c998b4dd-a9bf-4445-8407-ed24bdf3bef0",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 11.0955
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "e61102d4-c2dc-4940-bced-025f1f965299",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 9.848
+        }
+      ],
+      "old_top": []
+    },
+    {
+      "query_id": "shadow-010",
+      "category": "character",
+      "query": "莫凡在哪里读中学？",
+      "notes": "角色背景：水兰中学",
+      "new_count": 5,
+      "old_count": 0,
+      "overlap": 0,
+      "union": 5,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": null,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 33.64,
+      "old_latency_ms": 1.18,
+      "new_top": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2777cc3f-da2f-45c5-8629-38c96ebf8f14",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 11.8525
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "b1046d92-6fe7-4e13-b9e2-ad65cc0a0623",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 11.1366
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "33a5f398-6cc1-4c89-b99a-88e406173574",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 10.5076
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a99c1d78-5006-4ecf-ad00-f729f8de6f14",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 10.3647
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "bacc197a-7d7b-402f-b284-44c239f5c523",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 10.1828
+        }
+      ],
+      "old_top": []
+    }
+  ]
+}

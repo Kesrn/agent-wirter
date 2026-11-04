@@ -153,7 +153,14 @@ def _create_outline(project_id, seq, title, summary="", turning_point=""):
     return oid
 
 
-def _create_world_entry(project_id, title, category="general", scope_type="global", content=""):
+def _create_world_entry(
+    project_id,
+    title,
+    category="general",
+    scope_type="global",
+    content="",
+    chapter_sequence_number=None,
+):
     """通过 API 创建设定"""
     resp = client.post(
         f"/api/projects/{project_id}/world-entries",
@@ -161,6 +168,7 @@ def _create_world_entry(project_id, title, category="general", scope_type="globa
             "title": title,
             "category": category,
             "scope_type": scope_type,
+            "chapter_sequence_number": chapter_sequence_number,
             "content": content,
         },
         headers=_auth(),
@@ -379,13 +387,15 @@ class TestChapterContextService:
         assert ctx.stats.hidden_threads == 1
         assert ctx.hidden_threads[0].name == "暗线A"
 
-    def test_world_entries_global_and_chapter(self):
-        """设定加载：全局 + 章节 scope_type 都加载"""
+    def test_world_entries_global_and_current_chapter_only(self):
+        """自动设定只加载全局 + 明确归属于当前章节的条目。"""
         pid = _create_project("设定加载测试")
         _create_chapter(pid, "第一章", 1)
 
         _create_world_entry(pid, "全局设定A", "geography", "global", "这是全局设定")
-        _create_world_entry(pid, "章节设定A", "character", "chapter", "这是章节设定")
+        _create_world_entry(pid, "章节设定A", "character", "chapter", "这是章节设定", 1)
+        _create_world_entry(pid, "第二章设定", "character", "chapter", "不应进入第一章", 2)
+        _create_world_entry(pid, "旧未归属设定", "character", "chapter", "必须显式选择")
 
         async def _run():
             async with test_session_factory() as session:
@@ -399,6 +409,39 @@ class TestChapterContextService:
         assert "全局设定A" in global_titles
         chapter_titles = {w.title for w in ctx.world_entries if w.scope_type == "chapter"}
         assert "章节设定A" in chapter_titles
+        assert "第二章设定" not in chapter_titles
+        assert "旧未归属设定" not in chapter_titles
+
+    def test_strict_material_selection_matches_picker_whitelist(self):
+        """角色、设定和暗线严格按素材选择器 ID 进入任务卡上下文。"""
+        pid = _create_project("严格素材白名单")
+        _create_chapter(pid, "第一章", 1)
+        selected_character = _create_character(pid, "选中角色", "protagonist", "应进入")
+        unselected_character = _create_character(pid, "未选角色", "supporting", "不应进入")
+        _create_character_event(pid, selected_character, 1, "选中事件", importance=5)
+        _create_character_event(pid, unselected_character, 1, "未选事件", importance=5)
+        selected_world = _create_world_entry(pid, "选中设定", "rule", "global", "应进入")
+        _create_world_entry(pid, "未选设定", "rule", "global", "不应进入")
+        selected_thread = _create_hidden_thread(pid, "选中暗线", "应进入", [1])
+        _create_hidden_thread(pid, "未选暗线", "不应进入", [1])
+
+        async def _run():
+            async with test_session_factory() as session:
+                return await build_chapter_context(
+                    session,
+                    pid,
+                    1,
+                    selected_character_ids=[selected_character],
+                    selected_world_entry_ids=[selected_world],
+                    selected_hidden_thread_ids=[selected_thread],
+                    strict_material_selection=True,
+                )
+
+        ctx = asyncio.new_event_loop().run_until_complete(_run())
+        assert [value.name for value in ctx.characters] == ["选中角色"]
+        assert [value.character_name for value in ctx.character_events] == ["选中角色"]
+        assert [value.title for value in ctx.world_entries] == ["选中设定"]
+        assert [value.name for value in ctx.hidden_threads] == ["选中暗线"]
 
     def test_previous_chapters_ordered(self):
         """前文只加载最近 3 章已定稿内容，按序号升序排列"""

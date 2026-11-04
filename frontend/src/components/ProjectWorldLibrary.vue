@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useUiStore, useWorldEntryStore, friendlyError } from '../stores'
+import { useChapterStore, useUiStore, useWorldEntryStore, friendlyError } from '../stores'
 import type { ProjectMode, WorldEntry } from '../api/types'
 
 type EntryForm = {
   title: string
   category: string
   scope_type: WorldEntry['scope_type']
+  chapter_sequence_number: number | null
   content: string
   confidence: WorldEntry['confidence']
 }
@@ -21,7 +22,9 @@ const emit = defineEmits<{
 }>()
 
 const worldEntryStore = useWorldEntryStore()
+const chapterStore = useChapterStore()
 const ui = useUiStore()
+const chapters = computed(() => chapterStore.chaptersForProject(props.projectId))
 
 const labels = computed(() => {
   if (props.projectMode === 'article') {
@@ -99,6 +102,7 @@ const defaultForm = (): EntryForm => ({
   title: '',
   category: '',
   scope_type: 'global',
+  chapter_sequence_number: null,
   content: '',
   confidence: 'medium',
 })
@@ -117,6 +121,7 @@ function editEntry(entry: WorldEntry) {
     title: entry.title,
     category: entry.category ?? '',
     scope_type: entry.scope_type,
+    chapter_sequence_number: entry.chapter_sequence_number,
     content: entry.content,
     confidence: entry.confidence,
   }
@@ -144,6 +149,9 @@ async function saveEntry() {
       title: entryForm.value.title.trim(),
       category: entryForm.value.category.trim(),
       scope_type: entryForm.value.scope_type,
+      chapter_sequence_number: entryForm.value.scope_type === 'chapter'
+        ? entryForm.value.chapter_sequence_number
+        : null,
       content: entryForm.value.content.trim(),
       confidence: entryForm.value.confidence,
     }
@@ -213,6 +221,15 @@ async function deleteEntry(entry: WorldEntry) {
                 <option v-for="option in confidenceOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
               </select>
             </div>
+            <div v-if="entryForm.scope_type === 'chapter' && projectMode === 'novel'" class="form-row">
+              <label>归属章节</label>
+              <select v-model="entryForm.chapter_sequence_number" class="form-input">
+                <option :value="null">未归属</option>
+                <option v-for="chapter in chapters" :key="chapter.id" :value="chapter.chapter_num">
+                  第 {{ chapter.chapter_num }} 章 · {{ chapter.title }}
+                </option>
+              </select>
+            </div>
           </div>
           <div class="form-row">
             <label>内容 <span class="required">*</span></label>
@@ -229,6 +246,9 @@ async function deleteEntry(entry: WorldEntry) {
             <div class="entry-head">
               <span class="entry-title">{{ entry.title }}</span>
               <span class="badge badge-scope" :class="entry.scope_type">{{ scopeLabel(entry.scope_type) }}</span>
+              <span v-if="entry.scope_type === 'chapter'" class="badge badge-scope chapter">
+                {{ entry.chapter_sequence_number ? `第${entry.chapter_sequence_number}章` : '未归属' }}
+              </span>
               <span class="badge badge-confidence" :class="entry.confidence">{{ confidenceLabel(entry.confidence) }}</span>
               <span class="entry-actions">
                 <button class="mini-btn" title="编辑" @click="editEntry(entry)">编辑</button>

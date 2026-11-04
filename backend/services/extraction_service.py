@@ -39,6 +39,11 @@ from services.extraction_normalization import (
     normalize_world_rule_category,
 )
 from services.evidence_helpers import make_evidence_ref, evidence_items_equal, evidence_text
+from services.split_generation_service import (
+    count_chapters_for_generation,
+    get_active_generation_id,
+    get_chapters_for_generation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +162,10 @@ async def advance_extraction_job(
     job_obj.status = JobStatus.RUNNING
     job_obj.started_at = job_obj.started_at or datetime.now(timezone.utc)
     job_obj.last_run_started_at = datetime.now(timezone.utc)
+    # 先落库 RUNNING 状态并释放 SQLite 写锁：后续每章 LLM 调用（真实模型
+    # 单章几十秒）期间不能持有写锁，否则并发请求（如删除资料/上传）会
+    # database is locked（WAL 下写写仍互斥，busy_timeout 兜底等待）。
+    await db.commit()
 
     # 每批读一次项目级 alias_map，传给本批所有 merge（避免每章查 DB）。
     # alias_map 用于把“张侯/张候/张小侯”等异名统一到规范人物名。
@@ -176,6 +185,8 @@ async def advance_extraction_job(
     # 下次推进仍可以从 RETRYING/未完成章节继续。
     for chapter in chapters_to_process[:chapters_this_advance]:
         job_obj.current_chapter_no = chapter.chapter_no
+        # 落库当前章进度后释放写锁：LLM 调用期间保持无锁状态
+        await db.commit()
         try:
             await _process_single_chapter(
                 db, job_obj, chapter, genre, canon_level, origin, user_id,
@@ -272,6 +283,10 @@ async def _get_or_create_job(
     job_obj = result.scalar_one_or_none()
 
     if not job_obj:
+        # 规则 4：任务启动时锁定当前活动切分代，运行中不随活动指针漂移
+        # （抽取基于的章节定义中途不得变化）。旧任务 split_generation_id=NULL，
+        # 推进时回退到当前活动代，保持旧行为。
+        split_generation_id = await get_active_generation_id(db, pid, sid)
         job_obj = ExtractionJob(
             project_id=pid, source_id=sid, genre=genre,
             canon_level=canon_level, origin=origin,
@@ -281,6 +296,7 @@ async def _get_or_create_job(
             chapter_no_end=chapter_no_end,
             max_chapters_per_run=max_chapters_per_run,
             force_reextract=force_reextract,
+            split_generation_id=split_generation_id,
         )
         db.add(job_obj)
         await db.flush()
@@ -293,20 +309,36 @@ async def _get_or_create_job(
     return _job_to_dict(job_obj)
 
 
+async def _job_generation_id(
+    db: AsyncSession, job: ExtractionJob,
+) -> uuid.UUID | None:
+    """任务锁定的切分代（规则 4）：job 锁定代优先，旧任务回退活动代。
+
+    活动代存在但 job 未锁定时（迁移前的旧任务）按当前活动代读取，
+    保持旧行为；无任何代（未迁移库）返回 None，调用方按空处理。
+    """
+    pid, sid = str(job.project_id), str(job.source_id)
+    if job.split_generation_id is not None:
+        return job.split_generation_id if isinstance(
+            job.split_generation_id, uuid.UUID
+        ) else uuid.UUID(str(job.split_generation_id))
+    return await get_active_generation_id(db, pid, sid)
+
+
 async def _select_chapters_to_process(
     db: AsyncSession, pid: str, sid: str, job: ExtractionJob, force_reextract: bool,
 ) -> list[ProjectSourceChapter]:
-    """选择本次要处理的章节：范围内、且未成功抽取（除非 force_reextract）。"""
-    # 章节范围
-    stmt = select(ProjectSourceChapter).where(ProjectSourceChapter.source_id == sid)
-    if job.chapter_no_start:
-        stmt = stmt.where(ProjectSourceChapter.chapter_no >= job.chapter_no_start)
-    if job.chapter_no_end:
-        stmt = stmt.where(ProjectSourceChapter.chapter_no <= job.chapter_no_end)
-    stmt = stmt.order_by(ProjectSourceChapter.chapter_no)
+    """选择本次要处理的章节：任务锁定代内、范围内、且未成功抽取（除非 force）。
 
-    result = await db.execute(stmt)
-    all_chapters = list(result.scalars().all())
+    规则 7：章节读取统一走 split_generation_service 仓库（按代过滤），
+    杜绝激活后 legacy + 新代同时被读到（章节翻倍）。
+    """
+    generation_id = await _job_generation_id(db, job)
+    all_chapters = await get_chapters_for_generation(
+        db, pid, sid, generation_id,
+        chapter_no_start=job.chapter_no_start,
+        chapter_no_end=job.chapter_no_end,
+    )
 
     # 总章数（范围内）
     job.total_chapters = len(all_chapters)
@@ -332,12 +364,13 @@ async def _select_chapters_to_process(
 async def _count_chapters_in_range(
     db: AsyncSession, pid: str, sid: str, job: ExtractionJob,
 ) -> int:
-    stmt = select(func.count(ProjectSourceChapter.id)).where(ProjectSourceChapter.source_id == sid)
-    if job.chapter_no_start:
-        stmt = stmt.where(ProjectSourceChapter.chapter_no >= job.chapter_no_start)
-    if job.chapter_no_end:
-        stmt = stmt.where(ProjectSourceChapter.chapter_no <= job.chapter_no_end)
-    return (await db.execute(stmt)).scalar() or 0
+    """任务锁定代内的章节计数（规则 7：统一仓库）。"""
+    generation_id = await _job_generation_id(db, job)
+    return await count_chapters_for_generation(
+        db, pid, sid, generation_id,
+        chapter_no_start=job.chapter_no_start,
+        chapter_no_end=job.chapter_no_end,
+    )
 
 
 # ── 单章处理 ─────────────────────────────────────────────
@@ -541,9 +574,18 @@ async def _staging_keys_for_source(
     *,
     source_id: str,
     genre: str,
+    generation_id: uuid.UUID | None,
     exclude_chapter_no: int | None = None,
     include_chapter_no: int | None = None,
 ) -> dict[str, set]:
+    """MERGED staging 的去重键汇总（规则 4/7：双重代限定）。
+
+    只采用**当前任务同代**的证据：
+      - staging 所属 job 的 split_generation_id == 当前任务代；
+      - join 的章节行 split_generation_id == 当前任务代。
+    杜绝旧代 job 的 staging 被新代任务当成证据（同 chapter_no 跨代串数据）。
+    generation_id 为 None（未迁移库）时保持旧行为（不限代）。
+    """
     stmt = (
         select(ExtractionStaging.raw_json, ProjectSourceChapter.content)
         .join(
@@ -555,6 +597,11 @@ async def _staging_keys_for_source(
         .where(ExtractionStaging.source_id == source_id)
         .where(ExtractionStaging.status == StagingStatus.MERGED)
     )
+    if generation_id is not None:
+        # staging 所属 job 必须属于当前任务代（旧代 job 的 staging 不得作为新代证据）
+        stmt = stmt.join(ExtractionJob, ExtractionJob.id == ExtractionStaging.job_id)
+        stmt = stmt.where(ExtractionJob.split_generation_id == generation_id)
+        stmt = stmt.where(ProjectSourceChapter.split_generation_id == generation_id)
     if include_chapter_no is not None:
         stmt = stmt.where(ExtractionStaging.chapter_no == include_chapter_no)
     if exclude_chapter_no is not None:
@@ -591,16 +638,19 @@ async def _clear_stale_structured_results_for_chapter(
     sid = str(job.source_id)
     chapter_no = chapter.chapter_no
     current_keys = _extraction_keys(extraction)
+    gen_id = await _job_generation_id(db, job)
     target_keys = await _staging_keys_for_source(
         db,
         source_id=sid,
         genre=genre,
+        generation_id=gen_id,
         include_chapter_no=chapter_no,
     )
     outside_keys = await _staging_keys_for_source(
         db,
         source_id=sid,
         genre=genre,
+        generation_id=gen_id,
         exclude_chapter_no=chapter_no,
     )
 
@@ -1425,24 +1475,61 @@ async def retry_extraction_chapter(
     pid = str(project_id)
     sid = str(source_id)
 
-    # 找到该章节
-    chapter_result = await db.execute(
+    # 该章代次以**失败 staging 所属 job** 为准（规则 4/7）：
+    # 复用 job 时可能拿到旧代 job，不能按当前活动代选章节/删 staging。
+    failed_staging = (
+        await db.execute(
+            select(ExtractionStaging)
+            .where(ExtractionStaging.source_id == sid)
+            .where(ExtractionStaging.chapter_no == chapter_no)
+            .order_by(ExtractionStaging.updated_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    owner_generation_id = None
+    owner_job_id = None
+    if failed_staging is not None and failed_staging.job_id is not None:
+        owner_job = await db.get(ExtractionJob, uuid.UUID(str(failed_staging.job_id)))
+        if owner_job is not None:
+            owner_generation_id = owner_job.split_generation_id
+            owner_job_id = owner_job.id
+    if owner_generation_id is None:
+        # 无失败 staging（或 staging 无 job）：回退当前活动代
+        owner_generation_id = await get_active_generation_id(db, pid, sid)
+
+    # 找到该章节（限定失败 staging 所属代的章节，避免 legacy/新代同号歧义）
+    chapter_stmt = (
         select(ProjectSourceChapter)
         .where(ProjectSourceChapter.source_id == sid)
         .where(ProjectSourceChapter.chapter_no == chapter_no)
         .limit(1)
     )
+    if owner_generation_id is not None:
+        chapter_stmt = chapter_stmt.where(
+            ProjectSourceChapter.split_generation_id == owner_generation_id
+        )
+    chapter_result = await db.execute(chapter_stmt)
     chapter = chapter_result.scalar_one_or_none()
     if not chapter:
         return {"error": f"章节 {chapter_no} 不存在", "chapter_no": chapter_no}
 
-    # 重置该章节的失败 staging → 删除旧 staging，让重新抽取
+    # 重置该章 staging（限定所属 job；无主记录仅删 job_id IS NULL 的行），
+    # 绝不误删其他代 job 的同号 staging。
     from sqlalchemy import delete as sa_delete
-    await db.execute(
-        sa_delete(ExtractionStaging)
-        .where(ExtractionStaging.source_id == sid)
-        .where(ExtractionStaging.chapter_no == chapter_no)
-    )
+    if owner_job_id is not None:
+        await db.execute(
+            sa_delete(ExtractionStaging)
+            .where(ExtractionStaging.job_id == str(owner_job_id))
+            .where(ExtractionStaging.source_id == sid)
+            .where(ExtractionStaging.chapter_no == chapter_no)
+        )
+    else:
+        await db.execute(
+            sa_delete(ExtractionStaging)
+            .where(ExtractionStaging.job_id.is_(None))
+            .where(ExtractionStaging.source_id == sid)
+            .where(ExtractionStaging.chapter_no == chapter_no)
+        )
     await db.flush()
 
     # 找到当前 job（或创建）
@@ -1571,4 +1658,6 @@ def _job_to_dict(job: ExtractionJob) -> dict:
         "cancelled_at": getattr(job, "cancelled_at", None),
         "last_run_started_at": getattr(job, "last_run_started_at", None),
         "last_run_finished_at": getattr(job, "last_run_finished_at", None),
+        "split_generation_id": str(job.split_generation_id)
+        if getattr(job, "split_generation_id", None) else None,
     }

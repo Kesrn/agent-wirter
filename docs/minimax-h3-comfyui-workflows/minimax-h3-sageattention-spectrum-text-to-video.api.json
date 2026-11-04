@@ -1,0 +1,240 @@
+{
+  "1": {
+    "_meta": {
+      "title": "MiniMax H3 INT8 FL2VA Quality Model"
+    },
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "_meta": {
+      "title": "MiniMax H3 Ada INT4 ConvRot Encoder"
+    },
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_int4_convrot.safetensors",
+      "device": "default",
+      "type": "minimax"
+    }
+  },
+  "3": {
+    "_meta": {
+      "title": "MiniMax H3 Video VAE"
+    },
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    }
+  },
+  "4": {
+    "_meta": {
+      "title": "MiniMax H3 Audio VAE"
+    },
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    }
+  },
+  "5": {
+    "_meta": {
+      "title": "MiniMax H3 Prompt and AV Latent"
+    },
+    "class_type": "MiniMaxH3ImageToVideo",
+    "inputs": {
+      "clip": [
+        "2",
+        0
+      ],
+      "height": 480,
+      "length": 124,
+      "prompt": "Cinematic live-action macro shot at dawn: a small red paper boat glides through a shallow rain puddle on a quiet Singapore street. The camera tracks smoothly beside it as warm sunrise reflections ripple across the water. Natural paper texture, realistic water movement, gentle depth of field, no text or watermark. Audio: soft stereo rainfall, distant morning birds, a faint passing bicycle bell, and delicate water ripples synced to the boat.",
+      "vae": [
+        "3",
+        0
+      ],
+      "width": 864
+    }
+  },
+  "6": {
+    "_meta": {
+      "title": "MiniMax H3 Seed"
+    },
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 20260804
+    }
+  },
+  "7": {
+    "_meta": {
+      "title": "Patch Sage Attention KJ — candidate only"
+    },
+    "class_type": "PathchSageAttentionKJ",
+    "inputs": {
+      "allow_compile": false,
+      "model": [
+        "1",
+        0
+      ],
+      "sage_attention": "auto"
+    }
+  },
+  "8": {
+    "_meta": {
+      "title": "Spectrum Apply MiniMax H3"
+    },
+    "class_type": "SpectrumApplyMiniMaxH3",
+    "inputs": {
+      "blend_weight": 0.5,
+      "debug": false,
+      "degree": 4,
+      "enabled": true,
+      "history_storage": "system_ram",
+      "max_history": 8,
+      "model": [
+        "7",
+        0
+      ],
+      "ridge_lambda": 0.1,
+      "tail_actual_steps": 1,
+      "warmup_steps": 5,
+      "window_size": 2,
+      "flex_window": 0.75
+    }
+  },
+  "9": {
+    "_meta": {
+      "title": "MiniMax H3 Basic Guider"
+    },
+    "class_type": "BasicGuider",
+    "inputs": {
+      "conditioning": [
+        "5",
+        0
+      ],
+      "model": [
+        "8",
+        0
+      ]
+    }
+  },
+  "10": {
+    "_meta": {
+      "title": "Official H3 Sampler"
+    },
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "res_multistep"
+    }
+  },
+  "11": {
+    "_meta": {
+      "title": "Official H3 Schedule"
+    },
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "denoise": 1.0,
+      "model": [
+        "1",
+        0
+      ],
+      "scheduler": "simple",
+      "steps": 20
+    }
+  },
+  "12": {
+    "_meta": {
+      "title": "MiniMax H3 AV Sampling"
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "guider": [
+        "9",
+        0
+      ],
+      "latent_image": [
+        "5",
+        1
+      ],
+      "noise": [
+        "6",
+        0
+      ],
+      "sampler": [
+        "10",
+        0
+      ],
+      "sigmas": [
+        "11",
+        0
+      ]
+    }
+  },
+  "13": {
+    "_meta": {
+      "title": "Decode H3 Video"
+    },
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "12",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    }
+  },
+  "14": {
+    "_meta": {
+      "title": "Decode H3 Stereo Audio"
+    },
+    "class_type": "VAEDecodeAudio",
+    "inputs": {
+      "samples": [
+        "12",
+        0
+      ],
+      "vae": [
+        "4",
+        0
+      ]
+    }
+  },
+  "15": {
+    "_meta": {
+      "title": "Create H3 AV Video"
+    },
+    "class_type": "CreateVideo",
+    "inputs": {
+      "audio": [
+        "14",
+        0
+      ],
+      "bit_depth": 8,
+      "fps": 24.0,
+      "images": [
+        "13",
+        0
+      ]
+    }
+  },
+  "16": {
+    "_meta": {
+      "title": "Archive MiniMax H3 Video"
+    },
+    "class_type": "SaveVideo",
+    "inputs": {
+      "codec": "auto",
+      "filename_prefix": "minimax-h3-sageattention-spectrum-text",
+      "format": "mp4",
+      "video": [
+        "15",
+        0
+      ]
+    }
+  }
+}

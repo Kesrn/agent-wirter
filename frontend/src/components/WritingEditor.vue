@@ -17,6 +17,11 @@ const props = defineProps<{
   mode: ProjectMode
 }>()
 
+// 补锁 3：编辑器选中文本 / 光标所在段落上报（供对话意图理解"改这段/改选中部分"）
+const emit = defineEmits<{
+  selectionChange: [payload: { selection: string | null; currentParagraph: string | null }]
+}>()
+
 const chapterStore = useChapterStore()
 const documentStore = useDocumentStore()
 const ui = useUiStore()
@@ -102,7 +107,7 @@ async function handleApplyGeneration(recordId: string, content: string) {
   dirty.value = true
   await generationHistoryStore.updateRecordStatus(props.projectId, recordId, 'applied')
   ui.showToast('已应用到编辑器，请确认后保存', 'success')
-  nextTick(syncTextareaHeight)
+  nextTick(() => syncTextareaHeight())
 }
 
 async function handleRestoreVersion(_versionId: string, content: string) {
@@ -187,18 +192,62 @@ function cancelAutoSave() {
 
 onUnmounted(() => cancelAutoSave())
 
-function syncTextareaHeight() {
+let textareaResizeObserver: ResizeObserver | null = null
+let observedTextareaParent: HTMLElement | null = null
+let saveRequestDisposer: (() => void) | undefined
+
+function observeTextareaParent(parent: HTMLElement) {
+  if (typeof ResizeObserver === 'undefined') return
+  if (!textareaResizeObserver) {
+    textareaResizeObserver = new ResizeObserver(() => {
+      requestAnimationFrame(() => syncTextareaHeight())
+    })
+  }
+  if (observedTextareaParent === parent) return
+  if (observedTextareaParent) textareaResizeObserver.unobserve(observedTextareaParent)
+  observedTextareaParent = parent
+  textareaResizeObserver.observe(parent)
+}
+
+function syncTextareaHeight(preserveScroll = true, scrollSnapshot?: ReturnType<typeof snapshotEditorScroll>) {
   const el = textareaRef.value
   const parent = el?.parentElement
   if (!el || !parent) return
 
+  const scroller = parent.classList.contains('editor-content')
+    ? parent
+    : el.closest('.editor-content') as HTMLElement | null
+  const activeScrollSnapshot = scrollSnapshot ?? pendingEditorScroll
+  const preservedScroller = activeScrollSnapshot?.scroller ?? scroller
+  const scrollTop = activeScrollSnapshot?.scrollTop ?? (preserveScroll ? scroller?.scrollTop ?? 0 : null)
+  const scrollLeft = activeScrollSnapshot?.scrollLeft ?? (preserveScroll ? scroller?.scrollLeft ?? 0 : null)
+
+  observeTextareaParent(parent)
   const parentStyle = window.getComputedStyle(parent)
   const verticalPadding =
     parseFloat(parentStyle.paddingTop || '0') + parseFloat(parentStyle.paddingBottom || '0')
   const baseMinHeight = props.mode === 'novel' ? 360 : 320
   const minHeight = Math.max(baseMinHeight, parent.clientHeight - verticalPadding)
   el.style.height = 'auto'
-  el.style.height = `${Math.max(minHeight, el.scrollHeight)}px`
+  // 全局使用 border-box。scrollHeight 包含 padding、但不包含 border；
+  // 同时向上取整，避免字体行高产生小数像素时最后一行被圆角边框裁掉。
+  const borderBoxAdjustment = el.offsetHeight - el.clientHeight
+  const contentHeight = Math.ceil(el.scrollHeight + borderBoxAdjustment)
+  el.style.height = `${Math.max(minHeight, contentHeight)}px`
+
+  // 重新测量高度会改变 editor-content 的 scrollHeight；浏览器可能因此
+  // 触发滚动锚定，把正在编辑的位置拉回顶部。恢复编辑器滚动位置，
+  // 让输入时的视角由用户和光标位置决定，而不是由布局测量决定。
+  if (preservedScroller && scrollTop != null && scrollLeft != null) {
+    const restoreScroll = () => {
+      if (!preservedScroller.isConnected) return
+      preservedScroller.scrollTop = scrollTop
+      preservedScroller.scrollLeft = scrollLeft
+    }
+    restoreScroll()
+    // 某些浏览器会在本次布局提交后再次执行滚动锚定，下一帧再恢复一次。
+    requestAnimationFrame(restoreScroll)
+  }
 }
 
 // Detect external draft changes (for example, applying an AI candidate from AgentPanel)
@@ -206,10 +255,7 @@ let lastKnownDraft = ''
 let lastUnitId = ''
 watch(currentUnit, (unit) => {
   if (!unit) return
-  // 保存后 store 会用后端返回对象替换当前章节；即使正文未变化，也要恢复
-  // textarea 高度，让外层 editor-content 继续作为唯一滚动层。
-  nextTick(syncTextareaHeight)
-  // Reset tracking when switching writing units
+  // 切换章节：清空面板状态，不继承上一章的滚动位置，重置到新章节顶部。
   if (unit.id !== lastUnitId) {
     lastUnitId = unit.id
     lastKnownDraft = unit.draft
@@ -218,15 +264,29 @@ watch(currentUnit, (unit) => {
     generationHistoryStore.clearState()
     showDiffViewer.value = false
     showGenerationPanel.value = false
-    nextTick(syncTextareaHeight)
+    nextTick(() => syncTextareaHeight(false))
     return
   }
+  // 保存后 store 会用后端返回对象替换当前章节（id 不变、对象引用变化）。
+  // 即使正文未变化，也要恢复 textarea 高度，让外层 editor-content 继续作为
+  // 唯一滚动层；同时必须保留当前滚动位置，否则保存后视角会被重置到顶部。
+  nextTick(() => syncTextareaHeight())
   if (unit.draft !== lastKnownDraft) {
     lastKnownDraft = unit.draft
     dirty.value = true
-    nextTick(syncTextareaHeight)
+    nextTick(() => syncTextareaHeight())
   }
 }, { immediate: true })
+
+// AI 候选稿可能直接修改 Pinia 中的 draft 对象，而不是替换整个章节对象。
+// 这类更新不会触发上面的 watch(currentUnit)，必须按正文值重新测量高度，
+// 否则新增加的末尾内容会落在旧 textarea 高度之外，被底部圆角裁切。
+watch(currentDraftText, () => {
+  nextTick(() => {
+    syncTextareaHeight()
+    requestAnimationFrame(() => syncTextareaHeight())
+  })
+}, { flush: 'post' })
 
 // Warn before leaving with unsaved changes
 onBeforeRouteLeave(() => {
@@ -258,24 +318,53 @@ onMounted(() => {
   if (saved) selectedFont.value = saved
   const savedArticleView = localStorage.getItem('article_markdown_view')
   if (isArticleViewMode(savedArticleView)) articleViewMode.value = savedArticleView
-  window.addEventListener('resize', syncTextareaHeight)
-  nextTick(syncTextareaHeight)
+  window.addEventListener('resize', handleEditorResize)
+  window.addEventListener('keydown', handleGlobalKeydown)
+  // Electron 桌面端：主进程在浏览器进程层捕获 Cmd/Ctrl+S 后通过 IPC 通知；
+  // 浏览器环境下 desktopApp 不存在，仍由上面的 window keydown 兜底。
+  saveRequestDisposer = window.desktopApp?.onSaveRequested?.(handleManualSave)
+  nextTick(() => syncTextareaHeight())
+  // 字体加载完成后字宽/行高可能发生变化；初次测量过早会让长正文末尾再次被裁切。
+  if (document.fonts?.ready) {
+    void document.fonts.ready.then(() => {
+      nextTick(() => {
+        syncTextareaHeight()
+        requestAnimationFrame(() => syncTextareaHeight())
+      })
+    })
+  }
 })
-onUnmounted(() => window.removeEventListener('resize', syncTextareaHeight))
+onUnmounted(() => {
+  window.removeEventListener('resize', handleEditorResize)
+  window.removeEventListener('keydown', handleGlobalKeydown)
+  saveRequestDisposer?.()
+  saveRequestDisposer = undefined
+  textareaResizeObserver?.disconnect()
+  textareaResizeObserver = null
+  observedTextareaParent = null
+})
 
 function setFont(value: string) {
   selectedFont.value = value
   localStorage.setItem('novel_font_family', value)
+  nextTick(() => {
+    syncTextareaHeight()
+    requestAnimationFrame(() => syncTextareaHeight())
+  })
 }
 
 function setArticleViewMode(mode: 'edit' | 'preview' | 'split') {
   articleViewMode.value = mode
   localStorage.setItem('article_markdown_view', mode)
-  nextTick(syncTextareaHeight)
+  nextTick(() => syncTextareaHeight())
 }
 
 function isArticleViewMode(value: string | null): value is 'edit' | 'preview' | 'split' {
   return value === 'edit' || value === 'preview' || value === 'split'
+}
+
+function handleEditorResize() {
+  syncTextareaHeight()
 }
 
 // Rich text toolbar (article mode)
@@ -317,6 +406,8 @@ function snapshotEditorScroll(el: HTMLTextAreaElement) {
   }
 }
 
+let pendingEditorScroll: ReturnType<typeof snapshotEditorScroll> | null = null
+
 function restoreEditorScroll(snapshot: ReturnType<typeof snapshotEditorScroll>, el?: HTMLTextAreaElement | null) {
   if (snapshot.scroller) {
     snapshot.scroller.scrollTop = snapshot.scrollTop
@@ -327,6 +418,17 @@ function restoreEditorScroll(snapshot: ReturnType<typeof snapshotEditorScroll>, 
     el.scrollLeft = snapshot.textareaScrollLeft
   }
   window.scrollTo(snapshot.windowX, snapshot.windowY)
+}
+
+function holdEditorScroll(snapshot: ReturnType<typeof snapshotEditorScroll>) {
+  pendingEditorScroll = snapshot
+  requestAnimationFrame(() => {
+    restoreEditorScroll(snapshot, textareaRef.value)
+    requestAnimationFrame(() => {
+      restoreEditorScroll(snapshot, textareaRef.value)
+      if (pendingEditorScroll === snapshot) pendingEditorScroll = null
+    })
+  })
 }
 
 function pushEditorHistory(previousText: string) {
@@ -369,16 +471,20 @@ function applyEditorText(
   if (recordHistory && nextText !== previousText) {
     pushEditorHistory(previousText)
   }
+  const scrollSnapshot = textareaRef.value ? snapshotEditorScroll(textareaRef.value) : null
+  if (scrollSnapshot) pendingEditorScroll = scrollSnapshot
   updateCurrentDraft(nextText)
   scheduleAutoSave()
-  const scrollSnapshot = textareaRef.value ? snapshotEditorScroll(textareaRef.value) : null
   requestAnimationFrame(() => {
     const el = textareaRef.value
-    syncTextareaHeight()
+    syncTextareaHeight(true, scrollSnapshot ?? undefined)
     if (!el) return
     el.focus({ preventScroll: true })
     el.setSelectionRange(selectionStart, selectionEnd)
-    if (scrollSnapshot) restoreEditorScroll(scrollSnapshot, el)
+    if (scrollSnapshot) {
+      restoreEditorScroll(scrollSnapshot, el)
+      holdEditorScroll(scrollSnapshot)
+    }
   })
 }
 
@@ -408,6 +514,21 @@ function selectedLineRange(text: string, start: number, end: number) {
     lineEnd,
     block: text.slice(lineStart, lineEnd),
   }
+}
+
+/** 补锁 3：上报选中文本与光标所在段落（供对话意图理解上下文） */
+function reportSelection() {
+  const el = textareaRef.value
+  if (!el) return
+  const text = el.value
+  const start = el.selectionStart
+  const end = el.selectionEnd
+  const selected = end > start ? text.slice(start, end) : ''
+  const { block } = selectedLineRange(text, start, end)
+  emit('selectionChange', {
+    selection: selected.trim() || null,
+    currentParagraph: block.trim() || null,
+  })
 }
 
 function transformSelectedLines(transform: (line: string, index: number) => string) {
@@ -628,7 +749,7 @@ async function handleImageSelected(event: Event) {
     const nextText = text.slice(0, selection.start) + replacement + text.slice(selection.end)
     applyEditorText(nextText, selection.start + replacement.length, selection.start + replacement.length)
     ui.showToast('图片已插入', 'success')
-    if (!el) nextTick(syncTextareaHeight)
+    if (!el) nextTick(() => syncTextareaHeight())
   } catch (e: unknown) {
     ui.showToast(friendlyError(e, '图片上传失败'), 'error')
   } finally {
@@ -718,6 +839,17 @@ function handleEditorKeydown(event: KeyboardEvent) {
   }
 }
 
+// Cmd/Ctrl+S 全局保存：挂在 window 上，焦点不在 textarea（例如侧栏、预览区）
+// 时也能保存；preventDefault 同时拦截浏览器默认的“保存网页”行为。
+function handleGlobalKeydown(event: KeyboardEvent) {
+  if (event.isComposing) return
+  const mod = event.metaKey || event.ctrlKey
+  if (!mod || event.key.toLowerCase() !== 's') return
+  event.preventDefault()
+  if (!currentUnit.value || saving.value) return
+  handleManualSave()
+}
+
 function handleCompositionStart() {
   isComposing.value = true
   compositionBaseText.value = currentEditorText()
@@ -725,13 +857,18 @@ function handleCompositionStart() {
 
 function handleCompositionEnd(e: CompositionEvent) {
   const nextText = (e.target as HTMLTextAreaElement).value
+  const scrollSnapshot = textareaRef.value ? snapshotEditorScroll(textareaRef.value) : null
+  if (scrollSnapshot) pendingEditorScroll = scrollSnapshot
   isComposing.value = false
   if (nextText !== compositionBaseText.value) {
     clearTypingSnapshot()
     pushEditorHistory(compositionBaseText.value)
   }
   updateCurrentDraft(nextText)
-  syncTextareaHeight()
+  syncTextareaHeight(true, scrollSnapshot ?? undefined)
+  if (scrollSnapshot) {
+    holdEditorScroll(scrollSnapshot)
+  }
   scheduleAutoSave()
   compositionBaseText.value = ''
 }
@@ -740,11 +877,16 @@ function onTextareaInput(e: Event) {
   const previousText = currentEditorText()
   const inputEvent = e as InputEvent
   const nextText = (e.target as HTMLTextAreaElement).value
+  const scrollSnapshot = textareaRef.value ? snapshotEditorScroll(textareaRef.value) : null
+  if (scrollSnapshot) pendingEditorScroll = scrollSnapshot
   if (!isComposing.value && !inputEvent.isComposing && nextText !== previousText) {
     markTypingHistory(previousText)
   }
   updateCurrentDraft(nextText)
-  syncTextareaHeight()
+  syncTextareaHeight(true, scrollSnapshot ?? undefined)
+  if (scrollSnapshot) {
+    holdEditorScroll(scrollSnapshot)
+  }
   scheduleAutoSave()
 }
 </script>
@@ -764,7 +906,7 @@ function onTextareaInput(e: Event) {
       <span v-if="!currentUnit" class="editor-title">选择一个{{ unitLabel }}开始写作</span>
 
       <!-- Save button -->
-      <button v-if="currentUnit" class="btn-save" :disabled="saving" @click="handleManualSave">
+      <button v-if="currentUnit" class="btn-save" :disabled="saving" title="保存 (⌘S / Ctrl+S)" @click="handleManualSave">
         {{ saving ? '保存中...' : '保存' }}
       </button>
       <span v-if="dirty && !saving" class="dirty-indicator">未保存</span>
@@ -883,6 +1025,9 @@ function onTextareaInput(e: Event) {
             @keydown="handleEditorKeydown"
             @compositionstart="handleCompositionStart"
             @compositionend="handleCompositionEnd"
+            @select="reportSelection"
+            @keyup="reportSelection"
+            @click="reportSelection"
             :placeholder="`${unitLabel}正文...`"
           />
           <article
@@ -1313,7 +1458,7 @@ function onTextareaInput(e: Event) {
 }
 .editor-content.novel-content {
   padding: 28px 42px 96px;
-  scroll-padding-bottom: var(--sp-4);
+  scroll-padding-bottom: 80px;
 }
 .editor-content.with-panel {
   flex: 1;
@@ -1362,7 +1507,7 @@ function onTextareaInput(e: Event) {
     0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 .novel-content .editor-textarea {
-  padding: 36px 56px 48px;
+  padding: 36px 56px 104px;
 }
 .article-content .editor-textarea {
   font-size: var(--text-base);
@@ -1542,7 +1687,7 @@ function onTextareaInput(e: Event) {
 
   .editor-textarea {
     width: 100%;
-    padding: var(--sp-5) var(--sp-4) 96px;
+    padding: var(--sp-5) var(--sp-4) 104px;
     font-size: var(--text-base);
     line-height: 1.9;
     background:

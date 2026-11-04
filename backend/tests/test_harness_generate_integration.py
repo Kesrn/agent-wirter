@@ -26,7 +26,7 @@ def _compile_uuid_sqlite(type_, compiler, **kw):
 
 from models.base import Base
 import models  # noqa: F401 — 注册全部模型
-import tests.test_smoke as smoke  # 复用其 TestClient/engine/override，避免双引擎冲突
+import test_smoke as smoke  # 复用其 TestClient/engine/override，避免双引擎冲突
 from db.session import get_db
 from main import app
 

@@ -75,6 +75,16 @@ describe('api generation routes', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('/projects/project-1/chapters/resume')
   })
 
+  it('sends chapter finalization as one finalize resume action', async () => {
+    await api.resumeGeneration('project-1', 'thread-1', 'finalize', vi.fn(), undefined, undefined, 'novel')
+
+    const fetchMock = vi.mocked(fetch)
+    const url = String(fetchMock.mock.calls[0][0])
+    expect(url).toContain('/projects/project-1/chapters/resume')
+    expect(url).toContain('action=finalize')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('sends task card resume payload in request body instead of query string', async () => {
     const taskCard = JSON.stringify({ core_task: 'x'.repeat(10_000) })
 

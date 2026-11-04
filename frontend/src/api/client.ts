@@ -375,7 +375,7 @@ export const api = {
   resumeGeneration: (
     projectId: string,
     threadId: string,
-    action: 'approve' | 'reject' | 'review' | 'revise' | 'approve_task_card' | 'reject_task_card' | 'refresh_task_card' | 'refresh_task_card_context' | 'submit_clarification' | 'skip_clarification',
+    action: 'approve' | 'finalize' | 'reject' | 'review' | 'revise' | 'approve_task_card' | 'reject_task_card' | 'refresh_task_card' | 'refresh_task_card_context' | 'submit_clarification' | 'skip_clarification',
     onEvent: (envelope: SSEEnvelope) => void,
     feedback?: string,
     signal?: AbortSignal,

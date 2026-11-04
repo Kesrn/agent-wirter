@@ -51,6 +51,20 @@ jobs:
         working-directory: frontend
         run: npm run backend:build
 
+      # 打包后 FTS5 自动化验收（文档 RAG增强评估_小说检索方法论引入.md §6）：
+      # 检索索引依赖 SQLite FTS5，打包产物（PyInstaller 捆绑运行时）必须实际执行
+      # CREATE VIRTUAL TABLE ... USING fts5 建表 + 中文插入/检索/bm25 排序断言。
+      # 直接对 npm run backend:build 产出的实际后端可执行文件（frontend\backend-dist\
+      # ai-creative-backend.exe，由 build-backend.mjs 以 --name ai-creative-backend
+      # 打到 frontend\backend-dist）运行 --verify-fts5 自检：desktop_server.py 内联
+      # 等价断言（建表/中文插入/MATCH/bm25），退出码 0 = 通过，非 0 = 构建失败。
+      - name: Smoke-test packaged SQLite FTS5 support
+        run: |
+          if (-not (Test-Path 'frontend\backend-dist\ai-creative-backend.exe')) {
+            throw 'backend:build 产物未找到: frontend\backend-dist\ai-creative-backend.exe'
+          }
+          frontend\backend-dist\ai-creative-backend.exe --verify-fts5
+
       - name: Build desktop frontend
         working-directory: frontend
         run: npm run build:desktop

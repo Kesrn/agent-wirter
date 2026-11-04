@@ -23,7 +23,7 @@ def _compile_uuid_sqlite(type_, compiler, **kw):
 
 from models.base import Base
 import models  # noqa: F401
-import tests.test_smoke as smoke
+import test_smoke as smoke
 from db.session import get_db, set_engine
 from main import app
 

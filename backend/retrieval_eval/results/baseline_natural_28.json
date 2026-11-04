@@ -1,0 +1,1839 @@
+{
+  "meta": {
+    "runner": "run_baseline.py (ILIKE keyword baseline)",
+    "retriever": "ilike",
+    "created_at": "2026-08-02T15:18:51+00:00",
+    "db_path": "/Users/zcx/ai-creative-platform/backend/dev-web.sqlite3",
+    "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+    "project_title": "111",
+    "dataset": "/Users/zcx/ai-creative-platform/backend/retrieval_eval/datasets/natural_queries.json",
+    "top_k": 5,
+    "hit_rules": "hit = any top-K result: source_id/chunk_id in expected.source_ids, or (evidence_type matches AND snippet/title contains any expected.entities); chapter_no compared when both present"
+  },
+  "summary": {
+    "n_samples": 28,
+    "recall_at_k": 0.6071,
+    "mrr": 0.6071,
+    "precision_at_k": 0.6071,
+    "false_recall_rate": 0.3929,
+    "p95_latency_ms": 168.6,
+    "total_runtime_sec": 1.88
+  },
+  "by_category": {
+    "ability_query": {
+      "n_samples": 7,
+      "recall_at_k": 0.7143,
+      "mrr": 0.7143,
+      "precision_at_k": 0.7143,
+      "false_recall_rate": 0.2857,
+      "p95_latency_ms": 269.9
+    },
+    "character_first_appearance": {
+      "n_samples": 4,
+      "recall_at_k": 0.75,
+      "mrr": 0.75,
+      "precision_at_k": 0.75,
+      "false_recall_rate": 0.25,
+      "p95_latency_ms": 57.4
+    },
+    "meta": {
+      "n_samples": 3,
+      "recall_at_k": 0.3333,
+      "mrr": 0.3333,
+      "precision_at_k": 0.3333,
+      "false_recall_rate": 0.6667,
+      "p95_latency_ms": 162.3
+    },
+    "no_result": {
+      "n_samples": 3,
+      "recall_at_k": 0.0,
+      "mrr": 0.0,
+      "precision_at_k": 0.0,
+      "false_recall_rate": 1.0,
+      "p95_latency_ms": 11.9
+    },
+    "source_chunk": {
+      "n_samples": 7,
+      "recall_at_k": 1.0,
+      "mrr": 1.0,
+      "precision_at_k": 1.0,
+      "false_recall_rate": 0.0,
+      "p95_latency_ms": 133.8
+    },
+    "timeline_event": {
+      "n_samples": 3,
+      "recall_at_k": 0.0,
+      "mrr": 0.0,
+      "precision_at_k": 0.0,
+      "false_recall_rate": 1.0,
+      "p95_latency_ms": 168.6
+    },
+    "world_rule": {
+      "n_samples": 1,
+      "recall_at_k": 1.0,
+      "mrr": 1.0,
+      "precision_at_k": 1.0,
+      "false_recall_rate": 0.0,
+      "p95_latency_ms": 68.7
+    }
+  },
+  "by_difficulty": {
+    "alias": {
+      "n_samples": 4,
+      "recall_at_k": 1.0,
+      "mrr": 1.0,
+      "precision_at_k": 1.0,
+      "false_recall_rate": 0.0,
+      "p95_latency_ms": 133.8
+    },
+    "conflict": {
+      "n_samples": 3,
+      "recall_at_k": 0.6667,
+      "mrr": 0.6667,
+      "precision_at_k": 0.6667,
+      "false_recall_rate": 0.3333,
+      "p95_latency_ms": 55.6
+    },
+    "cross_chapter": {
+      "n_samples": 3,
+      "recall_at_k": 0.0,
+      "mrr": 0.0,
+      "precision_at_k": 0.0,
+      "false_recall_rate": 1.0,
+      "p95_latency_ms": 168.6
+    },
+    "homophone": {
+      "n_samples": 2,
+      "recall_at_k": 0.5,
+      "mrr": 0.5,
+      "precision_at_k": 0.5,
+      "false_recall_rate": 0.5,
+      "p95_latency_ms": 55.8
+    },
+    "no_inject": {
+      "n_samples": 3,
+      "recall_at_k": 0.3333,
+      "mrr": 0.3333,
+      "precision_at_k": 0.3333,
+      "false_recall_rate": 0.6667,
+      "p95_latency_ms": 162.3
+    },
+    "no_result": {
+      "n_samples": 3,
+      "recall_at_k": 0.0,
+      "mrr": 0.0,
+      "precision_at_k": 0.0,
+      "false_recall_rate": 1.0,
+      "p95_latency_ms": 11.9
+    },
+    "normal": {
+      "n_samples": 5,
+      "recall_at_k": 0.8,
+      "mrr": 0.8,
+      "precision_at_k": 0.8,
+      "false_recall_rate": 0.2,
+      "p95_latency_ms": 269.9
+    },
+    "same_name": {
+      "n_samples": 2,
+      "recall_at_k": 1.0,
+      "mrr": 1.0,
+      "precision_at_k": 1.0,
+      "false_recall_rate": 0.0,
+      "p95_latency_ms": 60.4
+    },
+    "typo": {
+      "n_samples": 3,
+      "recall_at_k": 1.0,
+      "mrr": 1.0,
+      "precision_at_k": 1.0,
+      "false_recall_rate": 0.0,
+      "p95_latency_ms": 11.2
+    }
+  },
+  "samples": [
+    {
+      "query_id": "nat-001",
+      "category": "ability_query",
+      "difficulty": "normal",
+      "query": "莫凡的火系魔法是什么等级？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "火系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "8ce03ee6-7e7d-41b2-8d40-0a30893b6225"
+        ]
+      },
+      "latency_ms": 269.9,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "de0a2fa6-e13b-4509-8432-30c30e88ef2f",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "第18章 队友很重要\n\n唐月老师灵动的眼眸落在了莫凡的身上，在探查莫凡气息的时候，她的唇不由的张了张。\n\n“莫凡，你好意思站出来，一个学期都过去了，你火系星子一个都把控不了，星尘更是暗得看不见，别逗了好吗！”赵坤三马上说道。\n\n上学期期末是有测试的，测",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "做出来了吗？”一名戴着小领结的白脸男生问道。\n\n“完美解答！”那个无论是发型、身高、长相都堪称男神的慕白说道。\n\n“不愧是我们的尖子生，这么难的混系问题都能够做出来……咦，那不是模拟考上只靠了个6分的莫凡吗？”满脸麻子的赵坤三说道。\n\n男神慕白眼睛马上不屑的瞥了一眼那个独自一人打伞的少年，道：“这家伙马上要跟他老爸一样，当一个破皮卡车采购员了。”\n\n“那不就是你们穆家的仆人了吗，哈哈哈！”\n\n这三",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2df36149-3749-4acb-aaa3-04813fee222c",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "魔法觉醒会在高中开学典礼上，全校领导老师见证下开启，那个时候哪怕你前面的理论没有学，一样是有可能开启属于自己的系！\n\n莫凡其实是真的喜欢魔法，这对他来说无疑是一次完美的奇幻重生。\n\n他也想要成为一个能够傲立高楼穹顶上方舞火唤雷的至高法师，为拯救世界做那么一点贡献。\n\n偏偏，这次考试……\n\n这么说吧，经过他临考前不懈努力，",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "3c52cc78-4caf-4c7e-bd8a-12526a5ac8fe",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "莫凡也没有再说话。\n\n“真的想学？”莫家兴再一次确认一遍。\n\n“真的。”莫凡没有一点犹豫的点头。\n\n起初莫凡也觉得是自己在做梦，世界和自己开了一个玩笑，可事实证明，世界真的变了，这不是在做梦！\n\n“那好吧",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a1231dd5-90fa-4e6a-95fb-b2805187f9e6",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "第2章 真实的阶级\n\n……\n\n这是一片围绕着一座半城山而建的一片住宅区，顺着那条有着铁栅栏的道路往前走，一直走到小路的尽头就是莫凡家了。\n\n矮矮的一小栋，一层半高，外漆已经斑驳露出红砖，周围有很多杂物。\n\n街坊邻居的房子基本上都有三层半了，经过了一番装修翻新之后显得更像是一个家，而本身就最角落又低矮的莫凡家就显得格外寒酸老旧。\n",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-002",
+      "category": "source_chunk",
+      "difficulty": "normal",
+      "query": "张小侯的风系初阶技能叫什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 19,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "03ba3287-667c-4521-a3db-3c0f9d6ff6a0"
+        ],
+        "entities": [
+          "张小侯",
+          "风轨"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 21.3,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "02f5f532-3ce5-4ae2-ad16-f060d82dfe70",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "\n马上又是开学季了。\n\n图书馆里，莫凡扫掉了自己满身的蜘蛛网准备迎接新的一个魔法学期。\n\n意气风发的走入到班级里，莫凡像往常那样坐到了最后一排位置上。\n\n恩？\n\n今天有点不对劲。\n\n莫凡看了一眼旁边的张小侯，发现这货的神情有些不对劲。\n\n往常这家伙的眼神，就跟一只好奇的小猴子，灵滑得很，并且一定会马上滔滔不绝的在上课前给自己讲这几天的见闻\n\n可今天，他双眼呆然，口微微张开，神情一脸莫名其妙陶醉的看",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "05ffb8af-e6fb-4f22-862c-34818d58b98d",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "分散在唐月老师的身后，至于大家是不是都在看唐月老师的起手仪式那的就不好说了！\n\n“火系，是火系的技能，莫凡哥……你擦擦口水吧，是你的元素系技能啊，没有想到看上去温柔贤良的唐月老师竟然是一位火魔法师！”张小侯推了推旁边的莫凡。\n\n“哦，哦，我正想学呢！”莫凡这才反应过来。\n\n——————————————————\n\n（今天去百度百科搜索了一下自己，看见一长串评论之中还有一句来形容我的话\n\n叫做“网文圈",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "03ba3287-667c-4521-a3db-3c0f9d6ff6a0",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "，烈阳高照，万里无云，刚睡了一个午觉简直就跟穿越了一般，狂风作怪，乌云密布。再到傍晚那会，暴雨冰冷、狂风凛冽！\n\n“是不是台风要来了啊，这鬼天气……真就一年四季随机播，想到哪季就哪季的节奏！”宿舍里，张小侯抱怨了起来。\n\n“张小侯，你不是风系的吗，来，到外面大风的地方试试，看看能不能把风系的初阶技能-风轨给释放出来。”同宿舍的陆小斌说道。\n\n“你他妈还水系的，怎么不见你去来一个水域，堂堂水系魔法师",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "4cd65daf-b7a3-49db-8f30-30a60061f62b",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "人撞贴在了公共厕所门上！\n\n“嗤嗤嗤嗤~~~~~~~~~~~”\n\n歪掉的水龙头狂散着水花，厕所破门坏了一边，一股浓郁的腥臭没有了守护门的阻挡后迅速飘散到整个楼层里，霎时骂声一片。\n\n风之轨迹终于消散，张小侯僵直的倒在地上，鼻子还在流血。\n\n这模样已经够惨了，偏偏那条刚才迎风飘动的三角裤在失去了风力之后终于落了下来，好死赖活的盖在了他脸上。\n\n陆小斌和舍长急忙把张小侯给拖回宿舍。\n\n舍长抢回了自己的",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "6418d893-8c87-4744-a670-ac0b4a4e6a35",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "第21章 降临学校，穆宁雪\n\n……\n\n学生宿舍\n\n“凡哥，该走了，年度考核啊，迟到了可不好。”张小侯对莫凡说道。\n\n“你先去，我再练一会把控。”莫凡说道。\n\n“临时抱火脚啊。”\n\n宿舍几个人也就不等莫凡了，穿得人模狗样的到了考场。\n\n考场自然不会是在教室里拿一张卷子奋笔疾书，魔法理论这些东西虽然也考",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-003",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第16章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "02f5f532-3ce5-4ae2-ad16-f060d82dfe70"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯",
+          "唐月"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "2519d144-a0bd-4d39-9f9d-d83033039dbd"
+        ]
+      },
+      "latency_ms": 114.4,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "nat-004",
+      "category": "world_rule",
+      "difficulty": "normal",
+      "query": "这个世界里魔法体系的规则是什么？",
+      "expected": {
+        "evidence_type": "world_rule",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "魔法体系",
+          "法师"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "63fa8b18-52ed-4b16-958d-c52071b2d680"
+        ]
+      },
+      "latency_ms": 68.7,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "b81e293a-a2dc-454d-8a24-52f802eb1fd7",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "规则",
+          "hit": true,
+          "snippet": "被干扰的时候，自己脑海是一片空无的！\n\n魔法师觉醒之后，他的这片空无世界里便会出现相应系的星尘。\n\n也就是说，现在只要莫凡闭上眼睛，完全不去浮想任何事情让脑海达到一片如黑色宇宙般空无的时候，雷系星尘和火系星尘就会在这片空无的脑海之中浮现。\n\n雷系星尘为紫色，看上去就像一片紫色的宇宙尘埃悬浮在那里，唯美迷人、绚丽多姿。\n\n雷系星尘内一共有七颗星子，这些星子们在整片小小的星尘里做无规则的运动，就像七个",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "01f9fdd4-556e-417e-a918-797e3ea016ff",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "规则",
+          "hit": true,
+          "snippet": "做的就只变成站在那里数数就好了。\n\n……\n\n“我听说他们召唤系是有指标的，需要干掉我们100个人，否则他们的资源会被分配到表现优异的系上。妈的，这食骨妖估计就可以揽下一半，多少组人上去都没有作用啊。”土系坐席上，李俊巍旁边的人讨论了起来。\n\n“确实是，难道就没有人可以终结掉这个食骨妖？？”\n\n“高手肯定有，只是他们不一定想出手吧……”\n\n几人正在讨论的时候，一个略显肥胖的脑袋却凑了过来，开口问道：",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "daf4e6a7-ac89-4482-a9fe-fe437db6884d",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "规则",
+          "hit": true,
+          "snippet": "惊人，让之前那般杂乱无杂的虾兵蟹将看看我们之间的战斗默契！”李俊巍脸上笑容飞扬。\n\n把战斗当做是一个人的事，那只能说那些挑战者都太不合格了。\n\n在初阶，大家都只有单个技能的情况下最重要的就是团队合作，雷系固然强大，元素之首，却绝没有单独对抗妖魔的能力，水系或许看上去并没有任何的攻击性，然而这初阶唯一的防御技能却绝对是战斗至关重要的一部分，李俊巍眼中根本没有一开始就是废的系，唯有一群不懂得合作的蠢材",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "44e9b580-a0ab-4105-a819-14a79046904d",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "规则",
+          "hit": true,
+          "snippet": "“要不，我们劝莫凡主动放弃了，否则影响太大啊？”周正华开口说道。\n\n一开始他们也都没有预料到会发生这种事情，萧院长说出后一条规矩的时候他们其实也就听听的态度，谁知道莫凡不仅是召唤系中的佼佼者，更掌控着雷系中阶魔法……\n\n除此之外，这家伙一定还隐藏着别的能力，否则他一定会被牧奴娇给终结，牧奴娇这实力在新生之中都属于逆天的了！\n\n“规矩就是规矩！”萧院长冷哼一声，并没有采纳周正华的意见。\n\n现场一片混",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a69497bf-788b-403b-98c7-a05f3f192711",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "规则",
+          "hit": true,
+          "snippet": "什么怪物？？”莫凡有些不解的问道。\n\n“就是黑畜妖啊。”\n\n“黑畜妖？？那不是妖魔吗？？”莫凡更是不解了。\n\n其实莫凡也有些奇怪，似乎只要是黑教廷的人都能够驱使几只黑畜妖，偏偏能够驾驭妖魔的人似乎只有召唤系的吧，总不可能黑教廷的人全部都是召唤系的？\n\n“它们不是妖魔，它们都是人，活人！”唐月说道。\n\n“什么？？”莫凡愣住了。\n\n活人？？\n\n那些黑畜妖是活人？？？\n\n“它们都是一群灵魂被诅咒了的活人",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-005",
+      "category": "ability_query",
+      "difficulty": "alias",
+      "query": "猴子是什么系的法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 19,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "03ba3287-667c-4521-a3db-3c0f9d6ff6a0"
+        ],
+        "entities": [
+          "猴子",
+          "张小侯",
+          "风系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 11.4,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a1231dd5-90fa-4e6a-95fb-b2805187f9e6",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "猴子",
+          "hit": true,
+          "snippet": "物。\n\n街坊邻居的房子基本上都有三层半了，经过了一番装修翻新之后显得更像是一个家，而本身就最角落又低矮的莫凡家就显得格外寒酸老旧。\n\n“莫凡哥，回来了啊……我给你带了个好消息咧。”刚到家门口，一个跟泥猴子一样的少年就跳了出来，满脸喜悦的说道。\n\n这泥猴子叫张候，也是这片老街区的孩子，算是和莫凡一起长大的。\n\n“什么好消息？”莫凡问了一句。\n\n“小公主回来咯，我今天在山庄门口看见她了，哇塞，你不知道",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2456a739-64a5-4457-a70a-c9f15dad8639",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "猴子",
+          "hit": true,
+          "snippet": "也挺担心这个的。严格上来说他是……恩，算穿越过来的吧，要是体质和这里的人有差别，那这玩笑就开大了！\n\n“莫凡哥，别理这****，等等觉醒一个火系给他看看，叫他知道什么叫狗眼看人低！”和莫凡分在同班的泥猴子张候说道。\n\n莫凡没说话，换作以前自己一定用自己那骂人不带重样的口才喷死这赵坤三狗腿子，今天没那个心情。一方面是确实很紧张，另一方面不知道为什么自己脖子上戴着的那个黑色坠子一直发出奇怪的颤动。\n\n",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "19966b81-d84a-49ea-a14c-086533ec51fd",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "猴子",
+          "hit": true,
+          "snippet": "第5章 天生双系（上）\n\n“下一个……”\n\n“下一个……”\n\n“下一个……”\n\n“张候！”\n\n站在离莫凡不算太远的泥猴子张候回头给了莫凡一个眼神道：“莫凡哥，我过去了。”\n\n“好好加油。”\n\n“哼，祝你也是水系。”赵坤三马上说起了风凉话。\n\n张候就是一个瘦猴干，手往那里一放，没多久一股奇异的风旋涡在觉醒石上显现，吹得老",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "672e8e8f-28ec-4b5a-99d3-c696d777c053",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "猴子",
+          "hit": true,
+          "snippet": "第9章 第七颗星子\n\n“4颗了，5颗一起把控，难度更大了啊，唉，不知道这学期结束前能不能完成把这7个小混蛋全部把控住，连成星轨来……话说起来，猴子说他现在每个星期最多只能够练习1个小时的把控，多个5分钟就得崩溃，也不知道为什么我一开始就可以练习2个小时，难不成是觉醒双系的原故？”莫凡自言自语的说道。\n\n“把控一次星子蓝耗应该是一样的，也就是说我",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "34b2ec61-acab-4922-a50d-9302241a6fc6",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "系的法师",
+          "hit": true,
+          "snippet": "几个显然还只是初中生的少年更是向莫凡投来了崇拜的目光。\n\n“妈妈，哥哥好厉害啊，我以后也能够像他这么厉害吗？”一个七八岁的小孩童拽着妈妈的裙子，弱弱的问道。\n\n“魔法师不是什么人都可以做到的，尤其是雷系的法师。”\n\n莫凡发现自己的魔法已经引起了整车的骚动，为了避免被找麻烦，莫凡匆匆忙忙的下车去了。\n\n到了路边，莫凡心情仍旧没有平静下来。\n\n我了个草，太尼玛帅了！！！\n\n回想起刚才手臂缠绕雷之印，随",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-006",
+      "category": "source_chunk",
+      "difficulty": "alias",
+      "query": "大魔头是谁？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 413,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "06b0b6ba-25ee-4ea9-a770-d9db3ebbf580"
+        ],
+        "entities": [
+          "大魔头",
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 31.7,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "b8caff94-b5f4-4e88-aa5f-a58eb0b77763",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "大魔头",
+          "hit": true,
+          "snippet": "们什么资源都没有了，从今天开始她就是我的女神！！”\n\n“那个张少，咱们还是换个女人做压寨夫人吧，就我们狂帮这点人，还不够牧奴娇一个人打的。”\n\n全校新生们在此刻不无顶礼膜拜，不是牧奴娇这强势出手的话，大魔头莫凡真就将大家的东西给抢空了。\n\n长得相当漂亮的女人，那也可以叫祸国殃民，但长得漂亮还能够斩奸除恶的女人，就是普渡众生、祥云缭绕走到哪都自带仙韵神梵背景音乐的女神啊！！\n\n牧奴娇收回了降魔除妖的",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "acf86047-de36-4752-94f4-632b576ad26a",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "大魔头",
+          "hit": true,
+          "snippet": "整个斗馆寂然无声。\n\n过了许久，斗馆又跟炸开了一般，彻底乱成了一片！！\n\n输了，牧奴娇竟然输了。\n\n她输了的话，就意味着莫凡一个人坐拥全系新生的公共修炼资源。\n\n天啊，连他们最后信仰的女神都输给了这个大魔头，说好的邪不胜正呢？？？\n\n“他……他到底怎么挣脱出坤之林囚牢的。”\n\n“他一定作弊了，不可能的。”\n\n“杀了我们算了，辛辛苦苦考入到这个学校，就是为了那比别的学校多出来的重要资源，现在全没了，",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "8d70523b-421b-4df4-919b-79856cd751a2",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "大魔头",
+          "hit": true,
+          "snippet": "是为他们夺回了召唤系的资源，可也将他们召唤系的名声给彻底搞臭了，现在他们召唤系人出去吃个饭都跟过街老鼠一样。\n\n然而，每个月一次全校大会上，当李院士公布了一个惊人的消息，那就是这个一度被认为全校公敌的大魔头莫凡竟然做了一次惊人的见义勇为之举。\n\n体育馆变妖事件在这段时间可是传的沸沸扬扬，那亲身经历的四五千名學生在放假过后将其已经传成了很多个版本……\n\n事实上，新闻媒体对这件事也进行了报道。\n\n校园",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2ceac014-ccf6-410e-9432-d21720e7ed8b",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "大魔头",
+          "hit": true,
+          "snippet": "没有技压群雄的本领，分分钟被那些人踩成狗啊，嫉恨他的人绝不止白藏锋一个，据说都尼玛成立了一个反莫凡社团。\n\n这个社团就是专门针对全校公敌莫凡的，莫凡当初表现出的实力对那些还是初阶的学员们来说确实是一个大魔头，这个社团现在实力已经日渐壮大了，就等着讨伐魔头，伸张正义了！\n\n抢资源这种事情，莫凡从来都不后悔。\n\n当初不抢，怎么对付鳞皮母妖。没杀鳞皮母妖，自己哪来这么多钱买灵级雷种和冥离盾？\n\n这叫强者",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "22ab4c29-c280-4523-ad75-8a23ca2a3fc7",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "大魔头",
+          "hit": true,
+          "snippet": "奴娇公众形象做的实在太好了，要不是赵满延这货早就一眼看穿，莫凡也差点就信了。\n\n“你也是来看屋子的吗？”莫凡说道。\n\n“嗯。”牧奴娇点了点头，没多说什么。\n\n“你们认识啊……咦，你好眼熟哦，啊……你是大魔头！！！”那个娇小巨|乳女孩一惊一乍的喊道。\n\n“……”莫凡也是无语，自己这大魔头之称还真传开了啊，能把一个女生吓成这副……恩，这姑娘看上去不像吓着，怎么一脸雀跃的样子。\n\n会在这里撞到牧奴娇，莫",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-007",
+      "category": "source_chunk",
+      "difficulty": "alias",
+      "query": "绿茶男是哪个角色？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 44,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36ebe45a-fa1d-48d1-8662-df104e306f5d"
+        ],
+        "entities": [
+          "绿茶男",
+          "绿茶",
+          "穆白"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 133.8,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "06b27620-e4ba-46d0-aab0-7b3bddceb33b",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "绿茶男",
+          "hit": true,
+          "snippet": "第7章 绿茶男\n\n……\n\n“真是……唉，这个学生怎么就没分配到我班上，落到了张建国的手上，这下让张建国捡到天宝了。”班主任薛木生脸上写满了羡慕嫉妒。\n\n而在最前面的穆白，脸上惊讶过后多了几分阴沉和不屑。\n\n雷系了不",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2dc5d515-5de2-4693-a45f-9d5feae75014",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "绿茶男",
+          "hit": true,
+          "snippet": "也传入到了莫凡耳中，莫凡一阵神清气爽，又特意看了一眼同样听见这番话的穆白，果然穆白嘴角一直在抽。\n\n莫凡早知道穆白是个什么货色，成天到晚装绿茶，一看他脸上那假假的无所谓表情就知道他心里极其不好受。\n\n绿茶男，老子觉醒一个火系你就气成这个德性，等知道你莫凡爷爷还有雷霆系……你不得切腹自尽？？\n------------",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "34b2ec61-acab-4922-a50d-9302241a6fc6",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "绿茶男",
+          "hit": true,
+          "snippet": "，全班同学和老师，乃至全校同学和老师估计都得傻眼！！\n\n貌似前不久妖魔课老师张建国还在各种吹嘘他的得意门生黄明凯已经可以把控4颗星子……慕白也一样是4颗星子。\n\n哈哈哈，老子都已经释放雷印了，慕白你这绿茶男怎么跟你爷爷我斗！！\n\n这雷印还只是持在手臂上就能够感觉到那股雷霆之力欲飞驰而出，真不知道完整的释放出去会是怎样一副情形，光想想都尼玛有些叫激动啊。\n\n深呼吸，深呼吸，不能像个2B一样在大马路上",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "cbe342e7-4431-48a5-9699-166c10a3639b",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "绿茶男",
+          "hit": true,
+          "snippet": "C级和D，唯一一个达到B级的，就只有那位雷系的许照庭！\n\n这个成绩，当之无愧全校第一。\n\n……\n\n“下一个，莫凡！”\n\n人们在惊叹穆白华丽夺冠之时，终于轮到了莫凡。\n\n事实上，莫凡倒有些奇怪。\n\n凭啥绿茶男完了就是我，故意设计好的吧？\n\n莫凡可不相信世界上有那么巧合的事情。\n\n不过，无所谓了，该吃吃，该睡睡，兵来将挡，水来土掩，你若不举，便是晴天。\n\n……\n\n“如何？”穆贺看到慕白走来，小小声的问",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "0dc29bbc-5cf4-423b-b9fe-7ee1d903c020",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "绿茶男",
+          "hit": true,
+          "snippet": "莫凡回答道。\n\n星尘魔器这东西，莫凡是很需要，他修炼的时间本身就别人长，有了星尘魔器更是事半功倍。\n\n但是，这是长期拥有的情况下确实事半功倍，假如就持有个一个月什么的，这给予莫凡的就有点鸡肋了。\n\n“绿茶男，我问你个问题。”莫凡凑到了旁边穆白的桌子那边，一脸正经的说道。\n\n“你他妈叫我什么？”穆白暴脾气一下子就上来了。\n\n“得，穆白，我问你个问题。”\n------------",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-008",
+      "category": "source_chunk",
+      "difficulty": "alias",
+      "query": "冲榜狂魔是谁的外号？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 515,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "f11c6be5-f172-4c14-9f16-1e8cbf97d978"
+        ],
+        "entities": [
+          "冲榜狂魔",
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 91.7,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "f11c6be5-f172-4c14-9f16-1e8cbf97d978",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "冲榜狂魔",
+          "hit": true,
+          "snippet": "，以及恶魔化后修为倒退已经让莫凡实力有些不太跟得上了。\n\n莫凡不想再浪费太多时间，终究是选择了挑战火榜前十的人。\n\n莫凡挑战书一下，整个火院都骚动了，消息传递得飞快，顷刻间人们便又给莫凡取了一个外号，冲榜狂魔！\n\n新生里面，冲榜最为凶猛的当属牧奴娇，应该是新生之中唯一一个踏入到前50名的了，可和大魔头比起来，牧奴娇还相差了整整40名。\n\n“莫凡，你要不要这么生猛？我至今还在200多名，等你杀到前十",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "36ebe45a-fa1d-48d1-8662-df104e306f5d",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "外号",
+          "hit": true,
+          "snippet": "不是每一个风系法师都敢跳的。\n\n“走吧，一起进去，光系的，你们总算有点作用了，把灯泡点起来！”赵坤三看到人多，胆子也大了，只不过那贱嘴还是没有改。\n\n光系的学生一个个抱怨不已。\n\n奈何，他们初阶的技能外号确实是“移动电灯泡”。\n\n光系学生们施展了他们的能力，照亮了怪石嶙峋的洞穴，可更深处还是一大片黑暗，让人心跳莫名加速。\n\n“风系在前面探路，你们有风轨技能，就算遇到情况可以马上撤离。”穆白果然是大",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "06b0b6ba-25ee-4ea9-a770-d9db3ebbf580",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "外号",
+          "hit": true,
+          "snippet": "\n莫凡现在已经被冠名为火系赵日天，那份傲气与嚣张已经快要全校皆知了。\n\n这成名的速度远比那些处心积虑想要排在校园风云榜的人可快太多了。\n\n不过，莫凡是第一个不服啊！\n\n哪个傻X给自己取一个如此没气势的外号。\n\n等着瞧吧，用不了一个月这个明珠学府就会知道自己大魔头特么又回来了！\n\n……\n\n这天午，莫凡从训练场回来。",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "7e7536a7-2055-446c-81a2-599126bfea0f",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "外号",
+          "hit": true,
+          "snippet": "挫男，虽然脸型有了一些变化，但还和高中时模样没啥变化。\n\n“赵腿子！”莫凡笑着和此人打招呼。\n\n赵坤三满肚子气，因为自己手下人狗眼拿了一堆垃圾货，他发愁怎么卖才可以把十万块回本过来，结果听见有人叫自己外号，顿时就火了！\n\n他赵坤三是跟着穆白混的，可穆白怎么也把他当半个兄弟，不是狗腿子，这些不长眼的东西成天这样叫自己。\n\n“找死啊，找死啊，信不信我一个魔法轰死你，告诉你，老子可是法师，第三级的初阶法",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "0d67cc17-dc04-4ccb-bd70-5569a51b9dd4",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "外号",
+          "hit": true,
+          "snippet": "强。”江昱搞来了资料，神神秘秘的对大家说道。\n\n“雷系的，我最感兴趣了！”莫凡冷哼了一声。\n\n“第二名是美国的，跟自由神殿有密切关系，名字叫杰西，在校期间就已经是神殿法师，在美洲缉拿过许多凶级罪徒，有外号叫冷面判官。主修植物系，次修诅咒系，辅修光系，是一名控制型法师。据说她在夺宝赛的时候，全程单独行动，斩获了十三亿价值的资源。”江昱说道。\n\n江昱特意把杰西的照片给调了出来，放在大家的面前。\n\n赵满",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-009",
+      "category": "ability_query",
+      "difficulty": "typo",
+      "query": "张小候的魔法是什么系的？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 19,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "4cd65daf-b7a3-49db-8f30-30a60061f62b",
+          "03ba3287-667c-4521-a3db-3c0f9d6ff6a0"
+        ],
+        "entities": [
+          "张小侯",
+          "张小候",
+          "风系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 11.2,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a1231dd5-90fa-4e6a-95fb-b2805187f9e6",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "张小候",
+          "hit": true,
+          "snippet": "的大人们都不允许孩子再闯到山庄里去，而那位原本和大家玩成一片的公主就真的成为了城堡里的公主，随着年龄的增长变得遥不可及，见到的次数越来越少了。\n\n“你知道吗，我听说小公主现在是帝都名校魔法尖子，天生对冰系魔法有着别人无法媲美的能力，才15岁就已经可以释放冰系魔法了。”张候神神秘秘的说道。\n\n莫凡愣了愣，假如张候跟自己说小公主获得什么全国奥赛奖这些，他估计毫无感觉，但如果是冰系魔法师的话，那就真的了",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "4cd65daf-b7a3-49db-8f30-30a60061f62b",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "张小候",
+          "hit": true,
+          "snippet": "舍一群人顿时挤出了门，追着张小候望去。\n\n然而，就大家刚走出宿舍这一会，张小候已经从整个走廊的最左端极速挪到了最尽头。\n\n太快了！\n\n什么百米冲刺飞人在这移动速度满前都弱爆了！\n\n莫凡心中一片涟漪，这风系的初阶技能也是帅啊，那踩着风之轨迹飞奔的感觉一定棒极了。\n\n“啊啊啊啊啊……救命救命……”\n\n“砰！！！！！”\n\n走廊忽然莫名的一阵颤抖，莫凡刚感慨完那远处的张小候已经整个人撞贴在了公共厕所门上！",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "魔法",
+          "hit": true,
+          "snippet": "进入魔法高中，成为一名真正的魔法师！\n\n……\n\n桂花被雨水打落在校园笔直的道路上，铃声响起之后，学生们蜂拥而出，要么独行，要么寻找着自己的小伙伴，讨论着今日的考试内容。\n\n“喂，慕白，元素魔法的七系，冰系、火系、土系、水系、风系、光系、雷系，这道题你们做出来了吗？”一名戴着小领结的白脸男生问道。\n\n“完美解答！”那个无论是发型、身高、长相都堪称男神的慕白说道。\n\n“不愧是我们的尖子生，这么难的混系",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2df36149-3749-4acb-aaa3-04813fee222c",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "魔法",
+          "hit": true,
+          "snippet": "品，唯有魔法高，但也有行行出状元的说法……”莫家兴继续说道。\n\n莫凡听完，不自觉的吧唧了一下嘴。\n\n现在很多信息莫凡要自动转换，但转换的过程中就让莫凡特别无语，比如说莫凡记得有一天历史老师告诉同学们：光系的魔法鼻祖是“爱迪生”，当时莫凡内心就有亿万草泥马在奔腾！\n\n老爸莫家兴拍着莫凡的肩膀，宽慰宽慰着的时候，莫家兴突然发现自己儿子保持着沉默，神情显得不太对劲。\n\n知子莫若父，莫家兴慢慢的收起了笑容",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "c246a8f7-b9b8-4294-b0d8-558538a80305",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "魔法",
+          "hit": true,
+          "snippet": "可惜这家伙一个旁系子弟和穆宁雪这种小公主级别的不是一个层次的，穆白以前就各种讨穆宁雪欢心，穆宁雪甩都不甩他。\n\n穆白魔法成绩很好，在穆氏世家里应该算是重点培养对象了，据说这家伙若是觉醒了穆家的家族系寒冰系的话，他以后修炼速度更是提升好几倍，毕竟穆世家有太多的世家资源可以提供了，分到穆白这样一个旁系子弟上都和普通人没法比的。\n\n“同学们，欢迎你们入校，想必你们很多人都在等待今天这个令人激动的时刻了，",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-010",
+      "category": "character_first_appearance",
+      "difficulty": "typo",
+      "query": "莫凡的雷息是什么时候觉醒的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "雷系",
+          "雷息"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "aedbd685-9bd5-49fd-905a-47a0cec042d1"
+        ]
+      },
+      "latency_ms": 9.6,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "做出来了吗？”一名戴着小领结的白脸男生问道。\n\n“完美解答！”那个无论是发型、身高、长相都堪称男神的慕白说道。\n\n“不愧是我们的尖子生，这么难的混系问题都能够做出来……咦，那不是模拟考上只靠了个6分的莫凡吗？”满脸麻子的赵坤三说道。\n\n男神慕白眼睛马上不屑的瞥了一眼那个独自一人打伞的少年，道：“这家伙马上要跟他老爸一样，当一个破皮卡车采购员了。”\n\n“那不就是你们穆家的仆人了吗，哈哈哈！”\n\n这三",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2df36149-3749-4acb-aaa3-04813fee222c",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "魔法觉醒会在高中开学典礼上，全校领导老师见证下开启，那个时候哪怕你前面的理论没有学，一样是有可能开启属于自己的系！\n\n莫凡其实是真的喜欢魔法，这对他来说无疑是一次完美的奇幻重生。\n\n他也想要成为一个能够傲立高楼穹顶上方舞火唤雷的至高法师，为拯救世界做那么一点贡献。\n\n偏偏，这次考试……\n\n这么说吧，经过他临考前不懈努力，",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "3c52cc78-4caf-4c7e-bd8a-12526a5ac8fe",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "莫凡也没有再说话。\n\n“真的想学？”莫家兴再一次确认一遍。\n\n“真的。”莫凡没有一点犹豫的点头。\n\n起初莫凡也觉得是自己在做梦，世界和自己开了一个玩笑，可事实证明，世界真的变了，这不是在做梦！\n\n“那好吧",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a1231dd5-90fa-4e6a-95fb-b2805187f9e6",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "第2章 真实的阶级\n\n……\n\n这是一片围绕着一座半城山而建的一片住宅区，顺着那条有着铁栅栏的道路往前走，一直走到小路的尽头就是莫凡家了。\n\n矮矮的一小栋，一层半高，外漆已经斑驳露出红砖，周围有很多杂物。\n\n街坊邻居的房子基本上都有三层半了，经过了一番装修翻新之后显得更像是一个家，而本身就最角落又低矮的莫凡家就显得格外寒酸老旧。\n",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "c28d1a7b-cca2-4523-8289-37d78bbd58fa",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "有变，怎么自己家庭没和山庄上那户人家调换一下，老天爷也真是的大费周章的将科学搞成魔法，难道这点小事都不顺便一下。\n\n唯一还值得庆幸的是：自己样貌没变，依然风流倜傥！\n\n在家坐着也无聊，什么东西都没有，莫凡无聊下出去逛了一圈，想看看其他东西是否发生了变化。\n\n顺着很少人走的苔藓小道，刚要拐到大街，莫凡正好看到自己老爸的老皮卡车。\n\n老爸是司机，以前是给山庄上面的老爷开车的，后来不知道怎么的调到后勤去",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-011",
+      "category": "source_chunk",
+      "difficulty": "typo",
+      "query": "风鬼是谁释放的？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 19,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "03ba3287-667c-4521-a3db-3c0f9d6ff6a0"
+        ],
+        "entities": [
+          "风轨",
+          "风鬼",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 9.4,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a1231dd5-90fa-4e6a-95fb-b2805187f9e6",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "释放",
+          "hit": true,
+          "snippet": "家玩成一片的公主就真的成为了城堡里的公主，随着年龄的增长变得遥不可及，见到的次数越来越少了。\n\n“你知道吗，我听说小公主现在是帝都名校魔法尖子，天生对冰系魔法有着别人无法媲美的能力，才15岁就已经可以释放冰系魔法了。”张候神神秘秘的说道。\n\n莫凡愣了愣，假如张候跟自己说小公主获得什么全国奥赛奖这些，他估计毫无感觉，但如果是冰系魔法师的话，那就真的了不得了！\n\n绝大多数人都是要到16岁，也就是高一的",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "b81e293a-a2dc-454d-8a24-52f802eb1fd7",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "释放",
+          "hit": true,
+          "snippet": "莫凡来说，时间是过得很快很快，觉醒之后这已经过去了有两个月的时间。\n\n这两个月时间莫凡做的只有一件事就是坐在这颗树下——冥修！\n\n第一天第一节课上，班主任薛木生就给所有魔法学生们上了重要的一课：魔法的释放！\n\n魔法的释放一共就只有很简单很简单的三个步骤。\n\n第一，冥修。\n\n第二，把控。\n\n第三，释放！\n\n冥修，顾名思义，就是全神贯注的去思考。\n\n人在闭上眼睛的时候，脑子其实却也在不断的浮想出各种画",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a5d43d0d-6b8a-4e42-bc3b-c5ebdf88f5ca",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "释放",
+          "hit": true,
+          "snippet": "星子，一个样的，没有一个将莫凡当一回事，有几个甚至感觉到莫凡的意念在让它做什么的时候，它们就跑得更快！\n\n星子在旋转、飞驰的时候，魔法力量是无法传导的。\n\n就好像是一根电线，电能在星尘内部，要想把电能释放出来，就要把星子连成一条线，传递到魔法师身体里……\n\n可惜，这些雷系星子没有一个是听话的，不去碰它们还好，一旦尝试着和它们沟通，它们就跑得飞快，简直跟吃了五百斤炫迈，尼玛根本停不下来！\n\n“这要怎",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "672e8e8f-28ec-4b5a-99d3-c696d777c053",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "释放",
+          "hit": true,
+          "snippet": "着课程。\n\n独眼魔狼。\n\n这是栖息在离人类城市最近荒野区域的一种妖魔，莫凡只通过书签和视频看到过大致模样，很凶残的样子。\n\n普通人是无法对付这种生物的，唯有魔法师才可以和它们战斗，当然，对于至今还无法释放任何一个技能的这群魔法学生们来说，一旦出现只独眼魔狼那就是一场血腥屠杀！\n\n独眼魔狼是妖魔课上讲述的重点，张建国已经花了一个星期在将这种妖魔了，莫凡听得都烦了。\n\n现在，莫凡凭借着自己独有的双倍时",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "f59960e5-0c62-4075-a2a8-321824f76b6d",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "释放",
+          "hit": true,
+          "snippet": "事情，这学期他把精力全部投在了大房雷系上了。\n\n“不会吧，看来你基础真的影响到修炼了，我听说慕白那家伙已经可以把控4颗寒冰系星子了，假如他寒假再多努力努力，没准下学期他就可以完成冰系初阶技能“冰蔓”的释放了。”张候说道。\n\n“我知道啊。”\n\n“大哥，你怎么一点都不着急啊，我跟你说，他和他的狗腿子赵坤三已经在谋划怎么给你点颜色看看了。”\n\n“没事，让他们来吧。”\n\n莫凡现在脑子里全是怎么把控第七颗星",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-012",
+      "category": "character_first_appearance",
+      "difficulty": "homophone",
+      "query": "莫烦的火系是什么时候觉醒的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "莫烦",
+          "火系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "8ce03ee6-7e7d-41b2-8d40-0a30893b6225"
+        ]
+      },
+      "latency_ms": 13.3,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "火系",
+          "hit": true,
+          "snippet": "进入魔法高中，成为一名真正的魔法师！\n\n……\n\n桂花被雨水打落在校园笔直的道路上，铃声响起之后，学生们蜂拥而出，要么独行，要么寻找着自己的小伙伴，讨论着今日的考试内容。\n\n“喂，慕白，元素魔法的七系，冰系、火系、土系、水系、风系、光系、雷系，这道题你们做出来了吗？”一名戴着小领结的白脸男生问道。\n\n“完美解答！”那个无论是发型、身高、长相都堪称男神的慕白说道。\n\n“不愧是我们的尖子生，这么难的混系",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "c246a8f7-b9b8-4294-b0d8-558538a80305",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "火系",
+          "hit": true,
+          "snippet": "可惜这家伙一个旁系子弟和穆宁雪这种小公主级别的不是一个层次的，穆白以前就各种讨穆宁雪欢心，穆宁雪甩都不甩他。\n\n穆白魔法成绩很好，在穆氏世家里应该算是重点培养对象了，据说这家伙若是觉醒了穆家的家族系寒冰系的话，他以后修炼速度更是提升好几倍，毕竟穆世家有太多的世家资源可以提供了，分到穆白这样一个旁系子弟上都和普通人没法比的。\n\n“同学们，欢迎你们入校，想必你们很多人都在等待今天这个令人激动的时刻了，",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2456a739-64a5-4457-a70a-c9f15dad8639",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "火系",
+          "hit": true,
+          "snippet": "一副毫不在意的样子，眼神却很享受这种被人议论，他走到了班主任面前，脸上带着谦逊和自信的笑容。\n\n“穆白，是有名的寒冰世家穆氏世家的吧？”班主任薛木生微笑的问道。\n\n“正是。”\n\n“好，你如果觉醒的是寒冰系，你应该会比别人优越很多，但别忘了多加努力，天赋毕竟决定不了一切。”班主任薛木生说道。\n\n穆白点了点头，心里却暗暗道：是，天赋决定不了一切，但没有天赋和家底，就永远生活在社会的最底层！\n\n在班主任",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "72560abc-8b85-40a0-9ede-8f82b74f2846",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "火系",
+          "hit": true,
+          "snippet": "动不动，被醍醐灌顶一般，头颅微微的扬起……\n\n“咯吱，咯吱，咯吱~~~~”\n\n突然，觉醒石周围，一股寒霜之气在那里缭绕。\n\n这些寒霜越来越强，竟然是慢慢的冻结了觉醒石的边缘，结成了一片小冰霜！\n\n“寒冰系，真是寒冰系啊！！！”\n\n突然，身后有人大叫了起来，其中还伴随着一些女生的尖叫声。\n\n穆白已经听到声响了，在欣喜中睁开了眼睛！\n\n果然是寒冰系，拥有了穆家本源系，自己就更容易被穆家接纳了，飞黄腾达",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "19966b81-d84a-49ea-a14c-086533ec51fd",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "火系",
+          "hit": true,
+          "snippet": "生脸上同样露出了满意之色。\n\n班主任薛木生心里很开心，因为才到十几个号，自己班里就出现了两个优质天赋的学生，假如他们好好用功的话都是能够考上好的大学学府。\n\n当然最让自己捡到宝的是1号学生穆白，卓越寒冰系天赋，加上他背后的寒冰系世家，未来的栋梁之才了！\n\n看来这一届8班应该有机会名列前茅。\n\n“下一个……”\n\n“下一个……”\n\n“下一个……”\n\n“噗~~~~~”\n\n觉醒石上，一道橙色的火苗突然窜起",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-013",
+      "category": "ability_query",
+      "difficulty": "homophone",
+      "query": "张小猴掌握风系吗？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "03ba3287-667c-4521-a3db-3c0f9d6ff6a0"
+        ],
+        "entities": [
+          "张小侯",
+          "张小猴",
+          "风系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "46707d57-5ee9-4c6d-85f6-a711239b6f81"
+        ]
+      },
+      "latency_ms": 55.8,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "nat-014",
+      "category": "ability_query",
+      "difficulty": "same_name",
+      "query": "莫凡觉醒了什么系？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡",
+          "火系",
+          "雷系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "8ce03ee6-7e7d-41b2-8d40-0a30893b6225",
+          "aedbd685-9bd5-49fd-905a-47a0cec042d1",
+          "516d3dd9-b660-4386-9524-e2d212831877"
+        ]
+      },
+      "latency_ms": 60.4,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "323dd2fb-075e-4bbd-ada2-f09c83257661",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡觉醒了",
+          "hit": true,
+          "snippet": "考入明珠學府，很不巧的是，我发现市面上关于次元魔法的书少之又少，就只好请教我亲爱的唐老师了。”莫凡笑着说道。\n\n不知道为啥，唐月从莫凡那说话的语气里就听出了一丝不怀好意。\n\n但是这并非是重点，唐月对于莫凡觉醒了召唤系更加诧异。\n\n“你在哪？”唐月直接询问道。\n\n“我在……算了，还是我去找你吧？”莫凡很直接的说道。\n\n“行，你来西湖。”\n\n……\n\n住的地方离动车站蛮近，莫凡踏上动车便再一次直接杀向了",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-015",
+      "category": "source_chunk",
+      "difficulty": "same_name",
+      "query": "赵满延是水系还是光系法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5",
+          "9bf533d9-101e-4199-9027-34db8041366d"
+        ],
+        "entities": [
+          "赵满延",
+          "水系",
+          "光系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 23.1,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "65d387f2-7df2-422c-bf92-ccc06011e261",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "光系法师",
+          "hit": true,
+          "snippet": "“地圣泉是天地灵泉，自身纯净不说可以带给修炼者和妖魔非常大的滋补。而这与地圣泉很相似的水同样是特殊环境下孕育而生，可应该是受到周围一些黑暗植物的影响，你找到的这些污水它其实也存在着短时间内促进修炼者和生物实力的效果，区别在于这水更像是一种兴奋剂，以疯狂吸食生物体内营养、能量为代价让生物变得非常疯狂，变得没有理智。”那位药剂师认真的说道。\n\n林雨欣微微一愣，她可从没有听说过这世界上还有这种水。\n\n难",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "e7d1b3e8-a70f-4140-87f9-d85c15b5d6c6",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "赵满延",
+          "hit": true,
+          "snippet": "的卷曲半长发，一张童话故事里标准的王子脸，一身纯白色的简单运动装，莫凡满嘴泡沫的看着这个第一个到的舍友，心里默默的骂了一句：草，这货差一点就帅过我了！\n\n“喲，我还以为我是第一个来的，自我介绍下，我叫赵满延，主修光系……”赵满延笑容很和煦，看上去很友善的样子。\n\n“偶叫摸反。”",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "60e55e8b-074f-426f-a2c4-806e9671a1d4",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "赵满延",
+          "hit": true,
+          "snippet": "“你还是先刷完牙吧，我整理下东西……有点脏啊，这宿舍。”赵满延选择了和莫凡对床的位置，这个位置是挨着阳台的，一眼就可以看到窗外的景色以及对面那一栋充满无限春色的女生宿舍。\n\n莫凡洗漱完毕后，便和赵满延攀谈了起来。\n\n“你是召唤系的？这么说那位学姐说的没错，我们宿",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "b917e5fa-a468-4424-9252-7c1e12e7311e",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "赵满延",
+          "hit": true,
+          "snippet": "一穷二白的魔法师若连学校的资源都抢不到，真心没法和别人比。\n\n……\n\n带着那份对“迎新节目”的疑惑，莫凡回到了自己那个鱼龙混杂的宿舍。\n\n脑子里还在想着这个问题的他一屁股就坐在了椅子上，这个时候旁边的赵满延却是笑了起来，开口道：“莫凡兄弟，我听说你们召唤系有大麻烦了啊。”\n\n“大麻烦，什么意思？”莫凡没明白赵满延的话。\n\n“我可是从学姐那听说的……就是迎新节目。”赵满延说道。\n\n“我真纳闷这事呢，",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "b4b0b4e3-9dfc-4869-a9e2-8eb3fa7053c5",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "赵满延",
+          "hit": true,
+          "snippet": "大会上举行一场斗兽大赛，全校师生们都将坐在我们青校区最大的斗馆之中，在斗馆的超大铁笼内会放有一只怪兽，所有的新生可以自发的走入到这个大铁笼里面与这只大兽进行战斗，相当于向全校学生老师们展示自己实力。”赵满延一边修着指甲一边道。\n\n“斗妖魔？”莫凡眼睛微微一亮。\n\n这大学学府就是有意思，入学没多久就在全校师生瞩目的场合下直接跟妖魔面对面战斗，太尼玛刺激了！\n\n“那是什么妖魔？？”莫凡追问道。\n\n“谁",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-016",
+      "category": "no_result",
+      "difficulty": "no_result",
+      "query": "林小雨是什么系的法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "林小雨"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 11.3,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "34b2ec61-acab-4922-a50d-9302241a6fc6",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "系的法师",
+          "hit": false,
+          "snippet": "几个显然还只是初中生的少年更是向莫凡投来了崇拜的目光。\n\n“妈妈，哥哥好厉害啊，我以后也能够像他这么厉害吗？”一个七八岁的小孩童拽着妈妈的裙子，弱弱的问道。\n\n“魔法师不是什么人都可以做到的，尤其是雷系的法师。”\n\n莫凡发现自己的魔法已经引起了整车的骚动，为了避免被找麻烦，莫凡匆匆忙忙的下车去了。\n\n到了路边，莫凡心情仍旧没有平静下来。\n\n我了个草，太尼玛帅了！！！\n\n回想起刚才手臂缠绕雷之印，随",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "法师",
+          "hit": false,
+          "snippet": "。\n\n就是魔法高中！\n\n这个社会，魔法为尊！\n\n所有的孩子都需要接受九年义务魔法教育，学完九年魔法基础理论与魔法生活技能之后，都将接受和中考一样的考试，考试过的人，才能够进入魔法高中，成为一名真正的魔法师！\n\n……\n\n桂花被雨水打落在校园笔直的道路上，铃声响起之后，学生们蜂拥而出，要么独行，要么寻找着自己的小伙伴，讨论着今日的考试内容。\n\n“喂，慕白，元素魔法的七系，冰系、火系、土系、水系、风系、",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2df36149-3749-4acb-aaa3-04813fee222c",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "法师",
+          "hit": false,
+          "snippet": "领导老师见证下开启，那个时候哪怕你前面的理论没有学，一样是有可能开启属于自己的系！\n\n莫凡其实是真的喜欢魔法，这对他来说无疑是一次完美的奇幻重生。\n\n他也想要成为一个能够傲立高楼穹顶上方舞火唤雷的至高法师，为拯救世界做那么一点贡献。\n\n偏偏，这次考试……\n\n这么说吧，经过他临考前不懈努力，他终于达到了看懂题目的境界，至于答案是否正确……呵呵，开心就好。\n\n……\n\n“莫凡，莫凡……”人群之中，一个脸",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "3c52cc78-4caf-4c7e-bd8a-12526a5ac8fe",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "法师",
+          "hit": false,
+          "snippet": "。”莫家兴并没有再多说。\n\n“爸，我在天澜魔法高中找了一份暑假临时工做，看管图书馆的，后天就去上班。”莫凡说道。\n\n既然决定了要学魔法，莫凡就得打起十二分精神。\n\n能不能让自己上魔法高中获得那次成为魔法师的觉醒机会就看老爸这边的了，而自己对知识的匮乏是需要靠自己努力去填补，所以在明知道自己没有一点希望考上魔法高中的情况下，莫凡提前找了这份差事。\n\n这份工作，工资几乎没有，管吃管住而已，但对莫凡来说",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a1231dd5-90fa-4e6a-95fb-b2805187f9e6",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "法师",
+          "hit": false,
+          "snippet": "名校魔法尖子，天生对冰系魔法有着别人无法媲美的能力，才15岁就已经可以释放冰系魔法了。”张候神神秘秘的说道。\n\n莫凡愣了愣，假如张候跟自己说小公主获得什么全国奥赛奖这些，他估计毫无感觉，但如果是冰系魔法师的话，那就真的了不得了！\n\n绝大多数人都是要到16岁，也就是高一的时候才接受觉醒，获得自己的第一系魔法。\n\n获得之后并不意味着你就是魔法师，你还需要经过非常漫长的修炼，还需要获得魔法书、勤加练习才",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-017",
+      "category": "no_result",
+      "difficulty": "no_result",
+      "query": "莫凡的血型是什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "莫凡",
+          "血型"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 11.9,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "做出来了吗？”一名戴着小领结的白脸男生问道。\n\n“完美解答！”那个无论是发型、身高、长相都堪称男神的慕白说道。\n\n“不愧是我们的尖子生，这么难的混系问题都能够做出来……咦，那不是模拟考上只靠了个6分的莫凡吗？”满脸麻子的赵坤三说道。\n\n男神慕白眼睛马上不屑的瞥了一眼那个独自一人打伞的少年，道：“这家伙马上要跟他老爸一样，当一个破皮卡车采购员了。”\n\n“那不就是你们穆家的仆人了吗，哈哈哈！”\n\n这三",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2df36149-3749-4acb-aaa3-04813fee222c",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "魔法觉醒会在高中开学典礼上，全校领导老师见证下开启，那个时候哪怕你前面的理论没有学，一样是有可能开启属于自己的系！\n\n莫凡其实是真的喜欢魔法，这对他来说无疑是一次完美的奇幻重生。\n\n他也想要成为一个能够傲立高楼穹顶上方舞火唤雷的至高法师，为拯救世界做那么一点贡献。\n\n偏偏，这次考试……\n\n这么说吧，经过他临考前不懈努力，",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "3c52cc78-4caf-4c7e-bd8a-12526a5ac8fe",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "莫凡也没有再说话。\n\n“真的想学？”莫家兴再一次确认一遍。\n\n“真的。”莫凡没有一点犹豫的点头。\n\n起初莫凡也觉得是自己在做梦，世界和自己开了一个玩笑，可事实证明，世界真的变了，这不是在做梦！\n\n“那好吧",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a1231dd5-90fa-4e6a-95fb-b2805187f9e6",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "第2章 真实的阶级\n\n……\n\n这是一片围绕着一座半城山而建的一片住宅区，顺着那条有着铁栅栏的道路往前走，一直走到小路的尽头就是莫凡家了。\n\n矮矮的一小栋，一层半高，外漆已经斑驳露出红砖，周围有很多杂物。\n\n街坊邻居的房子基本上都有三层半了，经过了一番装修翻新之后显得更像是一个家，而本身就最角落又低矮的莫凡家就显得格外寒酸老旧。\n",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "c28d1a7b-cca2-4523-8289-37d78bbd58fa",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "有变，怎么自己家庭没和山庄上那户人家调换一下，老天爷也真是的大费周章的将科学搞成魔法，难道这点小事都不顺便一下。\n\n唯一还值得庆幸的是：自己样貌没变，依然风流倜傥！\n\n在家坐着也无聊，什么东西都没有，莫凡无聊下出去逛了一圈，想看看其他东西是否发生了变化。\n\n顺着很少人走的苔藓小道，刚要拐到大街，莫凡正好看到自己老爸的老皮卡车。\n\n老爸是司机，以前是给山庄上面的老爷开车的，后来不知道怎么的调到后勤去",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-018",
+      "category": "no_result",
+      "difficulty": "no_result",
+      "query": "莫凡的妈妈叫什么名字？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "莫凡",
+          "妈妈"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 10.1,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "做出来了吗？”一名戴着小领结的白脸男生问道。\n\n“完美解答！”那个无论是发型、身高、长相都堪称男神的慕白说道。\n\n“不愧是我们的尖子生，这么难的混系问题都能够做出来……咦，那不是模拟考上只靠了个6分的莫凡吗？”满脸麻子的赵坤三说道。\n\n男神慕白眼睛马上不屑的瞥了一眼那个独自一人打伞的少年，道：“这家伙马上要跟他老爸一样，当一个破皮卡车采购员了。”\n\n“那不就是你们穆家的仆人了吗，哈哈哈！”\n\n这三",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2df36149-3749-4acb-aaa3-04813fee222c",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "魔法觉醒会在高中开学典礼上，全校领导老师见证下开启，那个时候哪怕你前面的理论没有学，一样是有可能开启属于自己的系！\n\n莫凡其实是真的喜欢魔法，这对他来说无疑是一次完美的奇幻重生。\n\n他也想要成为一个能够傲立高楼穹顶上方舞火唤雷的至高法师，为拯救世界做那么一点贡献。\n\n偏偏，这次考试……\n\n这么说吧，经过他临考前不懈努力，",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "3c52cc78-4caf-4c7e-bd8a-12526a5ac8fe",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "莫凡也没有再说话。\n\n“真的想学？”莫家兴再一次确认一遍。\n\n“真的。”莫凡没有一点犹豫的点头。\n\n起初莫凡也觉得是自己在做梦，世界和自己开了一个玩笑，可事实证明，世界真的变了，这不是在做梦！\n\n“那好吧",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a1231dd5-90fa-4e6a-95fb-b2805187f9e6",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "第2章 真实的阶级\n\n……\n\n这是一片围绕着一座半城山而建的一片住宅区，顺着那条有着铁栅栏的道路往前走，一直走到小路的尽头就是莫凡家了。\n\n矮矮的一小栋，一层半高，外漆已经斑驳露出红砖，周围有很多杂物。\n\n街坊邻居的房子基本上都有三层半了，经过了一番装修翻新之后显得更像是一个家，而本身就最角落又低矮的莫凡家就显得格外寒酸老旧。\n",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "c28d1a7b-cca2-4523-8289-37d78bbd58fa",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "有变，怎么自己家庭没和山庄上那户人家调换一下，老天爷也真是的大费周章的将科学搞成魔法，难道这点小事都不顺便一下。\n\n唯一还值得庆幸的是：自己样貌没变，依然风流倜傥！\n\n在家坐着也无聊，什么东西都没有，莫凡无聊下出去逛了一圈，想看看其他东西是否发生了变化。\n\n顺着很少人走的苔藓小道，刚要拐到大街，莫凡正好看到自己老爸的老皮卡车。\n\n老爸是司机，以前是给山庄上面的老爷开车的，后来不知道怎么的调到后勤去",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-019",
+      "category": "character_first_appearance",
+      "difficulty": "conflict",
+      "query": "张小侯是什么时候掌握风系的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "张小侯",
+          "风系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "46707d57-5ee9-4c6d-85f6-a711239b6f81",
+          "07e8bde0-f06a-487e-8ac5-6869469eb0a1"
+        ]
+      },
+      "latency_ms": 13.4,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "02f5f532-3ce5-4ae2-ad16-f060d82dfe70",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "些活人作为修炼器材，这种丧心病狂的事情国家当然是绝不留情的！\n\n这一个月来，莫凡潜心冥修。\n\n在知道雷系星尘仅仅在释放了两个雷印之后就枯竭黯淡后，莫凡更加明白冥修的重要性。\n\n所以这一整个月，哪怕释放火系-火滋技能的诱惑有多大，莫凡都没有轻易的去跟火系星子打交道，必须得把基础先打牢靠。\n\n当全神贯注去冥修，将这一切当做是每天的习惯之后，时间就会变得飞快。\n\n马上又是开学季了。\n\n图书馆里，莫凡扫掉",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "05ffb8af-e6fb-4f22-862c-34818d58b98d",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "\n操场其实也就是练习场，它们被一股莫凡所不了解的魔法罩子给分割成独立的好几块空间，一切外溢出来的力量都会被这些看不见的罩子给吸纳掉，防止误伤到还没有任何防御能力的学生。\n\n“看好，我今天向大家演示的是火系初阶技能-火滋！”唐月站在了全班学生的中央。\n\n所有的学生围成一个半弧分散在唐月老师的身后，至于大家是不是都在看唐月老师的起手仪式那的就不好说了！\n\n“火系，是火系的技能，莫凡哥……你擦擦口水吧，",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "03ba3287-667c-4521-a3db-3c0f9d6ff6a0",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "年四季随机播，想到哪季就哪季的节奏！”宿舍里，张小侯抱怨了起来。\n\n“张小侯，你不是风系的吗，来，到外面大风的地方试试，看看能不能把风系的初阶技能-风轨给释放出来。”同宿舍的陆小斌说道。\n\n“你他妈还水系的，怎么不见你去来一个水域，堂堂水系魔法师，出门你还打伞，说出去不怕丢人？”莫凡劈头盖脸的就把陆小斌这家伙给骂了一顿。\n\n陆小斌脸上一阵青一阵白。\n\n确实啊，水系魔法师大雨天就应该一件风衣，在天地",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "4cd65daf-b7a3-49db-8f30-30a60061f62b",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "舍一群人顿时挤出了门，追着张小候望去。\n\n然而，就大家刚走出宿舍这一会，张小候已经从整个走廊的最左端极速挪到了最尽头。\n\n太快了！\n\n什么百米冲刺飞人在这移动速度满前都弱爆了！\n\n莫凡心中一片涟漪，这风系的初阶技能也是帅啊，那踩着风之轨迹飞奔的感觉一定棒极了。\n\n“啊啊啊啊啊……救命救命……”\n\n“砰！！！！！”\n\n走廊忽然莫名的一阵颤抖，莫凡刚感慨完那远处的张小候已经整个人撞贴在了公共厕所门上！",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "4ad085ea-f75f-43bb-a258-146408c713ce",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "听过她的传奇……没错，她就是穆宁雪！让我们掌声欢迎这位本应该和你们同届，却早已经晋升大学的魔法天才！”穆贺高声说道。\n\n此话一出，整个一千多人的操场都骚动了起来。\n\n“天呐，是穆宁雪啊，我听说她觉醒时冰系力量直接将脚下的地面都给冻成冰块了。”\n\n“那都是谣言，我这个才最准确，我听说她只用了八个月时间就学会了冰系初阶技能-冰蔓。”\n\n“八……八个月？？我的老天，我在学校一年都过去了，也不过掌握5颗星",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-020",
+      "category": "ability_query",
+      "difficulty": "conflict",
+      "query": "赵满延是不是水系法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "赵满延",
+          "水系",
+          "光系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 18.5,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "372b5d20-ba40-4499-ad79-66ea286d41af",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "水系法师",
+          "hit": true,
+          "snippet": "\n经过了这次战斗，莫凡才意识到防御类技能和位移类技能有多重要。\n\n初阶里面，拥有防御能力的系就只有水系，水系的水御是元素初阶里面唯一一个防御技能，在学校里大家都觉得水系是鸡肋，事实上在与妖魔的战斗中，水系法师就是大家的再生父母。\n\n“我手上有一个镰骨盾了，勉强相当于有了一个防御技能，所以下次觉醒的话，我可以考虑位移一类的系别，如风系……或者，像唐月老师那样帅炸了的在阴影中移动的技能。”",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "9e7dfa4c-69ac-4a37-885c-af5ffb85601e",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "水系法师",
+          "hit": true,
+          "snippet": "够使其肌肉麻痹！\n\n“来，来，来，小兄弟，欢迎加入我们城市猎妖队，我给你介绍一下我们的队员……哦，哦，先自我介绍一下，我是城市猎妖队的队长徐大荒，火系法师。”魁梧队长自我介绍道。\n\n“你好，我叫小可，水系法师。”那位看上去很柔弱的女孩甜甜的一笑道。\n\n“黎文杰，风系。”帅气青年甩了甩自己飘逸的长发，一脸春风得意的说道。\n\n“叫我肥石就好了，我是土系的。”那个带着蓓蕾帽圆润脸的男子笑容可掬的说道。\n",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "0924581a-7fb3-4bc6-a32f-6b78bb42759f",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "水系法师",
+          "hit": true,
+          "snippet": "止这畜生孤注一掷？”队长徐大荒马上咆哮了起来。\n\n“对不起，对不起，是我……是我的错。”小可有些结巴的说道。\n\n“道歉有屁用，要是人死了，你去墓前给人道歉也听不见，作为我们队伍里唯一一个拥有防御能力的水系法师，你要做的就是时时刻刻保持警惕，时时刻刻把自己的星轨捏在手上！！”徐大荒朝着小可怒吼道。\n\n莫凡倒有些愕然。\n\n还以为队长徐大荒只会随便批评几句，没有想到他是直接指着那么可爱的女孩咆哮大骂。\n",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "41ef7d7d-4d10-48b2-b97a-95d6b214fdfd",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "水系法师",
+          "hit": true,
+          "snippet": "狼。”徐大荒显得非常有经验的道。\n\n火滋?爆裂确实能够重创这只独眼魔狼，但这样不太保险，万一这只独眼魔狼还有战斗力，再将其控制住就难了，尤其是不能让它窜到其他有居民居住的街区！\n\n“杨作河，那位中阶的水系法师？”小可眼睛扑闪扑闪的，脸上写满了崇拜。\n\n“恩，有他在我们可以稳妥的杀死这只独眼魔狼，否则让它逃窜了，会对民众造成不可估计的伤亡。”徐大荒说道。\n\n“确实是这样，不过我们的冰蔓也不确定能够坚",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "c3064b62-2cf2-415b-9e06-926641f1bec5",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "水系法师",
+          "hit": true,
+          "snippet": "，被活生生的从街道的中央一直冲到了街尾！\n\n“中……中阶水系魔法！！”小可看到这一幕后整张脸因为兴奋而无比通红！\n\n暴浪！\n\n这正是水系的中阶技能，看着那足以将一条街道给灌满的浪潮汹涌湍急而过，同样是水系法师的小可感觉整个人都要激动的晕眩过去了。\n\n中阶，梦寐以求的中阶，像自己这样的小魔法师到底要到什么时候才能够到达。\n\n暴浪震撼无比的在面前翻腾，却根本没有卷到其他人这里，大家能够看到的就是这暴浪",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-021",
+      "category": "ability_query",
+      "difficulty": "conflict",
+      "query": "张小侯掌握哪些魔法系？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "风系",
+          "水系",
+          "土系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "46707d57-5ee9-4c6d-85f6-a711239b6f81"
+        ]
+      },
+      "latency_ms": 55.6,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "nat-022",
+      "category": "character_first_appearance",
+      "difficulty": "cross_chapter",
+      "query": "莫凡第1章觉醒了哪些系？后来又觉醒了哪些系？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "火系",
+          "雷系",
+          "召唤系",
+          "暗影系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "8ce03ee6-7e7d-41b2-8d40-0a30893b6225",
+          "aedbd685-9bd5-49fd-905a-47a0cec042d1",
+          "427b1da9-1190-4096-b200-65c8f971e83e",
+          "a341a56c-c05b-44de-b419-36bd614fd532"
+        ]
+      },
+      "latency_ms": 57.4,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "nat-023",
+      "category": "timeline_event",
+      "difficulty": "cross_chapter",
+      "query": "张小侯第一次在正文出现是第几章？他后来在第19章做了什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "02f5f532-3ce5-4ae2-ad16-f060d82dfe70",
+          "03ba3287-667c-4521-a3db-3c0f9d6ff6a0"
+        ],
+        "entities": [
+          "张小侯",
+          "风轨"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 127.1,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "nat-024",
+      "category": "timeline_event",
+      "difficulty": "cross_chapter",
+      "query": "从莫凡觉醒魔法到唐月成为他的新老师，隔了多少章？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "02f5f532-3ce5-4ae2-ad16-f060d82dfe70"
+        ],
+        "entities": [
+          "莫凡",
+          "唐月",
+          "觉醒"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 168.6,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "nat-025",
+      "category": "meta",
+      "difficulty": "no_inject",
+      "query": "我写到第15章，张小侯的风系设定先不要写进正文",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "风系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "46707d57-5ee9-4c6d-85f6-a711239b6f81"
+        ]
+      },
+      "latency_ms": 13.9,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "02f5f532-3ce5-4ae2-ad16-f060d82dfe70",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "\n马上又是开学季了。\n\n图书馆里，莫凡扫掉了自己满身的蜘蛛网准备迎接新的一个魔法学期。\n\n意气风发的走入到班级里，莫凡像往常那样坐到了最后一排位置上。\n\n恩？\n\n今天有点不对劲。\n\n莫凡看了一眼旁边的张小侯，发现这货的神情有些不对劲。\n\n往常这家伙的眼神，就跟一只好奇的小猴子，灵滑得很，并且一定会马上滔滔不绝的在上课前给自己讲这几天的见闻\n\n可今天，他双眼呆然，口微微张开，神情一脸莫名其妙陶醉的看",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "05ffb8af-e6fb-4f22-862c-34818d58b98d",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "分散在唐月老师的身后，至于大家是不是都在看唐月老师的起手仪式那的就不好说了！\n\n“火系，是火系的技能，莫凡哥……你擦擦口水吧，是你的元素系技能啊，没有想到看上去温柔贤良的唐月老师竟然是一位火魔法师！”张小侯推了推旁边的莫凡。\n\n“哦，哦，我正想学呢！”莫凡这才反应过来。\n\n——————————————————\n\n（今天去百度百科搜索了一下自己，看见一长串评论之中还有一句来形容我的话\n\n叫做“网文圈",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "03ba3287-667c-4521-a3db-3c0f9d6ff6a0",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "，烈阳高照，万里无云，刚睡了一个午觉简直就跟穿越了一般，狂风作怪，乌云密布。再到傍晚那会，暴雨冰冷、狂风凛冽！\n\n“是不是台风要来了啊，这鬼天气……真就一年四季随机播，想到哪季就哪季的节奏！”宿舍里，张小侯抱怨了起来。\n\n“张小侯，你不是风系的吗，来，到外面大风的地方试试，看看能不能把风系的初阶技能-风轨给释放出来。”同宿舍的陆小斌说道。\n\n“你他妈还水系的，怎么不见你去来一个水域，堂堂水系魔法师",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "4cd65daf-b7a3-49db-8f30-30a60061f62b",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "人撞贴在了公共厕所门上！\n\n“嗤嗤嗤嗤~~~~~~~~~~~”\n\n歪掉的水龙头狂散着水花，厕所破门坏了一边，一股浓郁的腥臭没有了守护门的阻挡后迅速飘散到整个楼层里，霎时骂声一片。\n\n风之轨迹终于消散，张小侯僵直的倒在地上，鼻子还在流血。\n\n这模样已经够惨了，偏偏那条刚才迎风飘动的三角裤在失去了风力之后终于落了下来，好死赖活的盖在了他脸上。\n\n陆小斌和舍长急忙把张小侯给拖回宿舍。\n\n舍长抢回了自己的",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "6418d893-8c87-4744-a670-ac0b4a4e6a35",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "第21章 降临学校，穆宁雪\n\n……\n\n学生宿舍\n\n“凡哥，该走了，年度考核啊，迟到了可不好。”张小侯对莫凡说道。\n\n“你先去，我再练一会把控。”莫凡说道。\n\n“临时抱火脚啊。”\n\n宿舍几个人也就不等莫凡了，穿得人模狗样的到了考场。\n\n考场自然不会是在教室里拿一张卷子奋笔疾书，魔法理论这些东西虽然也考",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    },
+    {
+      "query_id": "nat-026",
+      "category": "meta",
+      "difficulty": "no_inject",
+      "query": "正文里不要出现'证据''置信度''来源'这类词",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "证据",
+          "置信度",
+          "来源"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 52.4,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "nat-027",
+      "category": "meta",
+      "difficulty": "no_inject",
+      "query": "写第1章觉醒仪式场景时，先别提前透露莫凡后面的召唤系设定",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "召唤系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 162.3,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "nat-028",
+      "category": "source_chunk",
+      "difficulty": "normal",
+      "query": "张小侯和赵满延都是什么系的法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "赵满延",
+          "水系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "latency_ms": 9.1,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "34b2ec61-acab-4922-a50d-9302241a6fc6",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "系的法师",
+          "hit": true,
+          "snippet": "几个显然还只是初中生的少年更是向莫凡投来了崇拜的目光。\n\n“妈妈，哥哥好厉害啊，我以后也能够像他这么厉害吗？”一个七八岁的小孩童拽着妈妈的裙子，弱弱的问道。\n\n“魔法师不是什么人都可以做到的，尤其是雷系的法师。”\n\n莫凡发现自己的魔法已经引起了整车的骚动，为了避免被找麻烦，莫凡匆匆忙忙的下车去了。\n\n到了路边，莫凡心情仍旧没有平静下来。\n\n我了个草，太尼玛帅了！！！\n\n回想起刚才手臂缠绕雷之印，随",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "法师",
+          "hit": true,
+          "snippet": "。\n\n就是魔法高中！\n\n这个社会，魔法为尊！\n\n所有的孩子都需要接受九年义务魔法教育，学完九年魔法基础理论与魔法生活技能之后，都将接受和中考一样的考试，考试过的人，才能够进入魔法高中，成为一名真正的魔法师！\n\n……\n\n桂花被雨水打落在校园笔直的道路上，铃声响起之后，学生们蜂拥而出，要么独行，要么寻找着自己的小伙伴，讨论着今日的考试内容。\n\n“喂，慕白，元素魔法的七系，冰系、火系、土系、水系、风系、",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2df36149-3749-4acb-aaa3-04813fee222c",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "法师",
+          "hit": true,
+          "snippet": "领导老师见证下开启，那个时候哪怕你前面的理论没有学，一样是有可能开启属于自己的系！\n\n莫凡其实是真的喜欢魔法，这对他来说无疑是一次完美的奇幻重生。\n\n他也想要成为一个能够傲立高楼穹顶上方舞火唤雷的至高法师，为拯救世界做那么一点贡献。\n\n偏偏，这次考试……\n\n这么说吧，经过他临考前不懈努力，他终于达到了看懂题目的境界，至于答案是否正确……呵呵，开心就好。\n\n……\n\n“莫凡，莫凡……”人群之中，一个脸",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "3c52cc78-4caf-4c7e-bd8a-12526a5ac8fe",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "法师",
+          "hit": true,
+          "snippet": "。”莫家兴并没有再多说。\n\n“爸，我在天澜魔法高中找了一份暑假临时工做，看管图书馆的，后天就去上班。”莫凡说道。\n\n既然决定了要学魔法，莫凡就得打起十二分精神。\n\n能不能让自己上魔法高中获得那次成为魔法师的觉醒机会就看老爸这边的了，而自己对知识的匮乏是需要靠自己努力去填补，所以在明知道自己没有一点希望考上魔法高中的情况下，莫凡提前找了这份差事。\n\n这份工作，工资几乎没有，管吃管住而已，但对莫凡来说",
+          "source_kind": "project_source_chunk"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a1231dd5-90fa-4e6a-95fb-b2805187f9e6",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "法师",
+          "hit": true,
+          "snippet": "名校魔法尖子，天生对冰系魔法有着别人无法媲美的能力，才15岁就已经可以释放冰系魔法了。”张候神神秘秘的说道。\n\n莫凡愣了愣，假如张候跟自己说小公主获得什么全国奥赛奖这些，他估计毫无感觉，但如果是冰系魔法师的话，那就真的了不得了！\n\n绝大多数人都是要到16岁，也就是高一的时候才接受觉醒，获得自己的第一系魔法。\n\n获得之后并不意味着你就是魔法师，你还需要经过非常漫长的修炼，还需要获得魔法书、勤加练习才",
+          "source_kind": "project_source_chunk"
+        }
+      ]
+    }
+  ]
+}

@@ -23,6 +23,16 @@ describe('TaskCardReviewPanel L-2 embedded clarification', () => {
     expect(SOURCE).toContain('clarificationAnswers')
   })
 
+  it('turns the last clarification round into task-card submission guidance', () => {
+    expect(SOURCE).toContain('const isFinalClarificationRound = computed')
+    expect(SOURCE).toContain("round >= maxRounds")
+    expect(SOURCE).toContain('最后一轮澄清')
+    expect(SOURCE).toContain('提交最后一轮回答')
+    expect(SOURCE).toContain('澄清已完成，请提交任务卡')
+    expect(SOURCE).toContain('点击底部“按此任务卡生成”')
+    expect(AGENT_PANEL).toContain('最后一轮澄清已整理完成，请确认并提交任务卡')
+  })
+
   it('does not render clarification questions already marked complete', () => {
     expect(SOURCE).toContain('props.clarification?.needs_clarification')
     expect(SOURCE).toContain('hasPendingClarification.value')
@@ -47,6 +57,7 @@ describe('TaskCardReviewPanel L-2 embedded clarification', () => {
 
   it('keeps editable task card, user note, and approve guard', () => {
     expect(SOURCE).toContain('editableTaskCard')
+    expect(SOURCE).toContain('normalizeTaskCardPayload')
     expect(SOURCE).toContain('userNote')
     expect(SOURCE).toContain('if (approving.value) return')
     expect(SOURCE).toContain('按此任务卡生成')

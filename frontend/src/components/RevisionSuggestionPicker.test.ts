@@ -6,7 +6,7 @@ const scriptBlock = source.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)
 
 describe('RevisionSuggestionPicker custom direction contract', () => {
   it('supports a custom revision direction mode independent of AI suggestions', () => {
-    expect(scriptBlock).toContain("selectedMode = ref<'suggestion' | 'custom'>('suggestion')")
+    expect(scriptBlock).toContain("props.directions.length ? 'suggestion' : 'custom'")
     expect(scriptBlock).toContain("selectedMode.value === 'custom'")
     expect(scriptBlock).toContain('customDirection.value.trim()')
     expect(source).toContain('自定义修改方向')
@@ -29,5 +29,13 @@ describe('RevisionSuggestionPicker custom direction contract', () => {
     expect(scriptBlock).toContain('emit(\'confirm\', finalDirection.value, userNote.value)')
     expect(scriptBlock).toContain('const canConfirm = computed')
     expect(source).toContain(':disabled="!canConfirm"')
+  })
+
+  it('turns empty AI suggestions into a usable custom-input state instead of a spinner', () => {
+    expect(source).toContain('AI 没有返回可用的修改建议')
+    expect(source).toContain('class="empty-hint"')
+    expect(source).not.toContain('class="spinner"')
+    expect(source).not.toContain('v-if="directions.length" class="note-section"')
+    expect(source).toContain('<div class="note-section">')
   })
 })

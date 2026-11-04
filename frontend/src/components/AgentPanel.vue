@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
-import { useChapterStore, useDocumentStore, useExpertStore, useUiStore, useOutlineStore, useCharacterStore, useCharacterEventStore, useWorldEntryStore, useHiddenThreadStore, useGenerationHistoryStore, friendlyError } from '../stores'
+import { ref, computed, watch, nextTick } from 'vue'
+import { useChapterStore, useDocumentStore, useExpertStore, useUiStore, useOutlineStore, useCharacterStore, useCharacterEventStore, useWorldEntryStore, useHiddenThreadStore, useGenerationHistoryStore, useConversationStore, friendlyError } from '../stores'
 import type { WorkflowStep, SSEEnvelope, GenerateMode, ProjectMode, ArticleGenerateParams, WritingUnit } from '../api/types'
-import type { AgentStartPayload, AgentOutputPayload, AgentDonePayload, ProgressPayload, ErrorPayload, WriterOutputPayload, CriticOutputPayload, ConsistencyCheckPayload, EnhanceDirectionsPayload, TurnSuggestionsPayload, RevisionSuggestionsPayload, SkillPackPayload, ArticleReviewPayload, GenerationRecordPayload, RunCreatedPayload, ClarificationRequiredPayload, ClarificationEmbedded, TaskCardClarificationStatus, TaskCardContextSummary, TaskCardPayload, TaskCardReviewRequiredPayload, PreGenerationMode } from '../api/types'
+import type { AgentStartPayload, AgentOutputPayload, AgentDonePayload, ProgressPayload, ErrorPayload, WriterOutputPayload, CriticOutputPayload, ConsistencyCheckPayload, EnhanceDirectionsPayload, TurnSuggestionsPayload, RevisionSuggestionsPayload, SkillPackPayload, ArticleReviewPayload, GenerationRecordPayload, RunCreatedPayload, ClarificationRequiredPayload, ClarificationEmbedded, TaskCardClarificationStatus, TaskCardContextSummary, TaskCardPayload, TaskCardReviewRequiredPayload, PreGenerationMode, QualityReportPayload } from '../api/types'
+import type { ConversationTaskCard } from '../api/chat'
 import { api } from '../api/client'
 import ApprovalModal from './ApprovalModal.vue'
 import AgentWorkflow from './AgentWorkflow.vue'
@@ -15,8 +16,9 @@ import DirectionPicker from './DirectionPicker.vue'
 import MemoryStagingPanel from './MemoryStagingPanel.vue'
 import ClarificationPanel from './ClarificationPanel.vue'
 import TaskCardReviewPanel from './TaskCardReviewPanel.vue'
+import ConversationAssistant from './ConversationAssistant.vue'
 
-const props = defineProps<{ projectId: string; mode: ProjectMode }>()
+const props = defineProps<{ projectId: string; mode: ProjectMode; hideWorkflow?: boolean }>()
 const chapterStore = useChapterStore()
 const documentStore = useDocumentStore()
 const expertStore = useExpertStore()
@@ -26,7 +28,27 @@ const characterEventStore = useCharacterEventStore()
 const worldEntryStore = useWorldEntryStore()
 const hiddenThreadStore = useHiddenThreadStore()
 const generationHistoryStore = useGenerationHistoryStore()
+const conversationStore = useConversationStore()
 const ui = useUiStore()
+
+/**
+ * 章节助理子模式：
+ * - workflow（默认）：现有章节生成 / 润色 / 审校 / 任务卡 / SSE 全链路，行为零改动；
+ * - conversation：嵌入 ConversationAssistant，对话 → 意图 → 任务卡 → 确认 → 现有生成 → 候选稿对照。
+ */
+const assistantMode = ref<'workflow' | 'conversation'>('workflow')
+/** 对话确认后触发的现有 SSE 生成流程标记：该流程结束时不重复弹现有人工审核弹窗，改由对话候选稿对照承接 */
+let conversationBridgeActive = false
+
+const conversationContext = computed(() => ({
+  projectId: pid.value,
+  mode: props.mode,
+  chapterId: currentWritingUnit.value?.id ?? null,
+  chapterNum: currentUnitPosition.value ?? null,
+  chapterTitle: currentUnitTitle.value,
+  currentVersionId: null,
+  currentDraft: currentWritingUnit.value?.draft ?? '',
+}))
 
 const pid = computed(() => props.projectId)
 const projectState = computed(() => expertStore.getState(pid.value))
@@ -73,11 +95,11 @@ const currentChapterCharacters = computed(() => {
     .filter(character => currentChapterCharacterIds.value.has(character.id))
 })
 const currentChapterWorldEntries = computed(() => {
-  // WorldEntry 当前只有 global/chapter scope，没有章节序号字段。
-  // 生成选择器只展示可安全复用的全局设定，避免把无法确认归属的章节设定混入本章。
   if (!isNovel.value) return []
   return worldEntryStore.entriesForProject(pid.value)
-    .filter(entry => entry.scope_type === 'global')
+    .filter(entry => entry.scope_type === 'global'
+      || entry.chapter_sequence_number === currentUnitPosition.value
+      || entry.chapter_sequence_number == null)
 })
 const currentChapterHiddenThreads = computed(() => {
   if (!isNovel.value || !currentUnitPosition.value) return []
@@ -110,20 +132,29 @@ const showEnhancePicker = ref(false)
 const showTurnPicker = ref(false)
 const showRevisionPicker = ref(false)
 const enhanceDirections = ref<string[]>([])
+// 润色/改写前的原文需要跨过“选择方向”弹窗保留到最终审核。
+const enhanceSourceDraft = ref('')
 const turnSuggestions = ref<string[]>([])
 const revisionDirections = ref<string[]>([])
 const revisionCount = ref(0)
 const maxRevisions = ref(3)
 const pendingMode = ref<GenerateMode>('full_pipeline')
+const comparisonOriginalContent = computed(() => pendingMode.value === 'enhance'
+  ? cleanGeneratedContent(enhanceSourceDraft.value)
+  : initialDraftPreview.value)
+/** Thread ID for HITL resume (set when workflow pauses at human_review) */
+const hitlThreadId = ref<string | null>(null)
 const canFinalizeCandidate = computed(() =>
   isNovel.value
   && !!currentWritingUnit.value
+  && !!hitlThreadId.value
   && pendingMode.value !== 'summarize'
   && !!candidateDraftPreview.value,
 )
 const showArticleParams = ref(false)
 const latestGenerationRecordId = ref<string | null>(null)
 const latestRunId = ref<string | null>(null)
+const latestQualityReport = ref<QualityReportPayload | null>(null)
 
 // ─── Clarification Loop (生成前澄清) ───
 // 收到 clarification_required SSE 事件后暂存 payload，用于渲染 ClarificationPanel
@@ -337,16 +368,25 @@ function handleSSETimeout(reason: 'first_event' | 'idle', baseMsg: string) {
   expertStore.stopGenerating(pid.value)
   ui.showToast(msg, 'error')
 }
-/** Thread ID for HITL resume (set when workflow pauses at human_review) */
-const hitlThreadId = ref<string | null>(null)
 /** Whether we're currently in a HITL resume flow (prevent re-showing approval modal on done) */
 let hitlResuming = false
+/**
+ * Most HITL resume completions are terminal decisions from the final approval
+ * modal and must not reopen the modal. Task-card approval is different: it
+ * resumes generation before final approval exists, so if that stream ends with
+ * a plain `done` event we still need to surface the final candidate for review.
+ */
+let showApprovalAfterTaskCardResumeDone = false
 
 const defaultWorkflow: WorkflowStep[] = [
   { id: 'context', name: 'ContextLoader', status: 'pending', expert_id: 'system' },
   { id: 'writer', name: 'Writer', status: 'pending', expert_id: 'renderer' },
+  { id: 'draft_validator', name: 'DraftValidator', status: 'pending', expert_id: 'system' },
   { id: 'critic', name: 'Critic', status: 'pending', expert_id: 'cruel' },
+  { id: 'editor', name: 'NarrativeEditor', status: 'pending', expert_id: 'editor' },
+  { id: 'edited_validator', name: 'EditedDraftValidator', status: 'pending', expert_id: 'system' },
   { id: 'consistency', name: 'ConsistencyChecker', status: 'pending', expert_id: 'editor' },
+  { id: 'final_quality', name: 'FinalQualityGate', status: 'pending', expert_id: 'system' },
   { id: 'review', name: 'HumanReview', status: 'pending', expert_id: 'user' },
 ]
 
@@ -362,10 +402,17 @@ function agentToStepId(agent: string): string | null {
   const map: Record<string, string> = {
     writer: 'writer',
     chapter_writer: 'writer',
+    draft_validator: 'draft_validator',
     content_writer: 'writer',
     critic: 'critic',
+    structural_critic: 'critic',
     structure_review: 'critic',
+    editor: 'editor',
+    narrative_editor: 'editor',
+    edited_draft_validator: 'edited_validator',
     consistency_checker: 'consistency',
+    continuity_checker: 'consistency',
+    final_quality_gate: 'final_quality',
     audience_review: 'consistency',
     platform_review: 'platform',
     context_loader: 'context',
@@ -461,6 +508,32 @@ function cleanGeneratedContent(content: string): string {
   return result
 }
 
+function formatQualityMessage(report: QualityReportPayload): string {
+  const parts: string[] = []
+  if (report.target_chars > 0) {
+    parts.push(`目标 ${report.target_chars} 字 / 实际 ${report.actual_chars} 字`)
+  }
+  if (report.similarity != null) {
+    parts.push(`编辑相似度 ${(report.similarity * 100).toFixed(0)}%`)
+  }
+  if (report.changed_chars != null) {
+    parts.push(`字符变化 ${report.changed_chars}`)
+  }
+  if (report.issues && report.issues.length) {
+    const issueSummary = report.issues.map(i => i.message).join('；')
+    parts.push(issueSummary)
+  }
+  const statusLabels: Record<string, string> = {
+    passed: '通过',
+    warning: '需人工确认',
+    retrying: '重试中',
+    failed: '失败',
+    running: '检查中',
+  }
+  const statusLabel = statusLabels[report.status] || report.status
+  return `${(report.stage || 'draft') === 'draft' ? '初稿质量' : (report.stage || 'draft') === 'edited' ? '编辑质量' : '最终质量'}：${statusLabel}（${parts.join('，')}）`
+}
+
 function applyCandidateToEditor(content: string, fallbackMessage = '没有可应用的生成内容'): boolean {
   const unit = currentWritingUnit.value
   if (!unit || !content) {
@@ -485,20 +558,39 @@ function refreshGenerationHistory() {
   }
 }
 
-async function closePausedWorkflow(threadId: string) {
-  try {
-    await api.resumeGeneration(pid.value, threadId, 'reject', () => undefined, undefined, undefined, props.mode)
-  } catch {
-    // 这里只是释放后端暂停态；失败不影响本地候选稿进入编辑器。
-  }
+async function resumeHumanReviewTerminal(action: 'approve' | 'finalize' | 'reject') {
+  const threadId = hitlThreadId.value
+  if (!threadId) throw new Error('人工审核任务已失效，请重新生成')
+
+  let streamError = ''
+  await api.resumeGeneration(
+    pid.value,
+    threadId,
+    action,
+    (envelope: SSEEnvelope) => {
+      if (envelope.event === 'error') {
+        const payload = envelope.data as unknown as ErrorPayload
+        streamError = payload.message || '人工审核操作失败'
+        return
+      }
+      handleSSEEvent(envelope)
+    },
+    undefined,
+    undefined,
+    props.mode,
+  )
+  if (streamError) throw new Error(streamError)
 }
 
 // ─── Generate (full pipeline) ───
 
 function handleGenerate() {
   pendingMode.value = 'full_pipeline'
+  conversationBridgeActive = false
+  enhanceSourceDraft.value = ''
   latestGenerationRecordId.value = null
   latestRunId.value = null
+  latestQualityReport.value = null
   embeddedClarification.value = null
   taskCardClarificationStatus.value = null
   taskCardContextSummary.value = null
@@ -518,12 +610,14 @@ const articleParams = ref<ArticleGenerateParams | null>(null)
 function handleArticleConfirm(params: ArticleGenerateParams) {
   articleParams.value = params
   showArticleParams.value = false
-  expertStore.startGenerating(pid.value)
   if (pendingMode.value === 'enhance') {
+    startEnhanceGeneration()
     runEnhanceDirections()
   } else if (pendingMode.value === 'continue') {
+    expertStore.startGenerating(pid.value)
     runTurnSuggestions()
   } else {
+    expertStore.startGenerating(pid.value)
     resetWorkflowForMode()
     runGenerateStream()
   }
@@ -557,8 +651,10 @@ function handleQuickAction(key: string) {
   const action = QUICK_ACTIONS.find(a => a.key === key)
   if (!action) return
   pendingMode.value = action.mode
+  enhanceSourceDraft.value = ''
   latestGenerationRecordId.value = null
   latestRunId.value = null
+  latestQualityReport.value = null
   clarificationState.value = null
   showTaskCardReview.value = false
   taskCardState.value = null
@@ -567,17 +663,26 @@ function handleQuickAction(key: string) {
     showArticleParams.value = true
     return
   }
-  expertStore.startGenerating(pid.value)
   if (action.mode === 'enhance') {
+    startEnhanceGeneration()
     runEnhanceDirections()
   } else if (action.mode === 'continue') {
+    expertStore.startGenerating(pid.value)
     runTurnSuggestions()
   } else if (action.mode === 'summarize') {
+    expertStore.startGenerating(pid.value)
     runGenerateStream()
   }
 }
 
 // ─── Enhance flow ───
+
+function startEnhanceGeneration() {
+  enhanceSourceDraft.value = cleanGeneratedContent(currentWritingUnit.value?.draft ?? '')
+  expertStore.startGenerating(pid.value)
+  // 流式润色的第一个 token 不能被误当成“原文”；原文来自当前编辑器内容。
+  if (enhanceSourceDraft.value) expertStore.setInitialDraft(pid.value, enhanceSourceDraft.value)
+}
 
 async function runEnhanceDirections() {
   const unit = currentWritingUnit.value
@@ -616,10 +721,10 @@ async function runEnhanceDirections() {
   }
 }
 
-function handleEnhanceConfirm(direction: string, userNote: string, targetWords: number) {
+function handleEnhanceConfirm(direction: string, targetWords: number) {
   showEnhancePicker.value = false
-  expertStore.startGenerating(pid.value)
-  runGenerateStream(undefined, undefined, undefined, undefined, targetWords, direction, undefined, userNote)
+  startEnhanceGeneration()
+  runGenerateStream(undefined, undefined, undefined, undefined, targetWords, direction)
 }
 
 // ─── Turn flow ───
@@ -672,6 +777,7 @@ function handleTurnConfirm(direction: string, userNote: string) {
 async function requestRevisionDirections() {
   if (!hitlThreadId.value) return
   const threadId = hitlThreadId.value
+  revisionDirections.value = []
   pendingMode.value = 'full_pipeline'
   hitlResuming = true
   currentAbort = new AbortController()
@@ -679,16 +785,24 @@ async function requestRevisionDirections() {
     (reason) => handleSSETimeout(reason, '获取修改方向无响应'),
   )
   watchdog.start()
+  let receivedSuggestions = false
   try {
     await api.resumeGeneration(
       pid.value,
       threadId,
       'review',
-      (envelope: SSEEnvelope) => { watchdog.onEvent(); handleSSEEvent(envelope) },
+      (envelope: SSEEnvelope) => {
+        watchdog.onEvent()
+        if (envelope.event === 'revision_suggestions') receivedSuggestions = true
+        handleSSEEvent(envelope)
+      },
       undefined,
       currentAbort.signal,
       props.mode,
     )
+    if (!receivedSuggestions) {
+      throw new Error('服务未返回修改方向，请重试')
+    }
   } catch (e: unknown) {
     if (currentAbort?.signal.aborted) return
     const msg = friendlyError(e, '获取修改方向失败')
@@ -764,6 +878,7 @@ async function runGenerateStream(
   currentAbort = new AbortController()
   latestGenerationRecordId.value = null
   latestRunId.value = null
+  latestQualityReport.value = null
   // M-2: 用 SSE 看门狗替换原 noEventTimer，增加 idle 超时
   const watchdog = createSSEWatchdog(
     (reason) => handleSSETimeout(reason, '生成连接超时'),
@@ -806,6 +921,7 @@ async function runGenerateStream(
     )
   } catch (e: unknown) {
     if (currentAbort?.signal.aborted) return
+    conversationBridgeActive = false
     const msg = friendlyError(e, '生成失败')
     expertStore.appendOutput(pid.value, `\n\n[错误] ${msg}`)
     expertStore.stopGenerating(pid.value)
@@ -825,14 +941,39 @@ function handleSSEEvent(envelope: SSEEnvelope) {
       const payload = data as unknown as ProgressPayload
       expertStore.appendOutput(pid.value, `[系统] ${payload.message}\n`)
       // HITL: 当后端暂停在 human_review 时，发送带 thread_id 的 progress 事件
-      const threadId = (data as Record<string, unknown>).thread_id as string | undefined
-      if (threadId && pendingMode.value === 'full_pipeline') {
+      const progressData = data as Record<string, unknown>
+      const threadId = progressData.thread_id as string | undefined
+      if (threadId && pendingMode.value === 'full_pipeline' && !conversationBridgeActive) {
         hitlThreadId.value = threadId
         expertStore.stopGenerating(pid.value)
         expertStore.updateStepStatus(pid.value, 'review', 'running')
+        const eventContent = typeof progressData.content === 'string'
+          ? cleanGeneratedContent(progressData.content)
+          : ''
+        if (eventContent) expertStore.setDraft(pid.value, eventContent)
         const state = expertStore.getState(pid.value)
-        approvalContent.value = cleanGeneratedContent(state.finalDraft)
-        showApproval.value = true
+        const candidateContent = eventContent || cleanGeneratedContent(state.finalDraft)
+        if (candidateContent) {
+          approvalContent.value = candidateContent
+          showApproval.value = true
+        } else {
+          ui.showToast('生成流程已到人工审核，但没有收到候选正文，请重试', 'error')
+        }
+        const trace = {
+          stage: 'progress_human_review',
+          threadId,
+          eventContentLen: eventContent.length,
+          finalDraftLen: state.finalDraft.length,
+          candidateContentLen: candidateContent.length,
+          showApproval: showApproval.value,
+          hitlResuming,
+        }
+        console.info('[GENERATION_UI_TRACE]', trace)
+        void nextTick(() => console.info('[GENERATION_UI_TRACE]', {
+          ...trace,
+          stage: 'progress_human_review_after_render',
+          modalInDom: Boolean(document.querySelector('.modal-overlay')),
+        }))
       }
       break
     }
@@ -851,7 +992,14 @@ function handleSSEEvent(envelope: SSEEnvelope) {
     case 'agent_done': {
       const payload = data as unknown as AgentDonePayload
       const stepId = agentToStepId(payload.agent)
-      if (stepId) expertStore.updateStepStatus(pid.value, stepId, 'success')
+      if (stepId) {
+        const status = payload.step === 'error'
+          ? 'error'
+          : payload.step === 'running'
+            ? 'running'
+            : 'success'
+        expertStore.updateStepStatus(pid.value, stepId, status)
+      }
       break
     }
     case 'writer_output': {
@@ -985,11 +1133,16 @@ function handleSSEEvent(envelope: SSEEnvelope) {
     }
     case 'revision_suggestions': {
       const payload = data as unknown as RevisionSuggestionsPayload
-      revisionDirections.value = payload.directions
+      revisionDirections.value = Array.isArray(payload.directions)
+        ? payload.directions.filter(direction => typeof direction === 'string' && direction.trim())
+        : []
       revisionCount.value = payload.revision_count
       maxRevisions.value = payload.max_revisions
       expertStore.setRevisionInfo(pid.value, payload.revision_count, payload.max_revisions)
       showRevisionPicker.value = true
+      if (!revisionDirections.value.length) {
+        ui.showToast('AI 未返回可用建议，请直接填写自定义修改方向', 'info')
+      }
       break
     }
     case 'skill_pack': {
@@ -1019,8 +1172,63 @@ function handleSSEEvent(envelope: SSEEnvelope) {
       expertStore.stopGenerating(pid.value)
       break
     }
+    case 'quality_check': {
+      const payload = data as unknown as QualityReportPayload
+      const msg = formatQualityMessage(payload)
+      expertStore.appendOutput(pid.value, `[质量验收] ${msg}\n`)
+      // 更新 workflow 步骤：draft_validator / edited_draft_validator / final_quality_gate
+      const qualityStepId = payload.stage === 'draft'
+        ? 'draft_validator'
+        : payload.stage === 'edited'
+          ? 'edited_validator'
+          : 'final_quality'
+      const qualityStepStatus = payload.status === 'passed'
+        || payload.status === 'warning'
+        ? 'success'
+        : payload.status === 'failed'
+          ? 'error'
+          : 'running'
+      expertStore.updateStepStatus(pid.value, qualityStepId, qualityStepStatus)
+      if (payload.stage === 'draft' && (payload.status === 'passed' || payload.status === 'warning')) {
+        // 重试后以“真正通过初稿门”的 Writer 正文作为人工对照基线。
+        const acceptedWriterDraft = cleanGeneratedContent(expertStore.getState(pid.value).finalDraft)
+        if (acceptedWriterDraft) expertStore.setInitialDraft(pid.value, acceptedWriterDraft)
+        expertStore.updateStepStatus(pid.value, 'writer', 'success')
+      }
+      if (payload.stage === 'edited' && (payload.status === 'passed' || payload.status === 'warning')) {
+        expertStore.updateStepStatus(pid.value, 'editor', 'success')
+      }
+      if (payload.status === 'failed') {
+        showApproval.value = false
+      }
+      // Show retry/error for non-passing states
+      if (payload.status === 'retrying') {
+        const retryType = payload.stage === 'draft' ? 'Writer' : 'Editor'
+        expertStore.appendOutput(pid.value,
+          `[系统] 字数验收失败，正在要求 ${retryType} 第 ${payload.retry_count}/${payload.max_retries} 次重写\n`)
+      } else if (payload.status === 'failed') {
+        const issues = payload.issues || []
+        const errorMsgs = issues.map(i => i.message).join('；')
+        expertStore.appendOutput(pid.value, `[系统] 质量验收失败，原因：${errorMsgs}\n`)
+      }
+      // Store quality report for ApprovalModal
+      latestQualityReport.value = payload
+      break
+    }
     case 'done': {
       const state = expertStore.getState(pid.value)
+      expertStore.setGenerationError(pid.value, '')
+      const doneData = data as Record<string, unknown>
+      const eventContent = typeof doneData.content === 'string'
+        ? cleanGeneratedContent(doneData.content)
+        : ''
+      if (eventContent) expertStore.setDraft(pid.value, eventContent)
+      if (latestQualityReport.value?.status === 'failed') {
+        expertStore.stopGenerating(pid.value)
+        showApproval.value = false
+        ui.showToast('质量验收未通过，已阻止候选稿进入人工审核', 'error')
+        break
+      }
       for (const step of state.workflowSteps) {
         if (step.status === 'pending' || step.status === 'running') {
           expertStore.updateStepStatus(pid.value, step.id, 'success')
@@ -1028,16 +1236,51 @@ function handleSSEEvent(envelope: SSEEnvelope) {
       }
       expertStore.stopGenerating(pid.value)
 
-      // HITL resume 返回的 done 不再弹审批框（已在 handleDecision 中处理）
-      if (!hitlResuming && state.finalDraft) {
-        approvalContent.value = cleanGeneratedContent(state.finalDraft)
-        showApproval.value = true
+      // 最终审核决策产生的 HITL done 不再弹框；任务卡确认后的生成 done 仍需弹出最终审核。
+      const candidateContent = eventContent || cleanGeneratedContent(state.finalDraft)
+      const shouldShowFinalReview = !!eventContent || !hitlResuming || showApprovalAfterTaskCardResumeDone
+      if (shouldShowFinalReview) {
+        if (conversationBridgeActive) {
+          // 对话确认后的生成：候选稿交回对话候选稿对照区，不重复弹现有人工审核弹窗
+          if (candidateContent) {
+            conversationStore.syncCandidateFromGeneration(candidateContent, conversationStore.executionId, conversationStore.baseVersionId)
+          }
+        } else if (candidateContent) {
+          approvalContent.value = candidateContent
+          showApproval.value = true
+        } else if (pendingMode.value === 'full_pipeline') {
+          ui.showToast('生成流程已完成，但没有收到候选正文，无法打开最终审核', 'error')
+        }
       }
+      conversationBridgeActive = false
+      const trace = {
+        stage: 'done',
+        eventContentLen: eventContent.length,
+        finalDraftLen: state.finalDraft.length,
+        candidateContentLen: candidateContent.length,
+        shouldShowFinalReview,
+        showApproval: showApproval.value,
+        hitlResuming,
+        showApprovalAfterTaskCardResumeDone,
+      }
+      console.info('[GENERATION_UI_TRACE]', trace)
+      void nextTick(() => console.info('[GENERATION_UI_TRACE]', {
+        ...trace,
+        stage: 'done_after_render',
+        modalInDom: Boolean(document.querySelector('.modal-overlay')),
+      }))
       break
     }
     case 'error': {
+      conversationBridgeActive = false
       const payload = data as unknown as ErrorPayload
       expertStore.appendOutput(pid.value, `\n[错误] ${payload.message}`)
+      expertStore.setGenerationError(pid.value, payload.message)
+      const state = expertStore.getState(pid.value)
+      for (const step of state.workflowSteps) {
+        if (step.status === 'running') expertStore.updateStepStatus(pid.value, step.id, 'error')
+      }
+      showApproval.value = false
       expertStore.stopGenerating(pid.value)
       ui.showToast(payload.message, 'error')
       break
@@ -1136,6 +1379,7 @@ async function handleTaskCardApproved(taskCard: TaskCardPayload, userNote?: stri
     return
   }
   hitlResuming = true
+  showApprovalAfterTaskCardResumeDone = true
   expertStore.setGenerating(pid.value, true)
   expertStore.updateStepStatus(pid.value, 'writer', 'running')
   const abort = new AbortController()
@@ -1191,6 +1435,7 @@ async function handleTaskCardApproved(taskCard: TaskCardPayload, userNote?: stri
   } finally {
     watchdog.clear()
     hitlResuming = false
+    showApprovalAfterTaskCardResumeDone = false
     if (currentAbort === abort) currentAbort = null
     if (!writerStarted) {
       showTaskCardReview.value = true
@@ -1231,6 +1476,9 @@ async function handleTaskCardClarificationRefresh(answers: Record<string, string
           taskCardContextSummary.value = payload.context_summary ?? null
           showTaskCardReview.value = true
           expertStore.stopGenerating(pid.value)
+          if (payload.clarification_status === 'answered') {
+            ui.showToast('最后一轮澄清已整理完成，请确认并提交任务卡', 'success')
+          }
         }
         handleSSEEvent(envelope)
       },
@@ -1364,10 +1612,25 @@ async function handleTaskCardRejected() {
   hitlResuming = false
 }
 
-async function handleDecision(decision: 'accept' | 'accept_with_mods' | 'reject') {
+async function handleDecision(decision: 'accept' | 'accept_with_mods' | 'compress' | 'reject') {
   showApproval.value = false
   const state = expertStore.getState(pid.value)
   const candidateContent = cleanGeneratedContent(state.finalDraft || approvalContent.value)
+
+  if (decision === 'compress') {
+    if (!hitlThreadId.value) {
+      showApproval.value = true
+      ui.showToast('当前审核任务已失效，无法继续压缩', 'error')
+      return
+    }
+    const targetWords = latestQualityReport.value?.target_chars || 0
+    const direction = targetWords > 0
+      ? `在不改变核心剧情、人物关系、关键设定和结尾完整性的前提下，将当前候选稿压缩到约 ${targetWords} 字。删除重复表达和非必要铺陈，不要重新创作剧情，不要输出修改说明。`
+      : '在不改变核心剧情、人物关系、关键设定和结尾完整性的前提下压缩当前候选稿。删除重复表达和非必要铺陈，不要重新创作剧情，不要输出修改说明。'
+    latestQualityReport.value = null
+    await handleRevisionConfirm(direction, '')
+    return
+  }
 
   if (decision === 'accept_with_mods') {
     if (hitlThreadId.value) {
@@ -1380,6 +1643,7 @@ async function handleDecision(decision: 'accept' | 'accept_with_mods' | 'reject'
         ui.showToast('当前生成没有可恢复工作流，已放入编辑器，请修改后手动保存', 'info')
       }
       latestGenerationRecordId.value = null
+      latestQualityReport.value = null
       expertStore.stopGenerating(pid.value)
     }
     return
@@ -1402,37 +1666,49 @@ async function handleDecision(decision: 'accept' | 'accept_with_mods' | 'reject'
     return
   }
 
-  // HITL 流程：前端采纳只写入编辑器草稿，不隐式落库。
+  // HITL 流程：人工决策只向后端发送一次终态动作。后端负责在单个事务里
+  // 保存正文、版本、候选记录和 run 状态，前端成功后只同步本地视图。
   hitlResuming = true
 
   if (decision === 'reject') {
-    // 拒绝：只需通知后端终止，不落库
     try {
-      await api.resumeGeneration(pid.value, hitlThreadId.value!, 'reject', (envelope: SSEEnvelope) => handleSSEEvent(envelope), undefined, undefined, props.mode)
-    } catch {
-      // 即使通知失败也不影响（后端状态会过期）
+      await resumeHumanReviewTerminal('reject')
+    } catch (e: unknown) {
+      hitlResuming = false
+      showApproval.value = true
+      ui.showToast(friendlyError(e, '丢弃候选稿失败，请重试'), 'error')
+      return
     }
     hitlThreadId.value = null
     hitlResuming = false
-    if (latestGenerationRecordId.value) {
-      generationHistoryStore.updateRecordStatus(pid.value, latestGenerationRecordId.value, 'discarded')
-    }
     latestGenerationRecordId.value = null
+    latestQualityReport.value = null
+    refreshGenerationHistory()
     expertStore.stopGenerating(pid.value)
     return
   }
 
-  if (applyCandidateToEditor(candidateContent)) {
-    if (latestGenerationRecordId.value) {
-      generationHistoryStore.updateRecordStatus(pid.value, latestGenerationRecordId.value, 'applied')
+  try {
+    await resumeHumanReviewTerminal('approve')
+    applyCandidateToEditor(candidateContent)
+    if (isNovel.value) {
+      await chapterStore.loadChapters(pid.value)
+    } else {
+      await documentStore.loadDocuments(pid.value)
     }
-    const threadId = hitlThreadId.value
-    if (threadId) await closePausedWorkflow(threadId)
-    ui.showToast('已应用到编辑器，请确认后保存', 'success')
+    expertStore.setDraft(pid.value, candidateContent)
+    ui.showToast('候选内容已采用并保存为草稿', 'success')
+  } catch (e: unknown) {
+    hitlResuming = false
+    showApproval.value = true
+    ui.showToast(friendlyError(e, '采用候选稿失败，请重试'), 'error')
+    return
   }
   hitlThreadId.value = null
   latestGenerationRecordId.value = null
+  latestQualityReport.value = null
   hitlResuming = false
+  refreshGenerationHistory()
   expertStore.stopGenerating(pid.value)
 }
 
@@ -1448,25 +1724,31 @@ async function handleFinalizeChapter() {
     ui.showToast('没有可定稿的章节正文', 'error')
     return
   }
+  if (!hitlThreadId.value) {
+    ui.showToast('人工审核任务已失效，请重新生成后定稿', 'error')
+    return
+  }
 
   finalizingChapter.value = true
+  hitlResuming = true
+  showApproval.value = false
   try {
-    await chapterStore.finalizeCurrentChapter(pid.value, candidateContent)
+    await resumeHumanReviewTerminal('finalize')
+    await chapterStore.loadChapters(pid.value)
     expertStore.setDraft(pid.value, candidateContent)
     approvalContent.value = candidateContent
-    if (latestGenerationRecordId.value) {
-      generationHistoryStore.updateRecordStatus(pid.value, latestGenerationRecordId.value, 'applied')
-    }
-    const threadId = hitlThreadId.value
-    if (threadId) await closePausedWorkflow(threadId)
     hitlThreadId.value = null
     latestGenerationRecordId.value = null
+    latestQualityReport.value = null
     showApproval.value = false
+    refreshGenerationHistory()
     expertStore.stopGenerating(pid.value)
     ui.showToast('本章已定稿，下一章创作会自动使用这版正文衔接', 'success')
   } catch (e: unknown) {
+    showApproval.value = true
     ui.showToast(friendlyError(e, '章节定稿失败'), 'error')
   } finally {
+    hitlResuming = false
     finalizingChapter.value = false
   }
 }
@@ -1513,7 +1795,85 @@ function cancelStream() {
   expertStore.stopGenerating(pid.value, true)
 }
 
-defineExpose({ testExpert, cancelStream })
+// ─── Conversation Assistant bridge ───
+
+/**
+ * 对话确认任务卡 → 复用现有章节生成 SSE 流程产出候选稿。
+ * 后端 confirm 若返回 completed（直接给候选），store 已进入 candidate_review；
+ * 若返回 running / 或后端未就绪，这里走现有 generateStream 桥接。
+ * 桥接期间的 done 事件把候选稿回填到对话候选稿对照区，不重复弹现有人工审核弹窗。
+ */
+async function handleConversationConfirm(payload: {
+  messageId: string
+  taskCard: ConversationTaskCard
+  overrides?: Record<string, unknown>
+  baseVersionId?: string | null
+  idempotencyKey?: string
+}) {
+  const unit = currentWritingUnit.value
+  if (!unit) {
+    ui.showToast(`请先选择一个${isNovel.value ? '章节' : '稿件'}`, 'error')
+    return
+  }
+  // 修复 B：重新生成时用 payload 携带的最新版本与幂等键（版本冲突后基于新版本重生成），
+  // 否则沿用 store 旧值 + 旧幂等号，后端幂等短路会返回首次执行结果。
+  const baseVersionId = payload.baseVersionId ?? conversationStore.baseVersionId
+  try {
+    await conversationStore.confirmTaskCard(pid.value, {
+      messageId: payload.messageId,
+      taskCard: payload.taskCard,
+      overrides: payload.overrides,
+      baseVersionId,
+      idempotencyKey: payload.idempotencyKey,
+      context: {
+        chapterNo: currentUnitPosition.value ?? null,
+        chapterTitle: currentUnitTitle.value,
+        draft: unit.draft,
+        currentVersionId: baseVersionId,
+      },
+    })
+    if (conversationStore.awaiting === 'candidate_review') return // 后端已直接返回候选稿
+  } catch {
+    return // store.error 已展示（含 version_conflict / clarification_required）
+  }
+
+  // 桥接现有生成流程
+  conversationBridgeActive = true
+  pendingMode.value = 'full_pipeline'
+  expertStore.startGenerating(pid.value)
+  expertStore.setWorkflowSteps(pid.value, defaultWorkflow.map(s => ({ ...s, status: 'pending' as const })))
+  runGenerateStream(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined)
+}
+
+/** 对话候选稿“采用为草稿”→ 写入章节 store 草稿（不自动保存），并刷新生成历史 */
+function handleConversationAcceptCandidate(payload: { content: string; executionId: string | null }) {
+  if (applyCandidateToEditor(payload.content, '没有可采用的候选稿')) {
+    const recordId = conversationStore.changeSet?.execution_id ?? null
+    if (recordId) {
+      generationHistoryStore.updateRecordStatus(pid.value, recordId, 'applied')
+    }
+    void payload
+    ui.showToast('候选稿已采用为草稿，请确认后保存', 'success')
+    refreshGenerationHistory()
+  }
+}
+
+function handleConversationRevertSession() {
+  refreshGenerationHistory()
+  ui.showToast('已撤销本轮会话的全部修改', 'success')
+}
+
+// 新版对话式创作壳层（ConversationCreativeWorkspace）通过隐藏的执行宿主复用以下
+// 现有入口：仅暴露既有 handler，不改变任何内部生成逻辑（SSE 看门狗 / 任务卡 / 审核闭环仍在此组件内）。
+defineExpose({
+  testExpert,
+  cancelStream,
+  handleGenerate,
+  handleQuickAction,
+  handleConversationConfirm,
+  handleConversationAcceptCandidate,
+  handleConversationRevertSession,
+})
 </script>
 
 <template>
@@ -1527,6 +1887,28 @@ defineExpose({ testExpert, cancelStream })
         <router-link :to="`/projects/${projectId}/experts`" class="link-configure">配置</router-link>
       </div>
 
+      <!-- 对话式创作：章节助理子模式切换（工作流 / 对话助手） -->
+      <div class="assistant-mode-toggle" role="tablist" aria-label="章节助理模式">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="assistantMode === 'workflow'"
+          :class="{ active: assistantMode === 'workflow' }"
+          @click="assistantMode = 'workflow'"
+        >
+          工作流
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="assistantMode === 'conversation'"
+          :class="{ active: assistantMode === 'conversation' }"
+          @click="assistantMode = 'conversation'"
+        >
+          对话助手
+        </button>
+      </div>
+
       <div class="unit-context" :class="{ muted: !currentWritingUnit }">
         <span class="unit-ordinal">{{ currentUnitOrdinal }}</span>
         <span class="unit-title">{{ currentUnitTitle }}</span>
@@ -1536,6 +1918,7 @@ defineExpose({ testExpert, cancelStream })
         已加载：角色 {{ contextStats.stats.characters }} · 事件 {{ contextStats.stats.events }} · 暗线 {{ contextStats.stats.hidden_threads }} · 设定 {{ contextStats.stats.world_entries }}
       </div>
 
+      <template v-if="assistantMode === 'workflow'">
       <div class="primary-action">
         <button
           v-if="projectState.isGenerating"
@@ -1574,9 +1957,19 @@ defineExpose({ testExpert, cancelStream })
           <input type="number" min="1" max="10" v-model.number="maxClarificationRounds" class="rounds-input" />
         </label>
       </div>
+      </template>
     </section>
 
-    <div class="quick-actions">
+    <!-- 对话助手模式 -->
+    <ConversationAssistant
+      v-if="assistantMode === 'conversation'"
+      :context="conversationContext"
+      @confirm="handleConversationConfirm"
+      @accept-candidate="handleConversationAcceptCandidate"
+      @revert-session="handleConversationRevertSession"
+    />
+
+    <div v-if="assistantMode === 'workflow'" class="quick-actions">
       <button
         v-for="action in QUICK_ACTIONS"
         :key="action.key"
@@ -1603,15 +1996,16 @@ defineExpose({ testExpert, cancelStream })
       @context-refresh="handleTaskCardContextRefresh"
     />
 
-    <!-- Workflow progress -->
-    <section v-if="pendingMode === 'full_pipeline'" class="workflow-section">
+    <!-- Workflow progress（隐藏执行宿主传 hideWorkflow 去冗余：右侧 CreativeContextPanel 已展示进度） -->
+    <section v-if="pendingMode === 'full_pipeline' && assistantMode === 'workflow' && !props.hideWorkflow" class="workflow-section">
       <AgentWorkflow :project-id="projectId" :mode="props.mode" />
     </section>
 
     <!-- 写作记忆 staging -->
-    <MemoryStagingPanel v-if="isNovel" :project-id="projectId" />
+    <MemoryStagingPanel v-if="isNovel && assistantMode === 'workflow'" :project-id="projectId" />
 
     <!-- 生成前澄清（区别于生成后的最终审核） -->
+    <template v-if="assistantMode === 'workflow'">
     <ClarificationPanel
       v-if="clarificationState"
       :run-id="clarificationState.run_id"
@@ -1623,9 +2017,10 @@ defineExpose({ testExpert, cancelStream })
       @submit="handleClarificationSubmit"
       @skip="handleClarificationSkip"
     />
+    </template>
 
     <!-- Review comments -->
-    <div v-if="reviewComments.length" class="review-section">
+    <div v-if="reviewComments.length && assistantMode === 'workflow'" class="review-section">
       <div class="section-label">审核意见</div>
       <div
         v-for="comment in reviewComments"
@@ -1650,7 +2045,7 @@ defineExpose({ testExpert, cancelStream })
     </div>
 
     <!-- Stream output (agent logs, critiques, etc.) -->
-    <div v-if="projectState.streamOutput" class="stream-section">
+    <div v-if="projectState.streamOutput && assistantMode === 'workflow'" class="stream-section">
       <div class="section-label">输出</div>
       <div class="stream-output">
         <pre>{{ projectState.streamOutput }}</pre>
@@ -1658,7 +2053,7 @@ defineExpose({ testExpert, cancelStream })
     </div>
 
     <!-- 普通预览只展示当前最新候选稿；初稿与版本对照只放在最后的人工审核弹窗。 -->
-    <div v-if="candidateDraftPreview && !showApproval" class="draft-section">
+    <div v-if="candidateDraftPreview && !showApproval && assistantMode === 'workflow'" class="draft-section">
       <div class="section-label">{{ isNovel ? '当前候选稿（最新版本）' : '当前候选内容（最新版本）' }}</div>
       <div class="draft-preview">
         <pre>{{ candidateDraftPreview }}</pre>
@@ -1668,12 +2063,13 @@ defineExpose({ testExpert, cancelStream })
     <ApprovalModal
       :show="showApproval"
       :content="approvalContent"
-      :original-content="initialDraftPreview"
+      :original-content="comparisonOriginalContent"
       :mode="pendingMode"
       :has-h-i-t-l="!!hitlThreadId"
       :project-mode="props.mode"
       :can-finalize="canFinalizeCandidate"
       :finalizing="finalizingChapter"
+      :quality-report="latestQualityReport"
       @decision="handleDecision"
       @finalize="handleFinalizeChapter"
     />
@@ -1774,6 +2170,36 @@ defineExpose({ testExpert, cancelStream })
   font-weight: 800;
   margin: 0;
   color: var(--text);
+}
+/* 对话式创作：章节助理子模式切换 */
+.assistant-mode-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--bg) 64%, transparent);
+}
+.assistant-mode-toggle button {
+  min-height: 32px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), box-shadow var(--transition);
+}
+.assistant-mode-toggle button:hover {
+  color: var(--text-secondary);
+}
+.assistant-mode-toggle button.active {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel));
+  color: var(--accent);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, var(--shadow-sm);
 }
 .unit-context {
   display: flex;

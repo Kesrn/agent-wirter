@@ -156,6 +156,29 @@ async def get_interrupt_by_thread(
     return result.scalar_one_or_none()
 
 
+async def get_interrupt_by_thread_step(
+    db: AsyncSession,
+    thread_id: str,
+    step_name: str,
+) -> HumanInterrupt | None:
+    """查找指定线程和暂停点的最新 interrupt（包含已解决记录）。
+
+    同一条 LangGraph thread 会依次经过澄清、任务卡审核和最终人工审核。
+    终态幂等判断必须精确到 ``step_name``，否则任务卡的 APPROVE 会被误认为
+    最终正文已经批准。
+    """
+    result = await db.execute(
+        select(HumanInterrupt)
+        .where(
+            HumanInterrupt.thread_id == thread_id,
+            HumanInterrupt.step_name == step_name,
+        )
+        .order_by(HumanInterrupt.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_unresolved_interrupt_by_thread_step(
     db: AsyncSession,
     thread_id: str,

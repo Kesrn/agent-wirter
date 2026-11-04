@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ClarificationEmbedded, ClarificationQuestion, TaskCardClarificationStatus, TaskCardContextItem, TaskCardContextSummary, TaskCardPayload } from '../api/types'
+import { normalizeTaskCardPayload } from '../utils/taskCard'
 
 const props = defineProps<{
   taskCard: TaskCardPayload
@@ -18,7 +19,7 @@ const emit = defineEmits<{
   contextRefresh: [excludedKeys: string[]]
 }>()
 
-const editableTaskCard = ref<TaskCardPayload>(JSON.parse(JSON.stringify(props.taskCard)))
+const editableTaskCard = ref<TaskCardPayload>(normalizeTaskCardPayload(props.taskCard))
 const rawJsonEdit = ref(false)
 const jsonText = ref(JSON.stringify(editableTaskCard.value, null, 2))
 const parseError = ref('')
@@ -39,6 +40,13 @@ const clarificationQuestions = computed(() =>
 const requiresClarificationAnswer = computed(() =>
   hasPendingClarification.value && Boolean(props.clarification?.require_answer),
 )
+const isFinalClarificationRound = computed(() => {
+  const round = props.clarification?.round
+  const maxRounds = props.clarification?.max_rounds
+  return typeof round === 'number'
+    && typeof maxRounds === 'number'
+    && round >= maxRounds
+})
 const clarificationNotice = computed(() => {
   if (props.clarificationStatus === 'not_needed') {
     return {
@@ -48,8 +56,8 @@ const clarificationNotice = computed(() => {
   }
   if (props.clarificationStatus === 'answered') {
     return {
-      title: '澄清结果已应用',
-      message: 'AI 已根据你的回答重新规划任务卡。请确认任务卡后开始编写章节。',
+      title: '澄清已完成，请提交任务卡',
+      message: 'AI 已整理最后一轮澄清并重新规划任务卡。请检查任务卡，然后点击底部“按此任务卡生成”。',
     }
   }
   if (props.clarificationStatus === 'skipped') {
@@ -145,7 +153,7 @@ function contextSourceLabel(sourceType: string): string {
 }
 
 watch(() => props.taskCard, (newCard) => {
-  editableTaskCard.value = JSON.parse(JSON.stringify(newCard))
+  editableTaskCard.value = normalizeTaskCardPayload(newCard)
   jsonText.value = JSON.stringify(editableTaskCard.value, null, 2)
   rawJsonEdit.value = false
   parseError.value = ''
@@ -155,7 +163,16 @@ watch(() => props.taskCard, (newCard) => {
   clarificationError.value = ''
 })
 
-const infoRules = computed(() => editableTaskCard.value.information_rules || {})
+const infoRules = computed(() => {
+  if (!editableTaskCard.value.information_rules) {
+    editableTaskCard.value.information_rules = {
+      may_reveal: [],
+      hint_only: [],
+      forbidden: [],
+    }
+  }
+  return editableTaskCard.value.information_rules
+})
 
 function addScene() {
   const scenes = editableTaskCard.value.scenes || []
@@ -184,7 +201,11 @@ function applyRawJson(): boolean {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new Error('任务卡 JSON 必须是对象')
     }
-    editableTaskCard.value = parsed as TaskCardPayload
+    editableTaskCard.value = normalizeTaskCardPayload(parsed)
+    if (!editableTaskCard.value.core_task?.trim()) {
+      throw new Error('任务卡缺少有效的核心任务')
+    }
+    jsonText.value = JSON.stringify(editableTaskCard.value, null, 2)
     parseError.value = ''
     rawJsonEdit.value = false
     return true
@@ -196,6 +217,11 @@ function applyRawJson(): boolean {
 
 function handleApprove() {
   if (approving.value || (rawJsonEdit.value && !applyRawJson())) return
+  editableTaskCard.value = normalizeTaskCardPayload(editableTaskCard.value)
+  if (!editableTaskCard.value.core_task?.trim()) {
+    clarificationError.value = '任务卡缺少有效的核心任务，请补充后再生成。'
+    return
+  }
   if (contextSelectionChanged.value) {
     clarificationError.value = '上下文选择已修改，请先点击“应用选择并重新规划”。'
     return
@@ -292,8 +318,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleKeydown))
 
       <section v-if="clarificationQuestions.length" class="clarification-section" aria-labelledby="task-card-clarification-title">
         <div class="section-divider"></div>
-        <h4 id="task-card-clarification-title">可选澄清</h4>
-        <p class="clarification-hint">回答后会重新规划任务卡，并停留在这里供你确认。</p>
+        <h4 id="task-card-clarification-title">{{ isFinalClarificationRound ? '最后一轮澄清' : '可选澄清' }}</h4>
+        <p class="clarification-hint">
+          {{ isFinalClarificationRound
+            ? '提交后会整理本轮回答并更新任务卡，不会再进入下一轮澄清。'
+            : '回答后会重新规划任务卡，并停留在这里供你确认。' }}
+        </p>
         <div v-for="question in clarificationQuestions" :key="question.id" class="clarification-question">
           <label class="question-label" :for="`task-card-question-${question.id}`">
             {{ question.question }}
@@ -330,7 +360,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleKeydown))
         <p v-if="clarificationError" class="clarification-error" role="alert">{{ clarificationError }}</p>
         <div class="clarification-actions">
           <button type="button" class="btn-refresh-card" :disabled="approving" @click="handleClarificationRefresh">
-            {{ approving ? '重新规划中…' : '回答后重新规划' }}
+            {{ approving ? '整理并规划中…' : (isFinalClarificationRound ? '提交最后一轮回答' : '回答后重新规划') }}
           </button>
           <span class="clarification-skip-hint">也可以直接按下方按钮，按当前任务卡生成</span>
         </div>

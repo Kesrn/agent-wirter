@@ -127,7 +127,7 @@ async def test_writing_memory_staging_columns_exist(async_db):
 
 import asyncio
 import json
-import tests.test_smoke as smoke
+import test_smoke as smoke
 from db.session import get_db, set_engine
 from main import app
 

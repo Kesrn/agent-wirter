@@ -13,16 +13,32 @@ extraction_staging        每章 LLM 原始输出与解析结果（支持非法 
 """
 
 from datetime import datetime
-from sqlalchemy import String, Text, Integer, Float, Boolean, DateTime
+from sqlalchemy import String, Text, Integer, Float, Boolean, DateTime, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, GUID, JSONValue, UUIDMixin, TimestampMixin
 
 
 class ProjectSourceChapter(UUIDMixin, TimestampMixin, Base):
-    """资料源章节（不是用户正在创作的章节，避免污染 writing_units）。"""
+    """资料源章节（不是用户正在创作的章节，避免污染 writing_units）。
+
+    P-1 阶段四（方案 v3 §3.5）：章节行按切分代隔离。
+      split_generation_id    所属切分代（legacy 或新代）
+      source_ordinal         代内顺序（1..N，代内唯一）
+      display_chapter_no     原文标题号（允许重复：8 组 keep_duplicate；legacy 为 NULL）
+      original_label         原始标题标签（"第613章 肉丘障碍"）
+      start_offset/end_offset 章节区间在原文中的字符偏移 [start, end)
+      content_hash           完整 SHA-256（64 hex）
+    旧 chapter_no 保留兼容（= source_ordinal），逐步废弃。
+    """
 
     __tablename__ = "project_source_chapters"
+    __table_args__ = (
+        UniqueConstraint(
+            "split_generation_id", "source_ordinal",
+            name="uq_source_chapters_generation_ordinal",
+        ),
+    )
 
     project_id: Mapped[str] = mapped_column(GUID(), nullable=False, index=True)
     source_id: Mapped[str] = mapped_column(GUID(), nullable=False, index=True)
@@ -33,6 +49,17 @@ class ProjectSourceChapter(UUIDMixin, TimestampMixin, Base):
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     char_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     warning: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ── P-1 阶段四：切分代列 ──
+    split_generation_id: Mapped[str | None] = mapped_column(
+        GUID(), nullable=True, index=True
+    )
+    source_ordinal: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    display_chapter_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    original_label: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class ExtractionJob(UUIDMixin, TimestampMixin, Base):
@@ -53,6 +80,13 @@ class ExtractionJob(UUIDMixin, TimestampMixin, Base):
 
     # 本次抽取使用的 LLM provider（mock / openai / ...），用于区分模拟数据与真实抽取数据。
     provider: Mapped[str] = mapped_column(String(50), nullable=False, default="mock")
+
+    # 任务启动时锁定的切分代（方案 v3 §3.5 规则 4：抽取任务固定引用
+    # split_generation_id，运行中不随活动指针漂移——抽取基于的章节定义中途不得变化）。
+    # NULL = 迁移前创建的旧任务（读取当前活动代，保持旧行为）。
+    split_generation_id: Mapped[str | None] = mapped_column(
+        GUID(), nullable=True, index=True
+    )
 
     chapter_no_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     chapter_no_end: Mapped[int | None] = mapped_column(Integer, nullable=True)

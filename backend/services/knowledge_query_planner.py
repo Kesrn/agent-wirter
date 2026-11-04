@@ -337,6 +337,36 @@ def _build_rule_plan(question: str, recent_messages: list[dict] | None = None) -
                                 )
                             rewritten = f"{anchor}和{current_entities[0]}是什么关系"
                             v2_intent = "relationship"
+                    elif hist_plan.entities and question.strip().endswith("呢"):
+                        # 通用短追问："周敏呢" 承接上文（如刚问完穆白结局），
+                        # 把最近问题的实体替换为新实体 → "周敏的结局是什么"。
+                        # 只替换第一个实体，避免"和"连接的长句被误替换。
+                        # hist_plan.entities[0] 可能是脏实体（"穆白的结局"），
+                        # 需过滤出干净人名再替换。
+                        hist_text = str(msg.get("content", ""))
+                        new_entity = question.strip().rstrip("呢").strip(" ，,。！？")
+                        # 正则优先提取"人名+格助词"（"穆白的结局是什么" → "穆白"）；
+                        # 无格助词时（"许昭霆雷电实力如何"）回退实体过滤，
+                        # 噪声词排除实力/雷电等属性词，避免把脏实体当人名替换。
+                        m = re.search(r"([\u4e00-\u9fff]{2,3})(?:的|是|呢|与|和)", hist_text)
+                        hist_entity = m.group(1) if m else None
+                        if not hist_entity:
+                            hist_entity = next(
+                                (e for e in hist_plan.entities
+                                 if not any(noise in e for noise in (
+                                     "的", "是", "什么", "呢", "结局", "情况", "关系",
+                                     "实力", "雷电", "能力", "如何", "怎么样",
+                                     "魔法", "修为", "水平", "系",
+                                 ))),
+                                None,
+                            )
+                        if (
+                            hist_entity and new_entity
+                            and 2 <= len(new_entity) <= 6
+                            and new_entity not in hist_plan.entities
+                            and "和" not in new_entity and "与" not in new_entity
+                        ):
+                            rewritten = hist_text.replace(hist_entity, new_entity, 1)
                     break
 
     # 如果追问消解重写了问题，用重写后的问题重新提取实体和检索词

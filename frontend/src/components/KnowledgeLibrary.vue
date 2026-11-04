@@ -32,7 +32,7 @@ interface QaSession {
 interface QaMessage {
   role: string
   content: string
-  citations?: Array<{ source_kind: string; source_id: string; chunk_id?: string | null; title: string; snippet: string; url?: string; evidence_type?: string; matched_query?: string; score?: number }> | null
+  citations?: Array<{ source_kind: string; source_id: string; chunk_id?: string | null; title: string; snippet: string; url?: string; evidence_type?: string; matched_query?: string; score?: number; chapter_no?: number | null }> | null
   query_plan?: { intent: string; entities: string[]; search_queries: string[] }
   retrieval_stats?: { structured_hits: number; chunk_hits: number; web_hits?: number }
 }
@@ -786,6 +786,7 @@ async function handleFileUpload(e: Event) {
             <span v-for="(c, ci) in msg.citations" :key="ci" class="citation-chip" :class="{ web: c.source_kind === 'web_search' }" :title="c.snippet + (c.matched_query ? ' | 匹配: ' + c.matched_query : '')"
               @click="handleCitationClick(c)">
               <span v-if="c.evidence_type" class="evidence-tag" :class="c.evidence_type">{{ evidenceTypeLabel(c.evidence_type) }}</span>
+              <span v-if="c.chapter_no" class="citation-chapter">第{{ c.chapter_no }}章</span>
               <span class="citation-prefix">引用</span>{{ c.title || c.source_kind }}
             </span>
           </div>
@@ -1393,6 +1394,15 @@ async function handleFileUpload(e: Event) {
   margin-right: 4px;
   color: var(--text-secondary);
   font-weight: 600;
+}
+.citation-chapter {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 11px;
 }
 .evidence-tag {
   display: inline-block;

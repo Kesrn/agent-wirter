@@ -12,6 +12,7 @@
 """
 
 import asyncio
+from contextlib import suppress
 import json
 import logging
 import os
@@ -25,7 +26,7 @@ from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel, Field
 from urllib.parse import quote
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import delete, select, func
+from sqlalchemy import bindparam, delete, select, func, text
 
 from db.session import get_db
 from models.project import Project
@@ -35,6 +36,7 @@ from models.chapter_version import ChapterVersion
 from models.chapter_review_note import ChapterReviewNote
 from models.ai_run import AiRun
 from models.ai_run_step import AiRunStep
+from models.human_interrupt import HumanInterrupt
 from models.llm_call_log import LlmCallLog
 from models.document import Document
 from models.document_version import DocumentVersion
@@ -53,10 +55,18 @@ from models.project_knowledge_fact import ProjectKnowledgeFact
 from models.knowledge_qa_session import KnowledgeQaSession
 from models.knowledge_qa_message import KnowledgeQaMessage
 from models.writing_memory_staging import WritingMemoryStaging
-from models.harness_enums import InterruptDecision, RunStatus
+from models.harness_enums import InterruptDecision, RunStatus, RunStepStatus
 from models.structured_knowledge import (
     CharacterProfile, AbilityProfile, EventTimeline, WorldRule, CharacterAppearance,
 )
+from models.extraction_pipeline import (
+    ProjectSourceChapter, ExtractionJob, ExtractionStaging,
+)
+from models.split_generation import (
+    SourceSplitState, SplitExclusion, SplitGeneration,
+)
+from models.retrieval_index import RetrievalChunk
+from models.retrieval_vector import RetrievalVector
 from schemas.api import (
     ProjectCreate, ProjectUpdate, ProjectResponse,
     TxtImportResponse,
@@ -90,6 +100,9 @@ from schemas.api import (
     HumanDecisionRequest, HumanDecisionResponse,
     ClarificationAnswerRequest, ClarificationResponse,
     WritingMemoryStagingResponse,
+    ChatSessionCreateRequest, ChatSessionResponse,
+    ChatSendMessageRequest, ChatConfirmRequest, ChatReviseRequest,
+    ChatSessionDetailResponse,
     AuthUser,
 )
 from agents.safety import validate_expert_safety
@@ -101,6 +114,7 @@ from agents.workflow_v2 import (
     WorkflowGenerationError,
     get_creative_app_v2,
     get_creative_app_v2_continue,
+    normalize_task_card,
 )
 from harness.run_manager import (
     create_run, mark_running, mark_waiting_human, mark_completed, mark_failed, mark_cancelled,
@@ -108,8 +122,8 @@ from harness.run_manager import (
 )
 from harness.step_logger import start_step, finish_step, fail_step
 from harness.human_interrupt_service import (
-    create_interrupt, resolve_interrupt, get_interrupt_by_run, get_interrupt_by_thread,
-    get_unresolved_interrupt_by_thread_step, check_interrupt_resolved,
+    create_interrupt, resolve_interrupt, get_interrupt_by_run,
+    get_interrupt_by_thread_step, get_unresolved_interrupt_by_thread_step,
 )
 from skills.runner import ExpertSkillResult, build_expert_skill_pack, build_expert_system_prompt
 from api.auth import get_current_user
@@ -121,6 +135,10 @@ from services.chapter_save import finalize_chapter_content, save_chapter_content
 from agents.guardrail import guardrail_to_text as _guardrail_to_text, get_blocking_issues
 from services.document_save import save_document_content
 from services.skill_pack_planner import SkillPackPlan, plan_direct_skill_pack
+from services.expert_prompt_resolver import (
+    resolve_v2_expert_prompts,
+    select_active_v2_experts,
+)
 from services.txt_import import decode_txt_bytes, split_txt_into_chapters, build_import_meta
 from services.structure_extraction import (
     apply_structure_extraction,
@@ -131,9 +149,13 @@ from services.structure_extraction import (
 )
 from services.generation_record_service import (
     create_generation_record,
+    get_candidate_for_run,
     get_generation_record,
     list_generation_records_for_chapter,
     list_generation_records_for_document,
+    mark_applied_for_run,
+    mark_candidate_discarded_for_run,
+    upsert_candidate_for_run,
     update_generation_record_status,
 )
 from services.evaluation import default_rubric, normalize_expected_properties, normalize_rubric, run_evaluation_case
@@ -178,6 +200,93 @@ async def _discard_incomplete_generation_run(
             await _CHECKPOINTER.adelete_thread(thread_id)
         except Exception:
             logger.warning("清理工作流 checkpoint 失败 thread_id=%s", thread_id, exc_info=True)
+
+
+async def _fail_generation_run(
+    db: AsyncSession,
+    *,
+    run_id: str | uuid.UUID | None,
+    thread_id: str | None,
+    reason: str,
+    failure_step_name: str | None = None,
+    failure_agent_name: str | None = None,
+    failure_step_order: int | None = None,
+) -> None:
+    """回滚未提交业务数据并保留 FAILED 审计终态。
+
+    正式正文只会在人工批准事务中写入；生成节点失败时保留 AiRun/步骤/LLM 日志
+    便于排查，把尚未批准的候选稿标记为 discarded，并删除 checkpoint。
+    """
+    await db.rollback()
+    if run_id:
+        try:
+            run_uuid = _to_uuid(run_id)
+            run = await db.get(AiRun, run_uuid)
+            if run is not None:
+                running_steps_result = await db.execute(
+                    select(AiRunStep).where(
+                        AiRunStep.run_id == run_uuid,
+                        AiRunStep.status.in_(
+                            (RunStepStatus.RUNNING, RunStepStatus.RETRYING)
+                        ),
+                    )
+                )
+                running_steps = list(running_steps_result.scalars().all())
+                for running_step in running_steps:
+                    await fail_step(db, running_step, error_message=reason)
+
+                # 某些 LangGraph 异常发生在节点 on_chain_start 事件送达路由之前，
+                # 此时没有 RUNNING step。根据异常携带的节点元数据补建 FAILED 记录，
+                # 让审计页能准确显示失败发生在哪一步。
+                if failure_step_name:
+                    matching_result = await db.execute(
+                        select(AiRunStep)
+                        .where(
+                            AiRunStep.run_id == run_uuid,
+                            AiRunStep.step_name == failure_step_name,
+                        )
+                        .order_by(AiRunStep.step_order.desc(), AiRunStep.created_at.desc())
+                    )
+                    matching_steps = list(matching_result.scalars().all())
+                    failed_current_stage = any(
+                        step.status == RunStepStatus.FAILED for step in matching_steps
+                    )
+                    if not failed_current_stage:
+                        revision_round = len(matching_steps)
+                        failed_step = await start_step(
+                            db,
+                            run_id=run_uuid,
+                            step_order=failure_step_order or 0,
+                            step_name=failure_step_name,
+                            agent_name=failure_agent_name,
+                            revision_round=revision_round,
+                        )
+                        await fail_step(db, failed_step, error_message=reason)
+                    run.current_step = failure_step_name
+
+                await mark_candidate_discarded_for_run(
+                    db,
+                    run_id=run_uuid,
+                    reason=f"failed: {reason}",
+                )
+                await mark_failed(db, run, reason)
+                await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.exception("记录生成失败终态失败 run_id=%s", run_id)
+
+    if thread_id:
+        try:
+            import agents.workflow as workflow_module
+
+            await workflow_module._CHECKPOINTER.adelete_thread(thread_id)
+        except Exception:
+            logger.warning(
+                "失败任务 checkpoint 清理失败 thread_id=%s",
+                thread_id,
+                exc_info=True,
+            )
+
 
 async def _astream_events_with_keepalive(
     stream,
@@ -242,10 +351,15 @@ async def _astream_events_with_keepalive(
     finally:
         if not next_task.done():
             next_task.cancel()
+            # 等待正在执行的 __anext__ 真正退出后才能关闭异步生成器；
+            # 否则客户端中断时会触发 aclose(): asynchronous generator is already running。
+            with suppress(asyncio.CancelledError, StopAsyncIteration):
+                await next_task
         if should_close:
             aclose = getattr(stream, "aclose", None)
             if aclose:
-                await aclose()
+                with suppress(RuntimeError):
+                    await aclose()
 
 
 # 只有 writer 角色的输出会写入章节正文。critic/editor/researcher 等专家输出
@@ -271,7 +385,11 @@ def _format_bytes_limit(size: int) -> str:
     return f"{size}B"
 
 
-def _parse_directions(text: str) -> list[str]:
+def _parse_directions(
+    text: str,
+    *,
+    fallback: list[str] | None = None,
+) -> list[str]:
     """从容错解析 LLM 输出为字符串列表。尝试 JSON 数组，失败则按换行分割。
 
     用于“续写方向/润色方向/修改方向”这类接口。真实模型不一定严格输出 JSON，
@@ -285,12 +403,24 @@ def _parse_directions(text: str) -> list[str]:
         if match:
             items = json.loads(match.group())
             if isinstance(items, list):
-                return [str(s).strip().lstrip('0123456789.、)）') for s in items if str(s).strip()]
+                parsed = [
+                    str(s).strip().lstrip('0123456789.、)）')
+                    for s in items
+                    if str(s).strip()
+                ]
+                if parsed:
+                    return parsed
     except (json.JSONDecodeError, ValueError):
         pass
     # 按换行分割
-    lines = [l.strip().lstrip('0123456789.、)）') for l in text.split('\n') if l.strip()]
-    return lines if lines else ["方向1", "方向2", "方向3"]
+    ignored_lines = {"[]", "```", "```json"}
+    lines = [
+        line
+        for raw_line in text.split('\n')
+        if raw_line.strip() and raw_line.strip().lower() not in ignored_lines
+        if (line := raw_line.strip().lstrip('0123456789.、)）'))
+    ]
+    return lines if lines else list(fallback or ["方向1", "方向2", "方向3"])
 
 
 def _skill_pack_sse_event(pack: dict | None, fallback_expert: str = "") -> str:
@@ -312,6 +442,191 @@ def _skill_pack_sse_event(pack: dict | None, fallback_expert: str = "") -> str:
         "has_content": pack.get("has_content", False),
     }
     return f"event: skill_pack\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _quality_sse_payload(
+    quality_report: dict,
+    *,
+    stage: str = "",
+    retry: int = 0,
+    max_retries: int = 0,
+) -> dict:
+    """构造 quality_check SSE 事件的 payload。
+
+    把 QualityReport.to_dict() 转成前端可渲染的结构，附加重试状态。
+    """
+    status = "running"
+    if quality_report.get("passed"):
+        issues = quality_report.get("issues", [])
+        has_warning = any(
+            isinstance(issue, dict)
+            and issue.get("severity") == "WARNING"
+            and issue.get("code") in {"CONTENT_TOO_LONG", "CONTENT_TOO_SHORT"}
+            for issue in issues
+        )
+        status = "warning" if has_warning else "passed"
+    elif stage == "final" or retry > max_retries:
+        status = "failed"
+    elif retry > 0:
+        status = "retrying"
+
+    return {
+        "stage": stage or quality_report.get("stage", ""),
+        "status": status,
+        "target_chars": quality_report.get("target_chars", 0),
+        "actual_chars": quality_report.get("actual_chars", 0),
+        "min_chars": quality_report.get("min_chars", 0),
+        "max_chars": quality_report.get("max_chars", 0),
+        "retry_count": retry,
+        "max_retries": max_retries,
+        "similarity": quality_report.get("similarity"),
+        "changed_chars": quality_report.get("changed_chars"),
+        "requires_revision": quality_report.get("requires_revision"),
+        "issues": quality_report.get("issues", []),
+    }
+
+
+def _quality_failure_from_state(values: dict | None) -> tuple[str, dict, str] | None:
+    """识别任一质量门的终态失败，供初始流和任务卡恢复流共用。
+
+    新状态使用显式 ``quality_gate_failed`` / ``quality_failure_stage``；同时保留
+    对旧 checkpoint 的计数推断，避免服务热更新后旧任务仍被误标完成。
+    """
+    if not isinstance(values, dict):
+        return None
+
+    stage = str(values.get("quality_failure_stage") or "")
+    failed = bool(values.get("quality_gate_failed"))
+
+    report_keys = {
+        "draft": "draft_quality_report",
+        "edited": "edited_quality_report",
+        "final": "final_quality_report",
+    }
+
+    if not failed:
+        draft_report = values.get("draft_quality_report")
+        writer_retry = int(values.get("writer_retry_count") or 0)
+        writer_max = int(values.get("writer_max_retries") or 1)
+        if isinstance(draft_report, dict) and draft_report and not draft_report.get("passed") and writer_retry > writer_max:
+            failed, stage = True, "draft"
+
+    if not failed:
+        edited_report = values.get("edited_quality_report")
+        editor_retry = int(values.get("editor_retry_count") or 0)
+        editor_max = int(values.get("editor_max_retries") or 2)
+        if isinstance(edited_report, dict) and edited_report and not edited_report.get("passed") and editor_retry > editor_max:
+            failed, stage = True, "edited"
+
+    if not failed:
+        final_report = values.get("final_quality_report")
+        if isinstance(final_report, dict) and final_report and not final_report.get("passed"):
+            failed, stage = True, "final"
+
+    if not failed:
+        return None
+
+    if stage not in report_keys:
+        stage = "final"
+    report = values.get(report_keys[stage], {})
+    if not isinstance(report, dict):
+        report = {}
+    reason = str(values.get("quality_failure_reason") or "").strip()
+    if not reason:
+        stage_label = {"draft": "初稿", "edited": "编辑稿", "final": "最终"}[stage]
+        issue_messages = [
+            f"{issue.get('code', '')}: {issue.get('message', '')}"
+            for issue in report.get("issues", [])
+            if isinstance(issue, dict) and issue.get("severity") == "ERROR"
+        ]
+        reason = f"{stage_label}质量验收未通过"
+        if issue_messages:
+            reason += "：" + "；".join(issue_messages)
+    return stage, report, reason
+
+
+def _revision_state_update(revision_count: int, feedback: str | None = None) -> dict:
+    """构造新一轮人工修订的干净质量状态。"""
+    update = {
+        "revision_count": revision_count,
+        "writer_retry_count": 0,
+        "editor_retry_count": 0,
+        "writer_validation_errors": [],
+        "editor_validation_errors": [],
+        "draft_quality_report": {},
+        "edited_quality_report": {},
+        "final_quality_report": {},
+        "edit_effectiveness_report": {},
+        "quality_gate_failed": False,
+        "quality_failure_stage": "",
+        "quality_failure_reason": "",
+        # 本轮 Writer 产出后会重新写入；draft 保留为修改输入，
+        # original_writer_draft 保持只读。
+        "cycle_writer_draft": "",
+    }
+    if feedback:
+        update["critiques"] = [f"[用户选择的修改方向] {feedback}"]
+    return update
+
+
+async def _ensure_human_review_interrupt(
+    db: AsyncSession,
+    *,
+    run: AiRun | None,
+    thread_id: str,
+    generation_record_id: str | None,
+    content: str,
+    values: dict | None,
+) -> HumanInterrupt | None:
+    """确保当前 thread 在最终人工审核点有独立的持久化记录。
+
+    一条 thread 可能先产生 task_card_review，再产生 human_review。这里按
+    ``step_name`` 创建/复用最终审核记录，避免后续幂等检查误拿任务卡记录。
+    """
+    if run is None:
+        return None
+    state_values = values if isinstance(values, dict) else {}
+    guardrail = state_values.get("consistency_report", {})
+    blocking_issues = get_blocking_issues(guardrail) if isinstance(guardrail, dict) else []
+    return await create_interrupt(
+        db,
+        run=run,
+        thread_id=thread_id,
+        step_name="human_review",
+        payload={
+            "generation_record_id": generation_record_id,
+            "content_hash": hash(content) if content else None,
+            "blocking_issues": blocking_issues,
+        },
+    )
+
+
+def _quality_node_completion_status(node_name: str, output: dict | None, *, writer_max: int = 1, editor_max: int = 2) -> str:
+    """把 validator 节点结果映射为前端 workflow 状态。"""
+    if not isinstance(output, dict):
+        return "success"
+    if node_name == "draft_validator":
+        report = output.get("draft_quality_report") or {}
+        payload = _quality_sse_payload(
+            report,
+            stage="draft",
+            retry=int(output.get("writer_retry_count") or 0),
+            max_retries=writer_max,
+        )
+    elif node_name == "edited_draft_validator":
+        report = output.get("edited_quality_report") or {}
+        payload = _quality_sse_payload(
+            report,
+            stage="edited",
+            retry=int(output.get("editor_retry_count") or 0),
+            max_retries=editor_max,
+        )
+    elif node_name == "final_quality_gate":
+        report = output.get("final_quality_report") or {}
+        payload = _quality_sse_payload(report, stage="final")
+    else:
+        return "success"
+    return "success" if payload["status"] in {"passed", "warning"} else "error" if payload["status"] == "failed" else "running"
 
 
 def _new_skill_packs(output: dict, seen_keys: set[tuple[str, str]]) -> list[dict]:
@@ -1449,6 +1764,17 @@ async def update_chapter(
 
     if req.title is not None:
         chapter.title = req.title
+        # 章节标题和对应的大纲标题是同一个业务标题。两张表必须在同一
+        # 个事务里同步，避免章节列表已经改名、下一章创作上下文仍使用旧标题。
+        outline_result = await db.execute(
+            select(Outline).where(
+                Outline.project_id == uid,
+                Outline.sequence_number == sequence_number,
+            )
+        )
+        outline = outline_result.scalar_one_or_none()
+        if outline is not None:
+            outline.title = req.title
     if "outline" in req.model_fields_set:
         chapter.outline = req.outline
     if req.status in {"final", "approved"}:
@@ -1791,6 +2117,7 @@ async def extract_chapter_structure(
             extraction,
             background_tasks=background_tasks,
             commit=True,
+            chapter_sequence_number=sequence_number,
         )
         applied = {"counts": applied_result["counts"]}
 
@@ -1884,6 +2211,7 @@ async def create_world_entry(
         title=req.title,
         category=req.category,
         scope_type=req.scope_type,
+        chapter_sequence_number=req.chapter_sequence_number if req.scope_type == "chapter" else None,
         content=req.content,
         rules=req.rules,
         confidence=req.confidence,
@@ -1922,6 +2250,9 @@ async def update_world_entry(
     needs_reembed = req.title is not None or req.content is not None
 
     update_data = req.model_dump(exclude_unset=True)
+    next_scope = update_data.get("scope_type", entry.scope_type)
+    if next_scope == "global":
+        update_data["chapter_sequence_number"] = None
     for field, value in update_data.items():
         setattr(entry, field, value)
 
@@ -2203,6 +2534,28 @@ async def delete_character(
     if not character:
         raise HTTPException(status_code=404, detail="角色不存在")
 
+    # character_events / character_relations 的角色 id 是裸 GUID 列（无外键
+    # 级联），必须先手动清掉该角色的章节事件与关系，否则会留下悬空引用：
+    # 前端时间线/章节资料里会出现“未知角色”，且这些事件再也无法删除。
+    await db.execute(
+        delete(CharacterEvent).where(
+            CharacterEvent.project_id == uid,
+            CharacterEvent.character_id == cid,
+        )
+    )
+    await db.execute(
+        delete(CharacterRelation).where(
+            CharacterRelation.project_id == uid,
+            CharacterRelation.source_character_id == cid,
+        )
+    )
+    await db.execute(
+        delete(CharacterRelation).where(
+            CharacterRelation.project_id == uid,
+            CharacterRelation.target_character_id == cid,
+        )
+    )
+
     await db.delete(character)
     await db.commit()
     return None
@@ -2301,7 +2654,8 @@ async def delete_character_chapter_event(
     uid = _to_uuid(project_id)
     cid = _to_uuid(character_id)
     await _verify_project_owner(uid, user.id, db)
-    character = await _get_project_character(uid, cid, db)
+    # 不要求角色必须存在：历史上删除角色可能留下悬空事件（见 delete_character），
+    # 这类孤儿事件也必须允许清理。按 (project, character, chapter) 直接定位事件。
     result = await db.execute(
         select(CharacterEvent).where(
             CharacterEvent.project_id == uid,
@@ -2315,7 +2669,13 @@ async def delete_character_chapter_event(
 
     await db.delete(event)
     await db.flush()
-    await _refresh_character_appearance_count(db, character)
+    # 角色仍存在时同步出场次数；角色已删除则跳过（事件本就是孤儿）。
+    character_result = await db.execute(
+        select(Character).where(Character.id == cid, Character.project_id == uid)
+    )
+    character = character_result.scalar_one_or_none()
+    if character:
+        await _refresh_character_appearance_count(db, character)
     await db.commit()
     return None
 
@@ -3096,10 +3456,10 @@ async def generate_chapter(
             },
         )
         try:
-            # 同一次生成只保存一条候选 GenerationRecord。
-            # 多个分支都可能调用 _save_generation_history，用 flag 防止重复落库。
-            generation_record_saved = False
             ai_run = None
+            # 失败路径不能再访问可能已被 rollback/expire 的 ORM 对象；创建 run 后
+            # 立即保存纯字符串 ID，异常处理始终使用它。
+            run_id_str: str | None = None
             workflow_thread_id: str | None = None
 
             async def _save_generation_history(
@@ -3115,28 +3475,40 @@ async def generate_chapter(
                 注意这里只保存“候选内容”，不修改 Chapter.content / Document.content。
                 用户批准或前端显式保存后，才会创建版本并更新正式正文。
                 """
-                nonlocal generation_record_saved
-                if generation_record_saved:
-                    return None
                 try:
-                    record = await create_generation_record(
-                        db,
-                        project_id=uid,
-                        chapter_id=target_chapter_id,
-                        document_id=target_document_id,
-                        mode=req.mode,
-                        expert_id=expert_id,
-                        content=content,
-                        req=req,
-                        review_results=review_results,
-                        skill_packs=skill_packs,
-                        langfuse_trace_id=current_langfuse_trace_id(),
-                        run_id=run_id,
-                    )
+                    if run_id:
+                        record = await upsert_candidate_for_run(
+                            db,
+                            run_id=run_id,
+                            project_id=uid,
+                            chapter_id=target_chapter_id,
+                            document_id=target_document_id,
+                            mode=req.mode,
+                            expert_id=expert_id,
+                            review_results=review_results,
+                            content=content,
+                            req=req,
+                            skill_packs=skill_packs,
+                            langfuse_trace_id=current_langfuse_trace_id(),
+                        )
+                    else:
+                        # 直接生成模式没有 AiRun/run_id，仍保留普通生成历史。
+                        record = await create_generation_record(
+                            db,
+                            project_id=uid,
+                            chapter_id=target_chapter_id,
+                            document_id=target_document_id,
+                            mode=req.mode,
+                            expert_id=expert_id,
+                            content=content,
+                            req=req,
+                            review_results=review_results,
+                            skill_packs=skill_packs,
+                            langfuse_trace_id=current_langfuse_trace_id(),
+                        )
                     if not record:
                         return None
                     await db.commit()
-                    generation_record_saved = True
                     return str(record.id)
                 except Exception:
                     await db.rollback()
@@ -3264,6 +3636,7 @@ async def generate_chapter(
                 ai_run = _enhance_run
                 await db.flush()
                 _enhance_run_id = str(_enhance_run.id)
+                run_id_str = _enhance_run_id
                 yield f"event: run_created\ndata: {json.dumps({'run_id': _enhance_run_id, 'status': 'CREATED'}, ensure_ascii=False)}\n\n"
                 await mark_running(db, _enhance_run)
                 yield f"event: run_status\ndata: {json.dumps({'run_id': _enhance_run_id, 'status': 'RUNNING'}, ensure_ascii=False)}\n\n"
@@ -3842,6 +4215,7 @@ async def generate_chapter(
                 ai_run = _summarize_run
                 await db.flush()
                 _summarize_run_id = str(_summarize_run.id)
+                run_id_str = _summarize_run_id
                 yield f"event: run_created\ndata: {json.dumps({'run_id': _summarize_run_id, 'status': 'CREATED'}, ensure_ascii=False)}\n\n"
                 await mark_running(db, _summarize_run)
                 yield f"event: run_status\ndata: {json.dumps({'run_id': _summarize_run_id, 'status': 'RUNNING'}, ensure_ascii=False)}\n\n"
@@ -3988,11 +4362,19 @@ async def generate_chapter(
                 yield f"event: done\ndata: {json.dumps({'message': '内容生成与审校完成'}, ensure_ascii=False)}\n\n"
                 return
 
-            # 查询项目所有启用的专家（含内置和自定义）
+            # v2 工作流只加载有稳定 expert_key 且未废弃的专家。旧版同角色专家的
+            # 输出契约不同，不能再靠数据库返回顺序取 writer/critic 第一条。
             exp_result = await db.execute(
-                select(Expert).where(Expert.project_id == uid, Expert.is_enabled == True)
+                select(Expert).where(
+                    Expert.project_id == uid,
+                    Expert.is_enabled == True,
+                    Expert.deprecated == False,
+                    Expert.expert_key.is_not(None),
+                )
             )
             enabled_experts = exp_result.scalars().all()
+            selected_v2_experts = select_active_v2_experts(enabled_experts)
+            expert_prompts = resolve_v2_expert_prompts(selected_v2_experts.values())
 
             app = get_creative_app_v2(
                 planning_review=bool(req.planning_review),
@@ -4025,25 +4407,13 @@ async def generate_chapter(
                 workflow_key=wf.workflow_key if wf else None,
                 workflow_version=wf.version if wf else None,
                 workflow_snapshot=workflow_to_snapshot(wf),
-                expert_snapshot=build_expert_snapshot(enabled_experts),
+                expert_snapshot=build_expert_snapshot(list(selected_v2_experts.values())),
             )
             await db.flush()
             run_id_str = str(ai_run.id)
             yield f"event: run_created\ndata: {json.dumps({'run_id': run_id_str, 'status': 'CREATED'}, ensure_ascii=False)}\n\n"
             await mark_running(db, ai_run)
             yield f"event: run_status\ndata: {json.dumps({'run_id': run_id_str, 'status': 'RUNNING'}, ensure_ascii=False)}\n\n"
-
-            # 从启用的专家中提取各角色的 system_prompt
-            writer_prompt = ""
-            critic_prompt = ""
-            consistency_prompt = ""
-            for exp in enabled_experts:
-                if exp.role_type == "writer" and not writer_prompt:
-                    writer_prompt = exp.system_prompt
-                elif exp.role_type == "critic" and not critic_prompt:
-                    critic_prompt = exp.system_prompt
-                    if not consistency_prompt:
-                        consistency_prompt = exp.system_prompt
 
             initial_state: CreativeStateV2 = {
                 "project_id": str(uid),
@@ -4059,10 +4429,10 @@ async def generate_chapter(
                 "consistency_report": {},
                 "edited_draft": "",
                 "revision_count": 0,
-                "writer_prompt": writer_prompt,
-                "critic_prompt": critic_prompt,
-                "editor_prompt": "",
-                "consistency_prompt": consistency_prompt,
+                "writer_prompt": expert_prompts["writer_prompt"],
+                "critic_prompt": expert_prompts["critic_prompt"],
+                "editor_prompt": expert_prompts["editor_prompt"],
+                "consistency_prompt": expert_prompts["consistency_prompt"],
                 "llm_config": llm_config_dict,
                 "selected_outline_ids": req.selected_outline_ids or [],
                 "selected_character_ids": req.selected_character_ids or [],
@@ -4103,6 +4473,20 @@ async def generate_chapter(
                 "needs_clarification": False,
                 "clarification_skipped": False,
                 "requirements_complete": False,
+                # ── 质量验收门 ──
+                "writer_retry_count": 0,
+                "writer_max_retries": 1,
+                "writer_validation_errors": [],
+                "draft_quality_report": {},
+                "editor_retry_count": 0,
+                "editor_max_retries": 2,
+                "editor_validation_errors": [],
+                "edited_quality_report": {},
+                "edit_effectiveness_report": {},
+                "final_quality_report": {},
+                "quality_gate_failed": False,
+                "quality_failure_stage": "",
+                "quality_failure_reason": "",
             }
 
             config = {"configurable": {"thread_id": thread_id}}
@@ -4111,9 +4495,12 @@ async def generate_chapter(
             NODE_EVENT_MAP = {
                 "chapter_architect": "architect_output",
                 "chapter_writer": "writer_output",
+                "draft_validator": "quality_check",
                 "structural_critic": "critic_output",
                 "narrative_editor": "editor_output",
+                "edited_draft_validator": "quality_check",
                 "continuity_checker": "consistency_check",
+                "final_quality_gate": "quality_check",
             }
 
             # 流式输出的节点（逐 token 发送）
@@ -4129,10 +4516,13 @@ async def generate_chapter(
                 "context_loader": ("build_context", 1),
                 "chapter_architect": ("plan_chapter", 2),
                 "chapter_writer": ("generate_draft", 3),
-                "structural_critic": ("critique", 4),
-                "narrative_editor": ("edit_draft", 5),
-                "continuity_checker": ("consistency_check", 6),
-                "human_review": ("human_review", 7),
+                "draft_validator": ("validate_draft", 4),
+                "structural_critic": ("critique", 5),
+                "narrative_editor": ("edit_draft", 6),
+                "edited_draft_validator": ("validate_edited", 7),
+                "continuity_checker": ("consistency_check", 8),
+                "final_quality_gate": ("final_quality_gate", 9),
+                "human_review": ("human_review", 10),
             }
             active_steps: dict[str, object] = {}  # node_name -> AiRunStep
             revision_round = 0
@@ -4209,8 +4599,14 @@ async def generate_chapter(
                 elif kind == "on_chain_end":
                     node_name = event.get("name", "")
                     output = event.get("data", {}).get("output", {})
+                    node_step_status = _quality_node_completion_status(
+                        node_name,
+                        output,
+                        writer_max=int(initial_state.get("writer_max_retries", 1)),
+                        editor_max=int(initial_state.get("editor_max_retries", 2)),
+                    )
                     if node_name:
-                        yield f"event: agent_done\ndata: {json.dumps({'agent': node_name, 'step': 'success'}, ensure_ascii=False)}\n\n"
+                        yield f"event: agent_done\ndata: {json.dumps({'agent': node_name, 'step': node_step_status}, ensure_ascii=False)}\n\n"
                         if node_name in STREAM_NODES:
                             current_stream_node = None
                     # ── Harness: step finish ──
@@ -4226,17 +4622,43 @@ async def generate_chapter(
                                     output_snapshot = {"has_task_card": bool(_card), "scene_count": len(_card.get("scenes", [])) if isinstance(_card, dict) else 0}
                                 elif node_name == "context_loader":
                                     output_snapshot = {"context_len": len(output.get("context", ""))}
+                                elif node_name == "draft_validator":
+                                    _dr = output.get("draft_quality_report", {}) if isinstance(output, dict) else {}
+                                    output_snapshot = {
+                                        "passed": _dr.get("passed"),
+                                        "actual_chars": _dr.get("actual_chars"),
+                                        "target_chars": _dr.get("target_chars"),
+                                    }
                                 elif node_name == "structural_critic":
                                     _crit = output.get("structural_critique", {})
                                     output_snapshot = {"p0_count": len(_crit.get("p0", [])) if isinstance(_crit, dict) else 0}
                                 elif node_name == "narrative_editor":
                                     output_snapshot = {"content_hash": str(hash(output.get("draft", "")))[:128]}
+                                elif node_name == "edited_draft_validator":
+                                    _er = output.get("edited_quality_report", {}) if isinstance(output, dict) else {}
+                                    output_snapshot = {
+                                        "passed": _er.get("passed"),
+                                        "similarity": _er.get("similarity"),
+                                        "changed_chars": _er.get("changed_chars"),
+                                    }
                                 elif node_name == "continuity_checker":
                                     _gr = output.get("consistency_report", {})
                                     _issues = _gr.get("issues", []) if isinstance(_gr, dict) else []
                                     output_snapshot = {"issue_count": len(_issues), "overall_severity": _gr.get("overall_severity", "info") if isinstance(_gr, dict) else "info"}
-                            await finish_step(db, step, output=output_snapshot)
-                            yield f"event: run_step\ndata: {json.dumps({'run_id': run_id_str, 'step_name': STEP_NODE_MAP[node_name][0], 'status': 'SUCCESS'}, ensure_ascii=False)}\n\n"
+                                elif node_name == "final_quality_gate":
+                                    _fr = output.get("final_quality_report", {}) if isinstance(output, dict) else {}
+                                    output_snapshot = {
+                                        "passed": _fr.get("passed"),
+                                        "actual_chars": _fr.get("actual_chars"),
+                                        "target_chars": _fr.get("target_chars"),
+                                    }
+                            if node_step_status == "error":
+                                await fail_step(db, step, error_message="质量验收重试耗尽")
+                                run_step_status = "FAILED"
+                            else:
+                                await finish_step(db, step, output=output_snapshot)
+                                run_step_status = "SUCCESS"
+                            yield f"event: run_step\ndata: {json.dumps({'run_id': run_id_str, 'step_name': STEP_NODE_MAP[node_name][0], 'status': run_step_status}, ensure_ascii=False)}\n\n"
                         except Exception:
                             logger.warning("harness finish_step 失败 node=%s", node_name, exc_info=True)
 
@@ -4352,6 +4774,28 @@ async def generate_chapter(
                         report_text = _guardrail_to_text(guardrail)
                         yield f"event: consistency_check\ndata: {json.dumps({'report': report_text, 'guardrail_result': guardrail}, ensure_ascii=False)}\n\n"
 
+                    elif node_name == "draft_validator":
+                        qr = (output.get("draft_quality_report", {}) or {}) if isinstance(output, dict) else {}
+                        if qr:
+                            retry_count = (output.get("writer_retry_count", 0) or 0) if isinstance(output, dict) else 0
+                            max_retries = int(initial_state.get("writer_max_retries", 1))
+                            sse_payload = _quality_sse_payload(qr, stage="draft", retry=retry_count, max_retries=max_retries)
+                            yield f"event: quality_check\ndata: {json.dumps(sse_payload, ensure_ascii=False)}\n\n"
+
+                    elif node_name == "edited_draft_validator":
+                        qr = (output.get("edited_quality_report", {}) or {}) if isinstance(output, dict) else {}
+                        if qr:
+                            retry_count = (output.get("editor_retry_count", 0) or 0) if isinstance(output, dict) else 0
+                            max_retries = int(initial_state.get("editor_max_retries", 2))
+                            sse_payload = _quality_sse_payload(qr, stage="edited", retry=retry_count, max_retries=max_retries)
+                            yield f"event: quality_check\ndata: {json.dumps(sse_payload, ensure_ascii=False)}\n\n"
+
+                    elif node_name == "final_quality_gate":
+                        qr = (output.get("final_quality_report", {}) or {}) if isinstance(output, dict) else {}
+                        if qr:
+                            sse_payload = _quality_sse_payload(qr, stage="final", retry=0, max_retries=0)
+                            yield f"event: quality_check\ndata: {json.dumps(sse_payload, ensure_ascii=False)}\n\n"
+
                     elif node_name == "human_review":
                         record_id = await _save_generation_history(writer_content, skill_packs=workflow_skill_packs, run_id=run_id_str)
                         yield _generation_record_event(record_id)
@@ -4377,7 +4821,7 @@ async def generate_chapter(
 
                         await db.commit()
                         yield f"event: run_status\ndata: {json.dumps({'run_id': run_id_str, 'status': 'WAITING_HUMAN'}, ensure_ascii=False)}\n\n"
-                        yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
+                        yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id, 'content': writer_content}, ensure_ascii=False)}\n\n"
                         return
 
                 elif kind == "on_llm_stream":
@@ -4403,6 +4847,40 @@ async def generate_chapter(
             # 所以必须通过检查工作流状态来判断是否暂停
             workflow_state = await app.aget_state(config)
             next_nodes = workflow_state.next if workflow_state else []
+
+            # ── 最终质量门检查 ──
+            # 如果 graph 到达了 END 但不是因为 human_review 暂停，检查质量门是否通过。
+            # quality_gate_failed 标志意味着 final_quality_gate_node 判定不通过，
+            # 此时禁止标记 COMPLETED、禁止发送 done、禁止创建 GenerationRecord。
+            quality_failure = _quality_failure_from_state(workflow_state.values if workflow_state else {})
+            if quality_failure:
+                # 任一质量门失败都不等于正常完成，不能只检查 final_quality_gate。
+                failure_stage, qr_dict, error_msg = quality_failure
+                issues = qr_dict.get("issues", [])
+                await _discard_incomplete_generation_run(
+                    db,
+                    run_id=run_id_str,
+                    thread_id=workflow_thread_id,
+                    reason=error_msg,
+                )
+                logger.warning(
+                    "GENERATION_TRACE quality_gate failed run_id=%s stage=%s issues=%s",
+                    run_id_str,
+                    failure_stage,
+                    [i.get("code") for i in issues],
+                )
+                if failure_stage == "draft":
+                    retry_count = int((workflow_state.values or {}).get("writer_retry_count") or 0)
+                    max_retries = int((workflow_state.values or {}).get("writer_max_retries") or 1)
+                elif failure_stage == "edited":
+                    retry_count = int((workflow_state.values or {}).get("editor_retry_count") or 0)
+                    max_retries = int((workflow_state.values or {}).get("editor_max_retries") or 2)
+                else:
+                    retry_count = max_retries = 0
+                yield f"event: quality_check\ndata: {json.dumps(_quality_sse_payload(qr_dict, stage=failure_stage, retry=retry_count, max_retries=max_retries), ensure_ascii=False)}\n\n"
+                yield f"event: error\ndata: {json.dumps({'message': error_msg, 'quality_report': qr_dict}, ensure_ascii=False)}\n\n"
+                return
+
             if "human_review" in next_nodes:
                 record_id = await _save_generation_history(writer_content, skill_packs=workflow_skill_packs, run_id=run_id_str)
                 yield _generation_record_event(record_id)
@@ -4427,7 +4905,18 @@ async def generate_chapter(
 
                 await db.commit()
                 yield f"event: run_status\ndata: {json.dumps({'run_id': run_id_str, 'status': 'WAITING_HUMAN'}, ensure_ascii=False)}\n\n"
-                yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
+                yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id, 'content': writer_content}, ensure_ascii=False)}\n\n"
+                return
+
+            if req.mode == "full_pipeline":
+                error_msg = "完整章节生成未进入人工审核节点，工作流异常终止，请重新生成"
+                await _discard_incomplete_generation_run(
+                    db,
+                    run_id=run_id_str,
+                    thread_id=workflow_thread_id,
+                    reason=error_msg,
+                )
+                yield f"event: error\ndata: {json.dumps({'message': error_msg}, ensure_ascii=False)}\n\n"
                 return
 
             record_id = await _save_generation_history(writer_content, skill_packs=workflow_skill_packs, run_id=run_id_str)
@@ -4435,22 +4924,25 @@ async def generate_chapter(
             await mark_completed(db, ai_run)
             await db.commit()
             yield f"event: run_status\ndata: {json.dumps({'run_id': run_id_str, 'status': 'COMPLETED'}, ensure_ascii=False)}\n\n"
-            yield f"event: done\ndata: {json.dumps({'message': '生成完成'}, ensure_ascii=False)}\n\n"
+            yield f"event: done\ndata: {json.dumps({'message': '生成完成', 'content': writer_content}, ensure_ascii=False)}\n\n"
 
         except WorkflowGenerationError as e:
             logger.warning("关键生成节点失败: %s", e)
-            await _discard_incomplete_generation_run(
+            await _fail_generation_run(
                 db,
-                run_id=str(ai_run.id) if ai_run is not None else None,
+                run_id=run_id_str,
                 thread_id=workflow_thread_id,
                 reason=str(e),
+                failure_step_name=e.step_name,
+                failure_agent_name=e.agent_name,
+                failure_step_order=e.step_order,
             )
             yield f"event: error\ndata: {json.dumps({'message': str(e)}, ensure_ascii=False)}\n\n"
         except Exception as e:
             logger.exception("生成失败")
-            await _discard_incomplete_generation_run(
+            await _fail_generation_run(
                 db,
-                run_id=str(ai_run.id) if ai_run is not None else None,
+                run_id=run_id_str,
                 thread_id=workflow_thread_id,
                 reason=str(e),
             )
@@ -4872,7 +5364,7 @@ async def resume_chapter_generation(
     request: Request,
     project_id: str,
     thread_id: str = Query(..., description="HITL 暂停时返回的 thread_id"),
-    action: str = Query(default="approve", pattern=r"^(approve|reject|review|revise|approve_task_card|reject_task_card|refresh_task_card|refresh_task_card_context|submit_clarification|skip_clarification)$"),
+    action: str = Query(default="approve", pattern=r"^(approve|finalize|reject|review|revise|approve_task_card|reject_task_card|refresh_task_card|refresh_task_card_context|submit_clarification|skip_clarification)$"),
     feedback: str | None = None,
     task_card: str | None = Query(default=None, description="任务卡 JSON（approve_task_card 时传入）"),
     db: AsyncSession = Depends(get_db),
@@ -4882,6 +5374,7 @@ async def resume_chapter_generation(
 
     用户对 Editor 输出做出决策后，恢复工作流执行：
     - approve: 结束流程，落库最终内容
+    - finalize: 结束流程，将小说章节直接定稿
     - reject: 终止流程，不落库
     - review: 审核当前候选稿，返回可选修改方向
     - revise: 将用户选择的修改方向注入状态，重新从 Writer 开始
@@ -4911,6 +5404,7 @@ async def resume_chapter_generation(
         select(Expert).where(Expert.project_id == uid, Expert.is_enabled == True)
     )
     enabled_experts = exp_result.scalars().all()
+    resume_v2_prompts = resolve_v2_expert_prompts(enabled_experts)
 
     # ── v2 判断：按 AiRun.workflow_key 决定走 v2 还是旧 workflow ──
     # 旧 workflow 没有 workflow_key，v2 run 会写 workflow_key。
@@ -4991,9 +5485,16 @@ async def resume_chapter_generation(
                 "endpoint": request.url.path,
             },
         )
-        _resume_run_id: str | None = None
+        _resume_run = _resume_run_check
+        _resume_run_id: str | None = str(_resume_run.id) if _resume_run else None
         try:
-            # 获取当前状态。MemorySaver 中没有 thread_id 时，说明服务重启或状态过期。
+            # 数据库是任务终态的事实来源。即使 checkpoint 已被 best-effort 删除，
+            # 重复请求也应先得到明确的终态错误，而不是“状态已过期”。
+            if _resume_run and str(_resume_run.status) in {"CANCELLED", "COMPLETED", "FAILED"}:
+                yield f"event: error\ndata: {json.dumps({'message': f'该 AI 任务已处于 {_resume_run.status} 状态，不能重复恢复'}, ensure_ascii=False)}\n\n"
+                return
+
+            # 获取持久化工作流状态；不存在说明 thread_id 无效或 checkpoint 已损坏。
             state = await app.aget_state(config)
             if not state or not state.values:
                 yield f"event: error\ndata: {json.dumps({'message': '工作流状态不存在或已过期'}, ensure_ascii=False)}\n\n"
@@ -5014,6 +5515,7 @@ async def resume_chapter_generation(
             # 越过澄清或任务卡审核，强行把状态写入错误的图节点，破坏后续恢复语义。
             expected_interrupts = {
                 "approve": "human_review",
+                "finalize": "human_review",
                 "reject": "human_review",
                 "review": "human_review",
                 "revise": "human_review",
@@ -5031,11 +5533,6 @@ async def resume_chapter_generation(
 
             # ── Harness: 按 thread_id 反查 run_id（resume 路径关联 run）──
             # 这样 approve/revise 后的 GenerationRecord、版本和 LLM 日志都能串回同一次 AiRun。
-            _resume_run = (
-                await db.execute(select(AiRun).where(AiRun.thread_id == thread_id, AiRun.project_id == uid))
-            ).scalar_one_or_none()
-            _resume_run_id = str(_resume_run.id) if _resume_run else None
-
             async def _discard_resume_run(reason: str) -> None:
                 await _discard_incomplete_generation_run(
                     db,
@@ -5044,14 +5541,14 @@ async def resume_chapter_generation(
                     reason=reason,
                 )
 
-            if _resume_run and str(_resume_run.status) in {"CANCELLED", "COMPLETED", "FAILED"}:
-                yield f"event: error\ndata: {json.dumps({'message': f'该 AI 任务已处于 {_resume_run.status} 状态，不能重复恢复'}, ensure_ascii=False)}\n\n"
-                return
-
             # ── Harness E: 幂等性检查 - 防止重复 approve ──
             # approve 会产生正式版本和写作记忆抽取，重复执行会造成重复版本。
-            if _resume_run and action == "approve":
-                interrupt = await get_interrupt_by_thread(db, thread_id)
+            if _resume_run and action in {"approve", "finalize"}:
+                interrupt = await get_interrupt_by_thread_step(
+                    db,
+                    thread_id,
+                    "human_review",
+                )
                 if interrupt and interrupt.resolved:
                     yield f"event: error\ndata: {json.dumps({'message': f'该任务已于 {interrupt.resolved_at} 处理为 {interrupt.decision}，不可重复操作'}, ensure_ascii=False)}\n\n"
                     return
@@ -5062,17 +5559,29 @@ async def resume_chapter_generation(
                     return None
                 try:
                     content_id = _to_uuid(target_content_id)
-                    record = await create_generation_record(
-                        db,
-                        project_id=uid,
-                        chapter_id=None if project.mode == "article" else content_id,
-                        document_id=content_id if project.mode == "article" else None,
-                        mode=values.get("mode", "full_pipeline"),
-                        content=content,
-                        skill_packs=values.get("skill_packs") or None,
-                        langfuse_trace_id=current_langfuse_trace_id(),
-                        run_id=_resume_run_id,
-                    )
+                    if _resume_run_id:
+                        record = await upsert_candidate_for_run(
+                            db,
+                            run_id=_resume_run_id,
+                            project_id=uid,
+                            chapter_id=None if project.mode == "article" else content_id,
+                            document_id=content_id if project.mode == "article" else None,
+                            mode=values.get("mode", "full_pipeline"),
+                            content=content,
+                            skill_packs=values.get("skill_packs") or None,
+                            langfuse_trace_id=current_langfuse_trace_id(),
+                        )
+                    else:
+                        record = await create_generation_record(
+                            db,
+                            project_id=uid,
+                            chapter_id=None if project.mode == "article" else content_id,
+                            document_id=content_id if project.mode == "article" else None,
+                            mode=values.get("mode", "full_pipeline"),
+                            content=content,
+                            skill_packs=values.get("skill_packs") or None,
+                            langfuse_trace_id=current_langfuse_trace_id(),
+                        )
                     if not record:
                         return None
                     await db.commit()
@@ -5089,6 +5598,22 @@ async def resume_chapter_generation(
                     "event: generation_record\n"
                     f"data: {json.dumps({'id': record_id, 'status': 'candidate', 'langfuse_trace_id': current_langfuse_trace_id()}, ensure_ascii=False)}\n\n"
                 )
+
+            async def _delete_checkpoint_best_effort() -> None:
+                if not thread_id:
+                    return
+                try:
+                    # 动态读取，便于测试替换 saver，也避免把 checkpoint 删除纳入
+                    # SQL 事务。数据库终态提交后，删除失败只记录告警。
+                    import agents.workflow as workflow_module
+
+                    await workflow_module._CHECKPOINTER.adelete_thread(thread_id)
+                except Exception:
+                    logger.warning(
+                        "checkpoint 删除失败 thread_id=%s，仍以数据库终态为准",
+                        thread_id,
+                        exc_info=True,
+                    )
 
             def _append_note_once(existing: str, segment: str) -> str:
                 """Append a user-facing note segment without duplicating it across task-card refreshes."""
@@ -5229,12 +5754,53 @@ async def resume_chapter_generation(
                 yield f"event: done\ndata: {json.dumps({'message': '规划阶段已完成'}, ensure_ascii=False)}\n\n"
 
             if action == "reject":
-                # ── Harness E: reject 时解析 interrupt ──
+                try:
+                    if _resume_run:
+                        interrupt = await get_unresolved_interrupt_by_thread_step(
+                            db, thread_id, "human_review"
+                        )
+                        if interrupt is None:
+                            candidate_record = await get_candidate_for_run(
+                                db,
+                                run_id=_resume_run.id,
+                                statuses=("candidate",),
+                            )
+                            interrupt = await _ensure_human_review_interrupt(
+                                db,
+                                run=_resume_run,
+                                thread_id=thread_id,
+                                generation_record_id=(
+                                    str(candidate_record.id) if candidate_record else None
+                                ),
+                                content=(
+                                    state.values.get("draft", "")
+                                    or state.values.get("edited_draft", "")
+                                ),
+                                values=state.values,
+                            )
+                        if interrupt:
+                            await resolve_interrupt(
+                                db,
+                                interrupt,
+                                decision=InterruptDecision.REJECT,
+                                feedback=resume_feedback,
+                            )
+                        await mark_candidate_discarded_for_run(
+                            db,
+                            run_id=_resume_run.id,
+                            reason=f"reject: {resume_feedback or ''}",
+                        )
+                        await mark_cancelled(db, _resume_run)
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    logger.exception("拒绝候选稿时保存终态失败")
+                    yield f"event: error\ndata: {json.dumps({'message': '拒绝失败，任务状态未改变，请重试'}, ensure_ascii=False)}\n\n"
+                    return
+
+                await _delete_checkpoint_best_effort()
                 if _resume_run:
-                    interrupt = await get_interrupt_by_thread(db, thread_id)
-                    if interrupt and not interrupt.resolved:
-                        await resolve_interrupt(db, interrupt, decision=InterruptDecision.REJECT, feedback=resume_feedback)
-                        await db.commit()
+                    yield f"event: run_status\ndata: {json.dumps({'run_id': _resume_run_id, 'status': 'CANCELLED'}, ensure_ascii=False)}\n\n"
                 yield f"event: done\ndata: {json.dumps({'message': '已拒绝，流程终止'}, ensure_ascii=False)}\n\n"
                 return
 
@@ -5282,7 +5848,12 @@ async def resume_chapter_generation(
 
                 current_round = int(current.get("clarification_round", 0) or 0)
                 max_rounds = max(1, int(current.get("max_clarification_rounds", 3) or 3))
-                if current_round >= max_rounds:
+                # current_round 表示当前正在回答的轮次。等于 max_rounds 时仍需允许
+                # 用户提交最后一轮答案；只有已完成澄清或轮次状态异常超限时才拒绝。
+                if not current.get("needs_clarification"):
+                    yield f"event: error\ndata: {json.dumps({'message': '澄清已完成，请直接确认当前任务卡'}, ensure_ascii=False)}\n\n"
+                    return
+                if current_round > max_rounds:
                     yield f"event: error\ndata: {json.dumps({'message': f'澄清已达到最大轮数 {max_rounds}，请直接确认当前任务卡'}, ensure_ascii=False)}\n\n"
                     return
 
@@ -5303,7 +5874,7 @@ async def resume_chapter_generation(
                     "clarification_summary": _append_note_once(
                         current.get("clarification_summary", "") or "", summary,
                     ),
-                    "clarification_round": current_round + 1,
+                    "clarification_round": min(current_round + 1, max_rounds),
                     "user_note": updated_note,
                     "requirements_complete": True,
                     "needs_clarification": False,
@@ -5368,8 +5939,10 @@ async def resume_chapter_generation(
                 }, as_node="human_clarification")
 
                 if _resume_run:
-                    interrupt = await get_interrupt_by_thread(db, thread_id)
-                    if interrupt and not interrupt.resolved:
+                    interrupt = await get_unresolved_interrupt_by_thread_step(
+                        db, thread_id, "human_clarification"
+                    )
+                    if interrupt:
                         await resolve_interrupt(db, interrupt, decision=InterruptDecision.SUBMIT_CLARIFICATION, feedback=summary)
                         await db.commit()
 
@@ -5394,8 +5967,10 @@ async def resume_chapter_generation(
                 }, as_node="human_clarification")
 
                 if _resume_run:
-                    interrupt = await get_interrupt_by_thread(db, thread_id)
-                    if interrupt and not interrupt.resolved:
+                    interrupt = await get_unresolved_interrupt_by_thread_step(
+                        db, thread_id, "human_clarification"
+                    )
+                    if interrupt:
                         await resolve_interrupt(db, interrupt, decision=InterruptDecision.SKIP_CLARIFICATION, feedback="用户跳过生成前澄清")
                         await db.commit()
 
@@ -5425,11 +6000,21 @@ async def resume_chapter_generation(
                     if not isinstance(modified_card, dict):
                         yield f"event: error\ndata: {json.dumps({'message': 'task_card 必须是 JSON 对象'}, ensure_ascii=False)}\n\n"
                         return
+                    modified_card = normalize_task_card(modified_card)
+                    if not (
+                        isinstance(modified_card.get("core_task"), str)
+                        and modified_card["core_task"].strip()
+                    ):
+                        yield f"event: error\ndata: {json.dumps({'message': '任务卡缺少有效的核心任务，请补充后再确认'}, ensure_ascii=False)}\n\n"
+                        return
 
                 update_state: dict = {
                     "task_card_reviewed": True,
                     "task_card_refresh_requested": False,
                     "context_refresh_requested": False,
+                    # 覆盖旧 checkpoint 中可能按 role_type 错绑的提示词。这样部署
+                    # 修复前已经停在任务卡审核处的任务，也会使用精确 v2 专家继续。
+                    **resume_v2_prompts,
                 }
                 if modified_card:
                     update_state["modified_task_card"] = modified_card
@@ -5494,62 +6079,89 @@ async def resume_chapter_generation(
                     for pack in resume_skill_packs
                     if isinstance(pack, dict)
                 }
+                trace_config = current_values.get("llm_config") or {}
+                trace_provider = trace_config.get("provider") or "default"
+                trace_model = trace_config.get("model") or "default"
+                trace_context = (
+                    f"task_card_resume run_id={_resume_run_id} thread_id={thread_id} "
+                    f"provider={trace_provider} model={trace_model}"
+                )
+                logger.info(
+                    "GENERATION_TRACE stage=resume_start %s next=%s",
+                    trace_context,
+                    post_next,
+                )
 
                 resume_stream = app.astream_events(None, config=config, version="v2")
-                resume_iter = resume_stream.__aiter__()
-                while True:
-                    wait_started_at = asyncio.get_running_loop().time()
-                    while True:
-                        try:
-                            event = await asyncio.wait_for(resume_iter.__anext__(), timeout=25)
-                            break
-                        except StopAsyncIteration:
-                            event = None
-                            break
-                        except asyncio.TimeoutError:
-                            elapsed = asyncio.get_running_loop().time() - wait_started_at
-                            if elapsed >= 180:
-                                logger.warning(
-                                    "task_card approve resume timed out waiting for workflow event: thread_id=%s next=%s",
-                                    thread_id,
-                                    post_next,
-                                )
-                                aclose = getattr(resume_stream, "aclose", None)
-                                if aclose:
-                                    await aclose()
-                                await _discard_resume_run("正文创作阶段超时")
-                                yield f"event: error\ndata: {json.dumps({'message': '正文创作节点超过 180 秒没有响应，请稍后重试或检查模型服务'}, ensure_ascii=False)}\n\n"
-                                return
-                            yield f"event: progress\ndata: {json.dumps({'message': '正文创作/审稿仍在执行，请稍候'}, ensure_ascii=False)}\n\n"
-                            if await request.is_disconnected():
-                                logger.info("客户端已断开连接，取消恢复生成")
-                                await _discard_resume_run("客户端断开连接")
-                                return
-                    if event is None:
-                        break
-                    if await request.is_disconnected():
-                        logger.info("客户端已断开连接，取消恢复生成")
+                async for event in _astream_events_with_keepalive(
+                    resume_stream,
+                    request=request,
+                    heartbeat_message="正文创作/审稿仍在执行，请稍候",
+                    timeout_message="正文创作节点超过 180 秒没有响应，请稍后重试或检查模型服务",
+                    logger_context=trace_context,
+                ):
+                    marker = event.get("event")
+                    if marker == "__sse_heartbeat__":
+                        logger.info(
+                            "GENERATION_TRACE stage=heartbeat %s elapsed_seconds=%s content_len=%d",
+                            trace_context,
+                            event.get("elapsed_seconds"),
+                            len(resumed_content),
+                        )
+                        yield f"event: progress\ndata: {json.dumps({'message': event.get('message')}, ensure_ascii=False)}\n\n"
+                        continue
+                    if marker == "__workflow_timeout__":
+                        logger.error(
+                            "GENERATION_TRACE stage=timeout %s content_len=%d",
+                            trace_context,
+                            len(resumed_content),
+                        )
+                        await _discard_resume_run(str(event.get("message") or "正文创作阶段超时"))
+                        yield f"event: error\ndata: {json.dumps({'message': event.get('message')}, ensure_ascii=False)}\n\n"
+                        return
+                    if marker == "__client_disconnected__":
+                        logger.warning("GENERATION_TRACE stage=client_disconnected %s", trace_context)
                         await _discard_resume_run("客户端断开连接")
                         return
-                    kind = event.get("event")
+                    if await request.is_disconnected():
+                        logger.warning("GENERATION_TRACE stage=client_disconnected_on_event %s", trace_context)
+                        await _discard_resume_run("客户端断开连接")
+                        return
+
+                    kind = marker
                     if kind == "on_chain_start":
                         node_name = event.get("name", "")
                         if node_name:
+                            logger.info(
+                                "GENERATION_TRACE stage=node_start %s node=%s content_len=%d",
+                                trace_context,
+                                node_name,
+                                len(resumed_content),
+                            )
                             yield f"event: agent_start\ndata: {json.dumps({'agent': node_name, 'step': 'running'}, ensure_ascii=False)}\n\n"
                             if node_name == "chapter_writer":
                                 yield f"event: progress\ndata: {json.dumps({'message': '写手正在生成正文，通常需要 1-3 分钟'}, ensure_ascii=False)}\n\n"
                     elif kind == "on_chain_end":
                         node_name = event.get("name", "")
                         output = event.get("data", {}).get("output", {})
+                        output_keys = sorted(output.keys()) if isinstance(output, dict) else []
+                        node_step_status = _quality_node_completion_status(
+                            node_name,
+                            output,
+                            writer_max=int(current_values.get("writer_max_retries") or 1),
+                            editor_max=int(current_values.get("editor_max_retries") or 2),
+                        )
                         if node_name:
-                            yield f"event: agent_done\ndata: {json.dumps({'agent': node_name, 'step': 'success'}, ensure_ascii=False)}\n\n"
+                            yield f"event: agent_done\ndata: {json.dumps({'agent': node_name, 'step': node_step_status}, ensure_ascii=False)}\n\n"
 
                         for pack in _new_skill_packs(output, seen_skill_pack_keys):
                             resume_skill_packs.append(pack)
                             yield _skill_pack_sse_event(pack, fallback_expert=node_name)
 
+                        node_content_len = 0
                         if node_name in {"writer", "chapter_writer"}:
                             draft = output.get("draft", "") if isinstance(output, dict) else ""
+                            node_content_len = len(draft) if isinstance(draft, str) else 0
                             if draft:
                                 resumed_content = draft
                             writer_payload = {"content": draft}
@@ -5570,48 +6182,175 @@ async def resume_chapter_generation(
                             edited = ""
                             if isinstance(output, dict):
                                 edited = output.get("edited_draft", "") or output.get("draft", "")
+                            node_content_len = len(edited) if isinstance(edited, str) else 0
                             if edited:
                                 resumed_content = edited
                             yield f"event: editor_output\ndata: {json.dumps({'content': edited}, ensure_ascii=False)}\n\n"
+                        elif node_name == "draft_validator":
+                            qr = (output.get("draft_quality_report", {}) or {}) if isinstance(output, dict) else {}
+                            if qr:
+                                retry_count = int((output.get("writer_retry_count", 0) or 0))
+                                max_retries = int(current_values.get("writer_max_retries") or 1)
+                                yield f"event: quality_check\ndata: {json.dumps(_quality_sse_payload(qr, stage='draft', retry=retry_count, max_retries=max_retries), ensure_ascii=False)}\n\n"
+                        elif node_name == "edited_draft_validator":
+                            qr = (output.get("edited_quality_report", {}) or {}) if isinstance(output, dict) else {}
+                            if qr:
+                                retry_count = int((output.get("editor_retry_count", 0) or 0))
+                                max_retries = int(current_values.get("editor_max_retries") or 2)
+                                yield f"event: quality_check\ndata: {json.dumps(_quality_sse_payload(qr, stage='edited', retry=retry_count, max_retries=max_retries), ensure_ascii=False)}\n\n"
+                        elif node_name == "final_quality_gate":
+                            qr = (output.get("final_quality_report", {}) or {}) if isinstance(output, dict) else {}
+                            if qr:
+                                yield f"event: quality_check\ndata: {json.dumps(_quality_sse_payload(qr, stage='final', retry=0, max_retries=0), ensure_ascii=False)}\n\n"
                         elif node_name == "human_review":
                             record_id = await _save_resume_generation_history(
                                 resumed_content,
                                 {**current_values, **update_state, "skill_packs": resume_skill_packs},
                             )
+                            logger.info(
+                                "GENERATION_TRACE stage=human_review_event %s content_len=%d record_id=%s",
+                                trace_context,
+                                len(resumed_content),
+                                record_id,
+                            )
                             if _resume_run:
                                 await mark_waiting_human(db, _resume_run, step_name="human_review", thread_id=thread_id)
+                                review_state = await app.aget_state(config)
+                                await _ensure_human_review_interrupt(
+                                    db,
+                                    run=_resume_run,
+                                    thread_id=thread_id,
+                                    generation_record_id=record_id,
+                                    content=resumed_content,
+                                    values=review_state.values if review_state else {},
+                                )
                                 await db.commit()
                                 yield f"event: run_status\ndata: {json.dumps({'run_id': _resume_run_id, 'status': 'WAITING_HUMAN'}, ensure_ascii=False)}\n\n"
                             yield _generation_record_event(record_id)
-                            yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
+                            yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id, 'content': resumed_content}, ensure_ascii=False)}\n\n"
                             return
 
-                # 流程自然结束（无 human_review 中断）
+                        if node_name in {"writer", "chapter_writer", "editor", "narrative_editor"}:
+                            logger.info(
+                                "GENERATION_TRACE stage=node_end %s node=%s output_type=%s output_keys=%s node_content_len=%d accumulated_content_len=%d",
+                                trace_context,
+                                node_name,
+                                type(output).__name__,
+                                output_keys,
+                                node_content_len,
+                                len(resumed_content),
+                            )
+
+                # 流程自然结束或在 human_review interrupt 前暂停。最终正文优先从
+                # checkpoint 恢复，避免事件层漏掉 node output 时误判为空。
                 workflow_state = await app.aget_state(config)
                 next_nodes = workflow_state.next if workflow_state else []
+                state_values = workflow_state.values if workflow_state else {}
+                checkpoint_content = (
+                    state_values.get("draft", "")
+                    or state_values.get("edited_draft", "")
+                    or state_values.get("writer_draft", "")
+                ) if isinstance(state_values, dict) else ""
+                if not resumed_content.strip() and isinstance(checkpoint_content, str) and checkpoint_content.strip():
+                    resumed_content = checkpoint_content
+                    logger.warning(
+                        "GENERATION_TRACE stage=recover_from_checkpoint %s recovered_len=%d next=%s",
+                        trace_context,
+                        len(resumed_content),
+                        next_nodes,
+                    )
+
+                logger.info(
+                    "GENERATION_TRACE stage=stream_end %s next=%s event_content_len=%d checkpoint_content_len=%d",
+                    trace_context,
+                    next_nodes,
+                    len(resumed_content),
+                    len(checkpoint_content) if isinstance(checkpoint_content, str) else 0,
+                )
+
+                quality_failure = _quality_failure_from_state(state_values)
+                if quality_failure:
+                    failure_stage, quality_report, error_msg = quality_failure
+                    if failure_stage == "draft":
+                        retry_count = int(state_values.get("writer_retry_count") or 0)
+                        max_retries = int(state_values.get("writer_max_retries") or 1)
+                    elif failure_stage == "edited":
+                        retry_count = int(state_values.get("editor_retry_count") or 0)
+                        max_retries = int(state_values.get("editor_max_retries") or 2)
+                    else:
+                        retry_count = max_retries = 0
+                    logger.warning(
+                        "GENERATION_TRACE stage=quality_failed %s quality_stage=%s retry=%d/%d",
+                        trace_context,
+                        failure_stage,
+                        retry_count,
+                        max_retries,
+                    )
+                    await _discard_resume_run(error_msg)
+                    yield f"event: quality_check\ndata: {json.dumps(_quality_sse_payload(quality_report, stage=failure_stage, retry=retry_count, max_retries=max_retries), ensure_ascii=False)}\n\n"
+                    yield f"event: error\ndata: {json.dumps({'message': error_msg, 'quality_report': quality_report}, ensure_ascii=False)}\n\n"
+                    return
+
+                if not resumed_content.strip():
+                    logger.error(
+                        "GENERATION_TRACE stage=empty_final_content %s next=%s state_keys=%s",
+                        trace_context,
+                        next_nodes,
+                        sorted(state_values.keys()) if isinstance(state_values, dict) else [],
+                    )
+                    await _discard_resume_run("正文工作流结束但没有候选正文")
+                    yield f"event: error\ndata: {json.dumps({'message': '正文生成提前结束且没有返回候选稿，请重试；诊断日志已记录'}, ensure_ascii=False)}\n\n"
+                    return
+
                 if "human_review" in next_nodes:
                     record_id = await _save_resume_generation_history(
                         resumed_content,
                         {**current_values, **update_state, "skill_packs": resume_skill_packs},
                     )
+                    logger.info(
+                        "GENERATION_TRACE stage=waiting_human %s content_len=%d record_id=%s",
+                        trace_context,
+                        len(resumed_content),
+                        record_id,
+                    )
                     if _resume_run:
                         await mark_waiting_human(db, _resume_run, step_name="human_review", thread_id=thread_id)
+                        await _ensure_human_review_interrupt(
+                            db,
+                            run=_resume_run,
+                            thread_id=thread_id,
+                            generation_record_id=record_id,
+                            content=resumed_content,
+                            values=state_values,
+                        )
                         await db.commit()
                         yield f"event: run_status\ndata: {json.dumps({'run_id': _resume_run_id, 'status': 'WAITING_HUMAN'}, ensure_ascii=False)}\n\n"
                     yield _generation_record_event(record_id)
-                    yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
+                    yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id, 'content': resumed_content}, ensure_ascii=False)}\n\n"
+                    return
+
+                if state_values.get("mode", "full_pipeline") == "full_pipeline":
+                    error_msg = "完整章节生成未进入人工审核节点，工作流异常终止，请重新生成"
+                    await _discard_resume_run(error_msg)
+                    yield f"event: error\ndata: {json.dumps({'message': error_msg}, ensure_ascii=False)}\n\n"
                     return
 
                 record_id = await _save_resume_generation_history(
                     resumed_content,
                     {**current_values, **update_state, "skill_packs": resume_skill_packs},
                 )
+                logger.info(
+                    "GENERATION_TRACE stage=completed %s content_len=%d record_id=%s",
+                    trace_context,
+                    len(resumed_content),
+                    record_id,
+                )
                 if _resume_run:
                     await mark_completed(db, _resume_run)
                     await db.commit()
                     yield f"event: run_status\ndata: {json.dumps({'run_id': _resume_run_id, 'status': 'COMPLETED'}, ensure_ascii=False)}\n\n"
                 yield _generation_record_event(record_id)
-                yield f"event: done\ndata: {json.dumps({'message': '任务卡确认，生成完成'}, ensure_ascii=False)}\n\n"
+                yield f"event: done\ndata: {json.dumps({'message': '任务卡确认，生成完成', 'content': resumed_content}, ensure_ascii=False)}\n\n"
                 return
 
             if action == "review":
@@ -5627,7 +6366,15 @@ async def resume_chapter_generation(
                     return
 
                 llm = get_llm_provider(current_values.get("llm_config"))
-                result = await llm.generate(
+                yield f"event: progress\ndata: {json.dumps({'message': 'AI 正在分析候选稿并整理修改方向'}, ensure_ascii=False)}\n\n"
+                logger.info(
+                    "revision review started run_id=%s thread_id=%s revision_count=%s",
+                    _resume_run_id,
+                    thread_id,
+                    revision_count,
+                )
+
+                review_task = asyncio.create_task(llm.generate(
                     (
                         "你是一位严谨的小说审稿编辑。请审核候选章节，给出3个可执行的修改方向。"
                         "方向必须聚焦当前候选稿的改进，例如节奏、冲突、人物动机、情绪层次、场景细节、设定一致性；"
@@ -5640,8 +6387,67 @@ async def resume_chapter_generation(
                     ),
                     temperature=0.3,
                     max_tokens=1024,
+                ))
+                review_started_at = asyncio.get_running_loop().time()
+                try:
+                    while True:
+                        done, _ = await asyncio.wait(
+                            {review_task},
+                            timeout=20,
+                        )
+                        if done:
+                            result = review_task.result()
+                            break
+
+                        elapsed = asyncio.get_running_loop().time() - review_started_at
+                        if await request.is_disconnected():
+                            review_task.cancel()
+                            with suppress(asyncio.CancelledError):
+                                await review_task
+                            logger.info(
+                                "revision review client disconnected run_id=%s thread_id=%s",
+                                _resume_run_id,
+                                thread_id,
+                            )
+                            return
+                        if elapsed >= 120:
+                            review_task.cancel()
+                            with suppress(asyncio.CancelledError):
+                                await review_task
+                            logger.warning(
+                                "revision review timed out run_id=%s thread_id=%s elapsed=%.1f",
+                                _resume_run_id,
+                                thread_id,
+                                elapsed,
+                            )
+                            yield f"event: error\ndata: {json.dumps({'message': 'AI 分析修改方向超过120秒，请稍后重试；当前候选稿仍保留'}, ensure_ascii=False)}\n\n"
+                            return
+                        yield f"event: progress\ndata: {json.dumps({'message': 'AI 仍在分析修改方向，请稍候', 'elapsed_seconds': round(elapsed, 1)}, ensure_ascii=False)}\n\n"
+                except Exception:
+                    logger.exception(
+                        "revision review failed run_id=%s thread_id=%s",
+                        _resume_run_id,
+                        thread_id,
+                    )
+                    yield f"event: error\ndata: {json.dumps({'message': '获取修改方向失败，请重试；当前候选稿仍保留'}, ensure_ascii=False)}\n\n"
+                    return
+
+                fallback_directions = [
+                    "压缩重复叙述并强化场景节奏，让冲突推进更集中",
+                    "补强人物动机与情绪递进，使关键选择更有说服力",
+                    "检查设定与前文衔接，增加必要的场景细节和伏笔回应",
+                ]
+                directions = _parse_directions(
+                    result,
+                    fallback=fallback_directions,
+                )[:3]
+                logger.info(
+                    "revision review completed run_id=%s thread_id=%s directions=%d fallback=%s",
+                    _resume_run_id,
+                    thread_id,
+                    len(directions),
+                    directions == fallback_directions,
                 )
-                directions = _parse_directions(result)[:3]
                 yield (
                     "event: revision_suggestions\n"
                     f"data: {json.dumps({'directions': directions, 'revision_count': revision_count, 'max_revisions': 3}, ensure_ascii=False)}\n\n"
@@ -5658,11 +6464,11 @@ async def resume_chapter_generation(
                     return
                 revision_count = current_revision_count + 1
 
-                update_state = {
-                    "revision_count": revision_count,
-                }
-                if resume_feedback:
-                    update_state["critiques"] = [f"[用户选择的修改方向] {resume_feedback}"]
+                update_state = _revision_state_update(
+                    revision_count,
+                    resume_feedback,
+                )
+                update_state.update(resume_v2_prompts)
 
                 await app.aupdate_state(config, update_state, as_node="human_review")
 
@@ -5688,8 +6494,14 @@ async def resume_chapter_generation(
                     elif kind == "on_chain_end":
                         node_name = event.get("name", "")
                         output = event.get("data", {}).get("output", {})
+                        node_step_status = _quality_node_completion_status(
+                            node_name,
+                            output,
+                            writer_max=int(current_values.get("writer_max_retries") or 1),
+                            editor_max=int(current_values.get("editor_max_retries") or 2),
+                        )
                         if node_name:
-                            yield f"event: agent_done\ndata: {json.dumps({'agent': node_name, 'step': 'success'}, ensure_ascii=False)}\n\n"
+                            yield f"event: agent_done\ndata: {json.dumps({'agent': node_name, 'step': node_step_status}, ensure_ascii=False)}\n\n"
 
                         for pack in _new_skill_packs(output, seen_skill_pack_keys):
                             resume_skill_packs.append(pack)
@@ -5720,135 +6532,290 @@ async def resume_chapter_generation(
                             if edited:
                                 revised_content = edited
                             yield f"event: editor_output\ndata: {json.dumps({'content': edited}, ensure_ascii=False)}\n\n"
+                        elif node_name == "draft_validator":
+                            qr = (output.get("draft_quality_report", {}) or {}) if isinstance(output, dict) else {}
+                            if qr:
+                                retry_count = int(output.get("writer_retry_count") or 0)
+                                max_retries = int(current_values.get("writer_max_retries") or 1)
+                                yield f"event: quality_check\ndata: {json.dumps(_quality_sse_payload(qr, stage='draft', retry=retry_count, max_retries=max_retries), ensure_ascii=False)}\n\n"
+                        elif node_name == "edited_draft_validator":
+                            qr = (output.get("edited_quality_report", {}) or {}) if isinstance(output, dict) else {}
+                            if qr:
+                                retry_count = int(output.get("editor_retry_count") or 0)
+                                max_retries = int(current_values.get("editor_max_retries") or 2)
+                                yield f"event: quality_check\ndata: {json.dumps(_quality_sse_payload(qr, stage='edited', retry=retry_count, max_retries=max_retries), ensure_ascii=False)}\n\n"
+                        elif node_name == "final_quality_gate":
+                            qr = (output.get("final_quality_report", {}) or {}) if isinstance(output, dict) else {}
+                            if qr:
+                                yield f"event: quality_check\ndata: {json.dumps(_quality_sse_payload(qr, stage='final'), ensure_ascii=False)}\n\n"
                         elif node_name == "human_review":
                             record_id = await _save_resume_generation_history(
                                 revised_content,
                                 {**current_values, **update_state, "skill_packs": resume_skill_packs},
                             )
                             yield _generation_record_event(record_id)
-                            yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
+                            if _resume_run:
+                                await mark_waiting_human(db, _resume_run, step_name="human_review", thread_id=thread_id)
+                                review_state = await app.aget_state(config)
+                                await _ensure_human_review_interrupt(
+                                    db,
+                                    run=_resume_run,
+                                    thread_id=thread_id,
+                                    generation_record_id=record_id,
+                                    content=revised_content,
+                                    values=review_state.values if review_state else {},
+                                )
+                                await db.commit()
+                            yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id, 'content': revised_content}, ensure_ascii=False)}\n\n"
                             return
 
                 workflow_state = await app.aget_state(config)
                 next_nodes = workflow_state.next if workflow_state else []
+                state_values = workflow_state.values if workflow_state else {}
+                checkpoint_content = (
+                    state_values.get("draft", "")
+                    or state_values.get("edited_draft", "")
+                    or state_values.get("writer_draft", "")
+                ) if isinstance(state_values, dict) else ""
+                if not revised_content.strip() and isinstance(checkpoint_content, str):
+                    revised_content = checkpoint_content
+
+                quality_failure = _quality_failure_from_state(state_values)
+                if quality_failure:
+                    failure_stage, quality_report, error_msg = quality_failure
+                    if failure_stage == "draft":
+                        retry_count = int(state_values.get("writer_retry_count") or 0)
+                        max_retries = int(state_values.get("writer_max_retries") or 1)
+                    elif failure_stage == "edited":
+                        retry_count = int(state_values.get("editor_retry_count") or 0)
+                        max_retries = int(state_values.get("editor_max_retries") or 2)
+                    else:
+                        retry_count = max_retries = 0
+                    await _discard_resume_run(error_msg)
+                    yield f"event: quality_check\ndata: {json.dumps(_quality_sse_payload(quality_report, stage=failure_stage, retry=retry_count, max_retries=max_retries), ensure_ascii=False)}\n\n"
+                    yield f"event: error\ndata: {json.dumps({'message': error_msg, 'quality_report': quality_report}, ensure_ascii=False)}\n\n"
+                    return
+
+                if not revised_content.strip():
+                    await _discard_resume_run("修订工作流结束但没有候选正文")
+                    yield f"event: error\ndata: {json.dumps({'message': '修订流程结束但没有返回候选正文，请重试'}, ensure_ascii=False)}\n\n"
+                    return
+
                 if "human_review" in next_nodes:
                     record_id = await _save_resume_generation_history(
                         revised_content,
                         {**current_values, **update_state, "skill_packs": resume_skill_packs},
                     )
                     yield _generation_record_event(record_id)
-                    yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
+                    if _resume_run:
+                        await mark_waiting_human(db, _resume_run, step_name="human_review", thread_id=thread_id)
+                        await _ensure_human_review_interrupt(
+                            db,
+                            run=_resume_run,
+                            thread_id=thread_id,
+                            generation_record_id=record_id,
+                            content=revised_content,
+                            values=state_values,
+                        )
+                        await db.commit()
+                    yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id, 'content': revised_content}, ensure_ascii=False)}\n\n"
                     return
 
+                # 修订动作的终点始终是再次人工审核。部分 LangGraph/checkpointer 版本
+                # 会在重复进入同一 interrupt 节点时返回空 next；不能因此把修订稿误当
+                # 成终态 done，更不能让前端错过最终审核弹窗。
                 record_id = await _save_resume_generation_history(
                     revised_content,
                     {**current_values, **update_state, "skill_packs": resume_skill_packs},
                 )
                 yield _generation_record_event(record_id)
-                yield f"event: done\ndata: {json.dumps({'message': '修订完成'}, ensure_ascii=False)}\n\n"
+                if _resume_run:
+                    await mark_waiting_human(db, _resume_run, step_name="human_review", thread_id=thread_id)
+                    await _ensure_human_review_interrupt(
+                        db,
+                        run=_resume_run,
+                        thread_id=thread_id,
+                        generation_record_id=record_id,
+                        content=revised_content,
+                        values=state_values,
+                    )
+                    await db.commit()
+                yield f"event: progress\ndata: {json.dumps({'message': '等待人工审核', 'thread_id': thread_id, 'content': revised_content}, ensure_ascii=False)}\n\n"
                 return
 
-            # approve: 恢复执行到结束
-            await app.aupdate_state(config, {}, as_node="human_review")
-
+            # approve/finalize 都是人工审核终态：前者保存草稿版本，后者直接创建
+            # 唯一 finalize 版本。正文、版本、候选记录、interrupt 和 AiRun 在同一
+            # SQL 事务中提交；checkpoint 仅在提交成功后 best-effort 删除。
             current_values = state.values
-            # 优先使用 edited_draft（经编辑润色），若无则使用 draft（原始创作）
-            raw_content = current_values.get("edited_draft", "") or current_values.get("draft", "")
+            if _resume_run and _resume_run.workflow_key:
+                raw_content = current_values.get("draft", "") or current_values.get("edited_draft", "")
+            else:
+                raw_content = current_values.get("edited_draft", "") or current_values.get("draft", "")
             target_content_id = current_values.get("chapter_id", "")
-            content_written = False
             memory_extraction_payload: dict | None = None
 
-            # 落库：小说写 Chapter，文章写 Document。这里故意不提前 commit：正文、
-            # 版本、GenerationRecord 状态和 AiRun 完成状态必须作为一个原子事务提交。
-            if raw_content and target_content_id:
-                try:
-                    content_id = _to_uuid(target_content_id)
-                    if project.mode == "article":
-                        doc_result = await db.execute(
-                            select(Document).where(Document.id == content_id, Document.project_id == uid)
-                        )
-                        document = doc_result.scalar_one_or_none()
-                        if document:
-                            await save_document_content(db, document, raw_content, source="ai_approve", set_status="draft")
-                            content_written = True
-                    else:
-                        ch_result = await db.execute(
-                            select(Chapter).where(Chapter.id == content_id, Chapter.project_id == uid)
-                        )
-                        chapter = ch_result.scalar_one_or_none()
-                        if chapter:
-                            await save_chapter_content(
-                                db, chapter, raw_content, source="ai_approve",
-                                set_status="draft", run_id=_resume_run_id,
-                            )
-                            content_written = True
-                            # ── Phase F: 联动 GenerationRecord.accepted_version_id ──
-                            _ver = None
-                            _gr = None
-                            if _resume_run_id:
-                                _gr = (
-                                    await db.execute(
-                                        select(GenerationRecord).where(
-                                            GenerationRecord.run_id == _to_uuid(_resume_run_id)
-                                        )
-                                    )
-                                ).scalar_one_or_none()
-                                if _gr:
-                                    # 只查本次 Run 创建的版本，避免正文未变化时误绑定旧版本。
-                                    _ver = (
-                                        await db.execute(
-                                            select(ChapterVersion)
-                                            .where(
-                                                ChapterVersion.chapter_id == chapter.id,
-                                                ChapterVersion.run_id == _to_uuid(_resume_run_id),
-                                            )
-                                            .order_by(ChapterVersion.version_number.desc())
-                                            .limit(1)
-                                        )
-                                    ).scalar_one_or_none()
-                                    if _ver:
-                                        await update_generation_record_status(
-                                            db, _gr, "applied",
-                                            accepted_version_id=str(_ver.id),
-                                        )
-                            # ── Phase I-6 / H2: 后台抽取写作记忆 ──
-                            # v2 run（有 workflow_key）用 story-recorder + memory-curator
-                            # 旧 run / 无 workflow_key 用旧 FactExtractionAgent
-                            # SQLite :memory: 测试环境跳过（独立 session 看不到内存表）
-                            from db.session import get_engine as _get_engine_for_guard
-                            _is_sqlite = _get_engine_for_guard().dialect.name == "sqlite"
-                            if _resume_run_id and not _is_sqlite:
-                                _accepted_vid = (
-                                    str(_gr.accepted_version_id) if _gr and _gr.accepted_version_id
-                                    else (str(_ver.id) if _ver else None)
-                                )
-                                if _accepted_vid:
-                                    memory_extraction_payload = {
-                                        "use_story_recorder": bool(_resume_run and _resume_run.workflow_key),
-                                        "project_id": str(uid),
-                                        "chapter_id": str(chapter.id),
-                                        "chapter_version_id": _accepted_vid,
-                                        "chapter_sequence_number": chapter.sequence_number,
-                                        "run_id": _resume_run_id,
-                                        "content": raw_content,
-                                        "context": current_values.get("context", ""),
-                                        "llm_config": current_values.get("llm_config"),
-                                    }
-                except Exception:
-                    logger.exception("落库失败")
-                    await _discard_resume_run("正式内容保存失败")
-                    yield f"event: error\ndata: {json.dumps({'message': '保存失败'}, ensure_ascii=False)}\n\n"
-                    return
+            if not raw_content.strip() or not target_content_id:
+                yield f"event: error\ndata: {json.dumps({'message': '没有可保存的候选正文'}, ensure_ascii=False)}\n\n"
+                return
+            if action == "finalize" and project.mode == "article":
+                yield f"event: error\ndata: {json.dumps({'message': '文章模式不支持章节定稿，请使用批准'}, ensure_ascii=False)}\n\n"
+                return
 
-            # 只有正文/版本、审计关联和运行状态都准备就绪，才一次性提交。
-            if _resume_run:
-                interrupt = await get_unresolved_interrupt_by_thread_step(db, thread_id, "human_review")
-                if interrupt and not interrupt.resolved:
-                    await resolve_interrupt(db, interrupt, decision=InterruptDecision.APPROVE, feedback=resume_feedback)
-                await mark_completed(db, _resume_run)
+            try:
+                content_id = _to_uuid(target_content_id)
+                accepted_version_id: str | None = None
+                chapter: Chapter | None = None
+
+                if project.mode == "article":
+                    doc_result = await db.execute(
+                        select(Document).where(
+                            Document.id == content_id,
+                            Document.project_id == uid,
+                        )
+                    )
+                    document = doc_result.scalar_one_or_none()
+                    if document is None:
+                        raise ValueError("目标文档不存在")
+                    await save_document_content(
+                        db,
+                        document,
+                        raw_content,
+                        source="ai_approve",
+                        set_status="draft",
+                    )
+                    document_version = (
+                        await db.execute(
+                            select(DocumentVersion)
+                            .where(DocumentVersion.document_id == document.id)
+                            .order_by(DocumentVersion.version_number.desc())
+                            .limit(1)
+                        )
+                    ).scalar_one_or_none()
+                    accepted_version_id = (
+                        str(document_version.id) if document_version else None
+                    )
+                else:
+                    chapter_result = await db.execute(
+                        select(Chapter).where(
+                            Chapter.id == content_id,
+                            Chapter.project_id == uid,
+                        )
+                    )
+                    chapter = chapter_result.scalar_one_or_none()
+                    if chapter is None:
+                        raise ValueError("目标章节不存在")
+
+                    if action == "finalize":
+                        # 动态从服务模块读取，便于故障注入测试验证事务回滚。
+                        from services import chapter_save as chapter_save_service
+
+                        await chapter_save_service.finalize_chapter_content(
+                            db,
+                            chapter,
+                            raw_content,
+                            run_id=_resume_run_id,
+                        )
+                        accepted_version_id = (
+                            str(chapter.final_version_id)
+                            if chapter.final_version_id
+                            else None
+                        )
+                    else:
+                        await save_chapter_content(
+                            db,
+                            chapter,
+                            raw_content,
+                            source="ai_approve",
+                            set_status="draft",
+                            run_id=_resume_run_id,
+                        )
+                        chapter_version = None
+                        if _resume_run_id:
+                            chapter_version = (
+                                await db.execute(
+                                    select(ChapterVersion)
+                                    .where(
+                                        ChapterVersion.chapter_id == chapter.id,
+                                        ChapterVersion.run_id == _to_uuid(_resume_run_id),
+                                    )
+                                    .order_by(ChapterVersion.version_number.desc())
+                                    .limit(1)
+                                )
+                            ).scalar_one_or_none()
+                        accepted_version_id = (
+                            str(chapter_version.id) if chapter_version else None
+                        )
+
+                if _resume_run_id:
+                    applied = await mark_applied_for_run(
+                        db,
+                        run_id=_resume_run_id,
+                        accepted_version_id=accepted_version_id,
+                        content=raw_content,
+                    )
+                    if not applied:
+                        logger.warning(
+                            "终态保存时未找到候选 GenerationRecord run_id=%s",
+                            _resume_run_id,
+                        )
+
+                if _resume_run:
+                    interrupt = await get_unresolved_interrupt_by_thread_step(
+                        db,
+                        thread_id,
+                        "human_review",
+                    )
+                    if interrupt is None:
+                        candidate_record = await get_candidate_for_run(
+                            db,
+                            run_id=_resume_run.id,
+                            statuses=("candidate", "applied"),
+                        )
+                        interrupt = await _ensure_human_review_interrupt(
+                            db,
+                            run=_resume_run,
+                            thread_id=thread_id,
+                            generation_record_id=(
+                                str(candidate_record.id) if candidate_record else None
+                            ),
+                            content=raw_content,
+                            values=current_values,
+                        )
+                    if interrupt:
+                        await resolve_interrupt(
+                            db,
+                            interrupt,
+                            decision=InterruptDecision.APPROVE,
+                            feedback=resume_feedback,
+                        )
+                    await mark_completed(db, _resume_run)
+
+                # 小说章节审批成功后才准备记忆提炼参数。SQLite 测试环境使用独立
+                # 内存 session，继续跳过后台任务。
+                if chapter is not None and accepted_version_id and _resume_run_id:
+                    from db.session import get_engine as _get_engine_for_guard
+
+                    if _get_engine_for_guard().dialect.name != "sqlite":
+                        memory_extraction_payload = {
+                            "use_story_recorder": bool(_resume_run and _resume_run.workflow_key),
+                            "project_id": str(uid),
+                            "chapter_id": str(chapter.id),
+                            "chapter_version_id": accepted_version_id,
+                            "chapter_sequence_number": chapter.sequence_number,
+                            "run_id": _resume_run_id,
+                            "content": raw_content,
+                            "context": current_values.get("context", ""),
+                            "llm_config": current_values.get("llm_config"),
+                        }
+
                 await db.commit()
-            elif content_written:
-                await db.commit()
+            except Exception:
+                await db.rollback()
+                logger.exception("%s 终态事务失败", action)
+                yield f"event: error\ndata: {json.dumps({'message': '定稿失败，任务仍保留在人工审核，可重试' if action == 'finalize' else '保存失败，任务仍保留在人工审核，可重试'}, ensure_ascii=False)}\n\n"
+                return
+
+            await _delete_checkpoint_best_effort()
 
             # commit 成功后再启动独立 session 的记忆抽取，避免后台任务读取到未提交版本。
             if memory_extraction_payload:
@@ -5875,20 +6842,26 @@ async def resume_chapter_generation(
                         llm_config=memory_extraction_payload["llm_config"],
                     ))
 
-            yield f"event: done\ndata: {json.dumps({'message': '已批准，内容已保存'}, ensure_ascii=False)}\n\n"
+            if _resume_run:
+                yield f"event: run_status\ndata: {json.dumps({'run_id': _resume_run_id, 'status': 'COMPLETED'}, ensure_ascii=False)}\n\n"
+            done_message = "已定稿，章节已保存为最终版本" if action == "finalize" else "已批准，内容已保存"
+            yield f"event: done\ndata: {json.dumps({'message': done_message}, ensure_ascii=False)}\n\n"
 
         except WorkflowGenerationError as e:
             logger.warning("恢复时关键生成节点失败: %s", e)
-            await _discard_incomplete_generation_run(
+            await _fail_generation_run(
                 db,
                 run_id=_resume_run_id,
                 thread_id=thread_id,
                 reason=str(e),
+                failure_step_name=e.step_name,
+                failure_agent_name=e.agent_name,
+                failure_step_order=e.step_order,
             )
             yield f"event: error\ndata: {json.dumps({'message': str(e)}, ensure_ascii=False)}\n\n"
         except Exception as e:
             logger.exception("恢复工作流失败")
-            await _discard_incomplete_generation_run(
+            await _fail_generation_run(
                 db,
                 run_id=_resume_run_id,
                 thread_id=thread_id,
@@ -5989,6 +6962,14 @@ async def restore_chapter_version(
 
     与文档 restore 一致：不覆盖旧版本，而是用旧版本内容创建一个新版本（source=rollback），
     并在 rollback_from_version_id 记录回滚来源。
+
+    恢复 ≠ 定稿：
+    - 恢复只把历史版本内容写回 chapter.content，并将章节状态重置为 draft，
+      等待用户重新确认后再定稿——不能让未确认的恢复正文继续以 final 展示；
+    - final_version_id 保持不变：它指向的不可变定稿快照仍是检索索引的可信依据，
+      恢复操作不破坏可信快照，也不触发任何检索索引操作；
+    - 只有再次定稿（finalize）才会更新 final_version_id 并触发索引同步，
+      未再次定稿前，检索索引（基于 final_version_id 的可信快照）继续指向原定稿版本。
     """
     uid = _to_uuid(project_id)
     await _verify_project_owner(uid, user.id, db)
@@ -6007,6 +6988,10 @@ async def restore_chapter_version(
     if not version:
         raise HTTPException(status_code=404, detail="版本不存在")
 
+    # 恢复 ≠ 定稿：状态改回 draft（等待再次定稿），final_version_id 保留原定稿
+    # 快照 —— 检索索引基于 final_version_id 的可信快照，恢复操作不触碰它，
+    # 只有再次定稿（finalize）才会更新 final_version_id 并触发索引同步。
+    chapter.status = "draft"
     await save_chapter_content(
         db, chapter, version.content or "", source="rollback",
         rollback_from_version_id=str(version.id),
@@ -6688,9 +7673,66 @@ async def create_knowledge_source(
     return result.scalar_one()
 
 
+async def _auto_extract_novel_bg(
+    project_id, source_id, user_id, genre: str, canon_level: str,
+) -> None:
+    """后台任务：novel 资料上传后自动分章并起跑结构化抽取。
+
+    - 分章为本地文本处理，快；
+    - 抽取用 advance_extraction_job 推进一轮（真实 LLM 每次 1 章），
+      剩余章节由前端 autoAdvance 轮询持续推进，用户零操作；
+    - 失败静默记录（不打断上传成功响应），资料详情页可手动重试。
+    """
+    try:
+        from db.session import async_session
+        from services.chapter_splitter import split_source_chapters
+        from services.extraction_service import advance_extraction_job
+
+        async with async_session() as db:
+            await split_source_chapters(db, project_id, source_id)
+            await advance_extraction_job(
+                db, project_id, source_id,
+                user_id=user_id,
+                genre=genre,
+                canon_level=canon_level,
+                origin="llm_extracted",
+                max_chapters_per_run=1,
+            )
+    except Exception:
+        logger.warning(
+            "novel 上传自动分类失败（资料详情页可手动重试）: source=%s", source_id,
+            exc_info=True,
+        )
+
+
+async def _rebuild_index_after_extraction(project_id, source_id, user_id: str) -> None:
+    """抽取完成后后台重建项目检索索引。
+
+    词法索引（rebuild_project）本地处理；向量索引（index_project_vectors）
+    调 embedding provider 批量生成真实向量（按 settings 配置，无 key 时
+    降级本地伪向量，不崩溃）。失败静默（问答自动降级 ILIKE 通道）。
+    """
+    try:
+        from db.session import async_session
+        from services.retrieval_indexer import ensure_fts_table, rebuild_project
+        from services.vector_retriever import index_project_vectors
+
+        async with async_session() as db:
+            conn = await db.connection()
+            await ensure_fts_table(conn)
+            await rebuild_project(db, project_id)
+            await index_project_vectors(db, project_id)
+    except Exception:
+        logger.warning(
+            "抽取后自动重建检索索引失败（问答将降级 ILIKE）: source=%s", source_id,
+            exc_info=True,
+        )
+
+
 @router.post("/projects/{project_id}/knowledge/upload")
 async def upload_knowledge_file(
     project_id: str,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     title: str = Form(default=""),
     source_type: str = Form(default="upload"),
@@ -6766,6 +7808,16 @@ async def upload_knowledge_file(
     # 上传后自动重建事实索引
     from services.knowledge_fact_index import rebuild_source_facts
     fact_result = await rebuild_source_facts(db, uid, str(source.id))
+
+    # novel 类型：上传即自动分类——后台任务自动分章并起跑结构化抽取。
+    # 用户无需手动点"开始抽取"；前端 autoAdvance 轮询持续推进剩余章节。
+    # 抽取失败静默（_auto_extract_novel_bg 内部捕获），可手动重试。
+    if source_type == "novel":
+        background_tasks.add_task(
+            _auto_extract_novel_bg,
+            uid, str(source.id), str(user.id),
+            genre or "magic_fantasy", canon_level or "original",
+        )
 
     return {
         "id": str(source.id),
@@ -6843,13 +7895,23 @@ async def update_knowledge_source(
 async def delete_knowledge_source(
     project_id: str,
     source_id: str,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """删除资料条目，级联删除关联的 chunks 与事实索引。"""
+    """删除资料条目，级联清理全部关联数据。
+
+    覆盖：切片（project_source_chunks）、分章结果、事实索引、出场记录、
+    结构化抽取（character_profile/ability_profile/event_timeline/world_rule）、
+    抽取任务（jobs/staging）、检索索引投影（retrieval_chunks + FTS + vectors）。
+    全部用批量 DELETE（一条 SQL），避免大资料逐条循环删除长时间持有写锁
+    （SQLite 并发写会 "database is locked"）。删除后后台重建项目检索索引兜底。
+    """
     uid = _to_uuid(project_id)
     await _verify_project_owner(uid, user.id, db)
     sid = _to_uuid(source_id)
+    sid_str = str(sid)
+    uid_str = str(uid)
 
     result = await db.execute(
         select(ProjectSource).where(ProjectSource.id == sid, ProjectSource.project_id == uid)
@@ -6858,30 +7920,120 @@ async def delete_knowledge_source(
     if not source:
         raise HTTPException(status_code=404, detail="资料不存在")
 
-    # 级联删除 chunks
-    chunks_result = await db.execute(
-        select(ProjectSourceChunk).where(
-            ProjectSourceChunk.source_id == sid, ProjectSourceChunk.project_id == uid
+    # 先取消该资料的抽取任务（若存在）：正在运行的抽取后台任务（分章/LLM
+    # 抽取）会持续写库，与删除事务并发写 SQLite 会 database is locked。
+    # cancel 是短事务（标记 CANCELLED）；后台任务当前 LLM 调用完成后写入
+    # 失败会被 _auto_extract_novel_bg 的异常捕获静默。
+    from services.extraction_service import cancel_extraction_job
+    try:
+        await cancel_extraction_job(db, uid, sid)
+        await db.commit()
+    except Exception:
+        # 无 job / 取消失败不阻塞删除
+        await db.rollback()
+
+    # 收集该 source 的结构化抽取行 id（用于清理其检索投影 chunk）
+    structured_ids: list[str] = []
+    for model in (CharacterProfile, AbilityProfile, EventTimeline, WorldRule):
+        rows = (
+            await db.execute(
+                select(model.id).where(
+                    model.source_id == sid_str, model.project_id == uid_str
+                )
+            )
+        ).scalars().all()
+        structured_ids.extend(str(row_id) for row_id in rows)
+
+    # 批量删除（一条 SQL 一组，避免逐条 DELETE 长时间持有写锁）
+    await db.execute(
+        delete(ProjectSourceChunk).where(
+            ProjectSourceChunk.source_id == sid_str,
+            ProjectSourceChunk.project_id == uid_str,
         )
     )
-    for chunk in chunks_result.scalars().all():
-        await db.delete(chunk)
-
     await db.execute(
         delete(ProjectKnowledgeFact).where(
-            ProjectKnowledgeFact.source_id == sid,
-            ProjectKnowledgeFact.project_id == uid,
+            ProjectKnowledgeFact.source_id == sid_str,
+            ProjectKnowledgeFact.project_id == uid_str,
         )
     )
     await db.execute(
         delete(CharacterAppearance).where(
-            CharacterAppearance.source_id == sid,
-            CharacterAppearance.project_id == uid,
+            CharacterAppearance.source_id == sid_str,
+            CharacterAppearance.project_id == uid_str,
         )
     )
+    await db.execute(
+        delete(ProjectSourceChapter).where(ProjectSourceChapter.source_id == sid_str)
+    )
+    await db.execute(
+        delete(ExtractionJob).where(ExtractionJob.source_id == sid_str)
+    )
+    # P-1 阶段四：切分代次级联清理（桌面端 SQLite FK 默认关闭，必须手动删）。
+    # 先删引用代的行（exclusions / 活动指针），再删代本身。
+    await db.execute(
+        delete(SplitExclusion).where(
+            SplitExclusion.split_generation_id.in_(
+                select(SplitGeneration.id).where(
+                    SplitGeneration.project_id == uid_str,
+                    SplitGeneration.source_id == sid_str,
+                )
+            )
+        )
+    )
+    await db.execute(
+        delete(SourceSplitState).where(
+            SourceSplitState.project_id == uid_str,
+            SourceSplitState.source_id == sid_str,
+        )
+    )
+    await db.execute(
+        delete(SplitGeneration).where(
+            SplitGeneration.project_id == uid_str,
+            SplitGeneration.source_id == sid_str,
+        )
+    )
+    await db.execute(
+        delete(ExtractionStaging).where(ExtractionStaging.source_id == sid_str)
+    )
+    for model in (CharacterProfile, AbilityProfile, EventTimeline, WorldRule):
+        await db.execute(
+            delete(model).where(
+                model.source_id == sid_str, model.project_id == uid_str
+            )
+        )
+
+    # 检索索引投影清理：source_chunk（source_id=资料）+
+    # 结构化投影（source_id=结构化行 id）。chunk id 分批删（SQLite 参数
+    # 上限 999，大资料 7000+ chunk 需分批）。
+    chunk_ids = (
+        await db.execute(
+            select(RetrievalChunk.id).where(
+                RetrievalChunk.project_id == uid_str,
+                RetrievalChunk.source_id.in_([sid_str, *structured_ids]),
+            )
+        )
+    ).scalars().all()
+    chunk_id_strs = [str(cid) for cid in chunk_ids]
+    del_fts = text("DELETE FROM retrieval_chunks_fts WHERE chunk_id IN :ids").bindparams(
+        bindparam("ids", expanding=True)
+    )
+    for start in range(0, len(chunk_id_strs), 500):
+        batch = chunk_id_strs[start : start + 500]
+        await db.execute(del_fts, {"ids": batch})
+        await db.execute(
+            delete(RetrievalVector).where(RetrievalVector.chunk_id.in_(batch))
+        )
+        await db.execute(
+            delete(RetrievalChunk).where(RetrievalChunk.id.in_(batch))
+        )
 
     await db.delete(source)
     await db.commit()
+
+    # 后台重建项目检索索引（响应发送后执行，避免与删除事务并发写 SQLite）：
+    # 兜底清理其他孤儿投影，并刷新向量
+    background_tasks.add_task(_rebuild_index_after_extraction, uid, sid, str(user.id))
 
 
 @router.get("/projects/{project_id}/knowledge/sources/{source_id}/chunks", response_model=list[ProjectSourceChunkResponse])
@@ -7406,6 +8558,7 @@ async def split_chapters(
 async def start_extraction(
     project_id: str,
     source_id: str,
+    background_tasks: BackgroundTasks,
     req: dict | None = None,
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
@@ -7415,6 +8568,11 @@ async def start_extraction(
     采用 job 表 + 轮询推进模式：本接口创建/查找 job 并推进若干章，
     返回 job_id 与当前状态。前端轮询 /extract/status 查进度，
     再次调用本接口继续推进未完成章节。
+
+    抽取完成（COMPLETED）时自动触发检索索引重建（后台任务）：
+    新抽取的 character_profile / ability_profile / event_timeline /
+    world_entry 投影进 retrieval_chunks 并生成真实向量，用户无需手动
+    重建即可在资料问答中检索到新数据。
     """
     uid = _to_uuid(project_id)
     await _verify_project_owner(uid, user.id, db)
@@ -7434,6 +8592,11 @@ async def start_extraction(
         max_chapters_per_run=body.get("max_chapters_per_run", 20),
         force_reextract=body.get("force_reextract", False),
     )
+    # 抽取完成 → 响应后后台自动重建检索索引（词法 + 真实向量），问答立即可检索
+    if job["status"] == "COMPLETED":
+        background_tasks.add_task(
+            _rebuild_index_after_extraction, uid, sid, str(user.id)
+        )
     return {
         "job_id": str(job["id"]),
         "status": job["status"],
@@ -7789,10 +8952,13 @@ async def search_knowledge(
 
     from services.knowledge_source import search_project_knowledge
 
+    # intent="qa"：资料检索走 QA 策略（source_kinds 限定为资料切片），
+    # 与 ask 保持一致——写作侧数据（world_entry/character 等）不进资料检索。
     results = await search_project_knowledge(
         db, uid, req.query,
         source_type=req.source_type,
         limit=req.limit,
+        intent="qa",
     )
     return {"results": results}
 
@@ -7849,3 +9015,262 @@ async def ask_knowledge(
         web_base_url=req.web_base_url,
     )
     return result
+
+
+# ==================== 对话式创作（chat） ====================
+# 契约：方案 §12 后端契约草案（第一版：单章局部重写闭环）。
+# 全部接口幂等：重复请求返回首次响应 / 当前状态，不重复生成、不重复回滚、不重复写版本。
+
+
+@router.post("/chat/sessions", response_model=ChatSessionResponse)
+async def create_chat_session(
+    req: ChatSessionCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """创建/取会话（get-or-create）：每用户每项目至多一个。"""
+    pid = _to_uuid(req.project_id)
+    await _verify_project_owner(pid, user.id, db)
+
+    from services.conversation_service import get_or_create_session
+
+    session = await get_or_create_session(db, str(pid), user.id)
+    await db.commit()
+    return ChatSessionResponse(**{
+        "session_id": str(session.id),
+        "project_id": str(session.project_id),
+        "title": session.title,
+        "summary": session.summary,
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+    })
+
+
+@router.get("/chat/sessions/{session_id}", response_model=ChatSessionDetailResponse)
+async def get_chat_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """会话元数据 + 消息列表。"""
+    from sqlalchemy import select as _select
+
+    from models.chat_conversation import ChatMessage, ChatSession
+
+    session = await db.get(ChatSession, _to_uuid(session_id))
+    if session is None or str(session.user_id) != user.id:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    result = await db.execute(
+        _select(ChatMessage)
+        .where(ChatMessage.session_id == str(session.id))
+        .order_by(ChatMessage.created_at.asc())
+    )
+    messages = []
+    for msg in result.scalars().all():
+        messages.append({
+            "message_id": str(msg.id),
+            "role": msg.role,
+            "content": msg.content,
+            "intent": msg.intent,
+            "plan": msg.plan,
+            "task_card": msg.task_card,
+            "execution_id": str(msg.execution_id) if msg.execution_id else None,
+            "created_at": msg.created_at.isoformat() if msg.created_at else None,
+        })
+
+    return ChatSessionDetailResponse(
+        session_id=str(session.id),
+        project_id=str(session.project_id),
+        title=session.title,
+        summary=session.summary,
+        created_at=session.created_at,
+        updated_at=session.updated_at,
+        messages=messages,
+    )
+
+
+@router.post("/chat/sessions/{session_id}/messages")
+async def send_chat_message(
+    session_id: str,
+    req: ChatSendMessageRequest,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """发送用户消息 → 先回意图不执行（knowledge_query / discussion / rewrite /
+    data_operation / flow_control）。幂等：同一 idempotency_key 返回首次响应。"""
+    from models.chat_conversation import ChatSession
+    from services.conversation_service import (
+        ChatError,
+        classify_message,
+        get_or_create_session,
+    )
+
+    session = await db.get(ChatSession, _to_uuid(session_id))
+    if session is None or str(session.user_id) != user.id:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    try:
+        return await classify_message(
+            db, session, req.content,
+            req.idempotency_key or _default_idempotency_key(),
+            user_id=user.id,
+            context=req.context.model_dump(exclude_none=True) if req.context else None,
+        )
+    except ChatError as exc:
+        return _chat_error_response(exc)
+
+
+@router.post("/chat/sessions/{session_id}/messages/{message_id}/confirm")
+async def confirm_chat_message(
+    session_id: str,
+    message_id: str,
+    req: ChatConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """确认任务卡 → 执行（第一版只做 chapter_rewrite 单章局部重写）。
+    生成结果先落 generation_records status=candidate，不覆盖正式正文。幂等。"""
+    from models.chat_conversation import ChatSession
+    from services.conversation_service import ChatError, confirm_task, get_or_create_session
+
+    session = await db.get(ChatSession, _to_uuid(session_id))
+    if session is None or str(session.user_id) != user.id:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    try:
+        return await confirm_task(
+            db, session, message_id,
+            user_id=user.id,
+            confirmed=req.confirmed,
+            overrides=req.overrides,
+            idempotency_key=req.idempotency_key,
+            base_version_id=req.base_version_id,
+        )
+    except ChatError as exc:
+        return _chat_error_response(exc)
+
+
+@router.post("/chat/executions/{execution_id}/candidate/accept")
+async def accept_chat_candidate(
+    execution_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """采用候选稿：重查当前章节版本 == base_version_id，不一致 409 version_conflict；
+    一致则写正式章节版本 + change_set 落库（同一事务）。幂等。"""
+    from models.chat_conversation import ChatSession
+    from services.conversation_service import ChatError, accept_candidate, get_or_create_session
+
+    session = await _load_chat_session_for_user(db, execution_id, user.id)
+    try:
+        return await accept_candidate(db, session, execution_id)
+    except ChatError as exc:
+        return _chat_error_response(exc)
+
+
+@router.post("/chat/executions/{execution_id}/candidate/discard")
+async def discard_chat_candidate(
+    execution_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """丢弃候选稿（不写正式数据）。幂等：已丢弃返回当前状态。"""
+    from models.chat_conversation import ChatSession
+    from services.conversation_service import ChatError, discard_candidate, get_or_create_session
+
+    session = await _load_chat_session_for_user(db, execution_id, user.id)
+    try:
+        return await discard_candidate(db, session, execution_id)
+    except ChatError as exc:
+        return _chat_error_response(exc)
+
+
+@router.post("/chat/executions/{execution_id}/candidate/revise")
+async def revise_chat_candidate(
+    execution_id: str,
+    req: ChatReviseRequest,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """按 revise_instruction 重新生成候选稿。幂等。"""
+    from models.chat_conversation import ChatSession
+    from services.conversation_service import ChatError, get_or_create_session, revise_candidate
+
+    session = await _load_chat_session_for_user(db, execution_id, user.id)
+    try:
+        return await revise_candidate(
+            db, session, execution_id, req.revise_instruction,
+        )
+    except ChatError as exc:
+        return _chat_error_response(exc)
+
+
+@router.post("/chat/change-sets/{change_set_id}/revert")
+async def revert_chat_change_set(
+    change_set_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """撤销单个 change_set（对象恢复 before_ref）。幂等。"""
+    from models.chat_conversation import ChatSession
+    from services.conversation_service import ChatError, get_or_create_session, revert_change_set
+
+    session = await _load_chat_session_for_user(db, change_set_id, user.id)
+    try:
+        return await revert_change_set(db, session, change_set_id)
+    except ChatError as exc:
+        return _chat_error_response(exc)
+
+
+@router.post("/chat/change-sets/revert-session")
+async def revert_chat_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """按时间逆序回滚本轮会话全部操作。幂等。"""
+    from models.chat_conversation import ChatSession
+    from services.conversation_service import ChatError, get_or_create_session, revert_session
+
+    session = await db.get(ChatSession, _to_uuid(session_id))
+    if session is None or str(session.user_id) != user.id:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    try:
+        return await revert_session(db, session)
+    except ChatError as exc:
+        return _chat_error_response(exc)
+
+
+def _default_idempotency_key() -> str:
+    """请求未携带幂等号时生成一个随机号（无去重语义，仅满足唯一约束）。"""
+    return uuid.uuid4().hex[:32]
+
+
+
+
+def _chat_error_response(exc: "ChatError") -> "Response":
+    """把对话层业务错误转换为 JSON 响应：顶层携带 code/latest_version_id 等契约字段。"""
+    from fastapi.responses import JSONResponse
+    body = {"detail": exc.message}
+    body.update(exc.payload or {})
+    return JSONResponse(status_code=exc.status_code, content=body)
+
+
+async def _load_chat_session_for_user(
+    db: AsyncSession,
+    execution_id: str,
+    user_id: str,
+) -> "ChatSession":
+    """按 execution_id 反查所属会话并校验归属；会话不存在/不属当前用户 → 404。"""
+    from models.chat_conversation import ChatSession
+    from models.change_set import ChangeSet
+
+    execution = await db.get(ChangeSet, _to_uuid(execution_id))
+    if execution is None:
+        raise HTTPException(status_code=404, detail="执行不存在")
+    session = await db.get(ChatSession, execution.session_id)
+    if session is None or str(session.user_id) != user_id:
+        raise HTTPException(status_code=404, detail="执行不存在")
+    return session

@@ -36,6 +36,7 @@ from harness.human_interrupt_service import (
     resolve_interrupt,
     get_interrupt_by_run,
     get_interrupt_by_thread,
+    get_interrupt_by_thread_step,
     check_interrupt_resolved,
 )
 from harness.run_manager import create_run
@@ -194,6 +195,56 @@ async def test_get_interrupt_by_thread(db: AsyncSession):
     assert found is not None
     assert found.id == interrupt.id
     assert found.thread_id == "thread_unique_001"
+
+
+@pytest.mark.asyncio
+async def test_get_interrupt_by_thread_step_does_not_mix_review_stages(db: AsyncSession):
+    """同一线程的任务卡确认不能被误认为正文终审。"""
+    run = await create_run(
+        db,
+        project_id="proj_step_scope",
+        chapter_id="chap_step_scope",
+        run_type="CHAPTER_DRAFT",
+        mode="full_pipeline",
+    )
+    await db.commit()
+
+    task_card_interrupt = await create_interrupt(
+        db,
+        run=run,
+        thread_id="thread_multi_stage",
+        step_name="task_card_review",
+    )
+    await resolve_interrupt(
+        db,
+        task_card_interrupt,
+        decision=InterruptDecision.APPROVE,
+    )
+    human_review_interrupt = await create_interrupt(
+        db,
+        run=run,
+        thread_id="thread_multi_stage",
+        step_name="human_review",
+    )
+    await db.commit()
+
+    found_task_card = await get_interrupt_by_thread_step(
+        db,
+        "thread_multi_stage",
+        "task_card_review",
+    )
+    found_human_review = await get_interrupt_by_thread_step(
+        db,
+        "thread_multi_stage",
+        "human_review",
+    )
+
+    assert found_task_card is not None
+    assert found_task_card.id == task_card_interrupt.id
+    assert found_task_card.resolved is True
+    assert found_human_review is not None
+    assert found_human_review.id == human_review_interrupt.id
+    assert found_human_review.resolved is False
 
 
 @pytest.mark.asyncio

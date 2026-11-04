@@ -56,9 +56,34 @@ async function run(command, args) {
   })
 }
 
+async function verifyEmbeddedBackend() {
+  // 打包产物 FTS5 自动化验收（与 .github/workflows/build-windows-desktop.yml 的
+  // verify-fts5 步骤同源）：检索索引依赖 SQLite FTS5，PyInstaller 捆绑的运行时
+  // 必须实际执行建表 + 中文插入/检索/bm25 排序断言。desktop_server.py 的
+  // --verify-fts5 内联了与 verify_fts5.py 等价的全套断言，退出码非 0 即中止构建。
+  const exe = path.join(
+    frontendRoot,
+    'backend-dist',
+    process.platform === 'win32' ? 'ai-creative-backend.exe' : 'ai-creative-backend',
+  )
+  console.log(`[verify-fts5] ${exe} --verify-fts5`)
+  try {
+    const { stdout, stderr } = await execFileAsync(exe, ['--verify-fts5'], {
+      maxBuffer: 1024 * 1024 * 4,
+    })
+    if (stdout) process.stdout.write(stdout)
+    if (stderr) process.stderr.write(stderr)
+    console.log('[verify-fts5] PASS')
+  } catch (error) {
+    console.error('[verify-fts5] FAIL:', error.message || error)
+    throw new Error('embedded backend FTS5 verification failed')
+  }
+}
+
 async function main() {
   await run(npmCommand, ['run', 'assets:desktop'])
   await run(npmCommand, ['run', 'backend:build'])
+  await verifyEmbeddedBackend()
   await run(npmCommand, ['run', 'build:desktop'])
   await execFileAsync(electronBuilder, [targets[targetPlatform].builderFlag], {
     cwd: frontendRoot,

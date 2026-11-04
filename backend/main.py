@@ -20,12 +20,14 @@ from fastapi.staticfiles import StaticFiles
 
 from config.settings import settings
 from config.logging_config import setup_logging
-from db.session import async_session, get_engine, init_db
+import db.session as db_session
+from db.session import get_engine, init_db
 from harness.run_manager import discard_incomplete_runs
 from api.routes import router
 from api.auth import router as auth_router
 from api.llm_settings import router as llm_settings_router
 from observability.langfuse import log_langfuse_startup_status
+from agents.checkpointer import setup_checkpointer, teardown_checkpointer
 
 setup_logging(
     log_level=settings.LOG_LEVEL,
@@ -49,17 +51,26 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 AI 小说创作平台启动")
     log_langfuse_startup_status()
     app.state.database_ready = False
+    from agents.workflow import _CHECKPOINTER
     try:
         await init_db()
+        # 持久化 checkpointer setup：sqlite/postgres 建表。失败 fail-fast，
+        # 不静默降级到 memory（否则 WAITING_HUMAN 状态重启后无法恢复）。
+        await setup_checkpointer(_CHECKPOINTER)
+
         # 进程被强制关闭时，SSE 请求没有机会执行异常处理。启动后清理上次遗留的
         # CREATED/RUNNING run，防止半截任务、步骤和提示词审计记录长期留在数据库。
-        async with async_session() as db:
+        # 通过模块读取当前 session factory，确保测试注入或桌面端运行时切换
+        # engine 后不会继续使用 import 时绑定的旧连接池。
+        async with db_session.async_session() as db:
             stale_thread_ids = await discard_incomplete_runs(db)
             await db.commit()
         if stale_thread_ids:
-            from agents.workflow import _CHECKPOINTER
             for thread_id in stale_thread_ids:
-                await _CHECKPOINTER.adelete_thread(thread_id)
+                try:
+                    await _CHECKPOINTER.adelete_thread(thread_id)
+                except Exception:
+                    logger.warning("清理 stale thread checkpoint 失败 thread_id=%s", thread_id, exc_info=True)
             logger.info("已清理 %d 个异常中断的生成任务", len(stale_thread_ids))
         app.state.database_ready = True
         logger.info("✅ 数据库初始化完成")
@@ -68,6 +79,7 @@ async def lifespan(app: FastAPI):
         raise
     yield
     logger.info("🛑 AI 小说创作平台关闭")
+    await teardown_checkpointer(_CHECKPOINTER)
 
 
 app = FastAPI(

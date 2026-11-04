@@ -39,6 +39,7 @@ const STATUS_MAP: Record<string, { label: string; cls: string }> = {
   candidate: { label: '候选', cls: 'status-candidate' },
   applied: { label: '已应用', cls: 'status-applied' },
   discarded: { label: '已丢弃', cls: 'status-discarded' },
+  superseded: { label: '已被新稿替代', cls: 'status-superseded' },
 }
 
 function formatTime(iso: string): string {
@@ -327,6 +328,7 @@ watch(
   padding: 1px 6px;
   border-radius: 6px;
 }
+.status-superseded { background: #f1f3f4; color: #5f6368; }
 .status-candidate { background: #e8f0fe; color: #1a73e8; }
 .status-applied { background: #e6f4ea; color: #1e8e3e; }
 .status-discarded { background: #f1f3f4; color: #5f6368; }

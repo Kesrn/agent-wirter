@@ -44,6 +44,19 @@ ABILITY_TABLE_TERMS = (
     "基础技能", "技能表", "法系",
 )
 
+# 能力语义词（无属性匹配时的直接证据判定）：snippet 含这些词说明是
+# 能力/战斗/修炼类内容，而非纯场景描写。
+# "许昭霆雷电实力如何"时 chunk101（"尝我的雷印！！许昭霆大吼…雷弧…幽狼兽"）
+# 不含属性字面（雷电能力/实力），但明显是雷系实战——没有这组词它会被判
+# generic_context 挤出证据池；而"张小侯站在城墙望着敌军"（纯场景）不含
+# 这些词，仍正确降级 generic。
+ABILITY_CONTEXT_TERMS = (
+    "雷系", "火系", "冰系", "风系", "土系", "水系", "光系", "暗系",
+    "雷印", "雷弧", "电弧", "雷电", "闪电", "魔法", "法术", "技能",
+    "觉醒", "修为", "星子", "星轨", "星尘", "释放", "施展", "修炼",
+    "战斗", "对战", "攻击", "击败", "轰", "劈", "诅咒", "治愈", "召唤",
+)
+
 # 关系词
 RELATIONSHIP_TERMS = (
     "恋人", "情侣", "夫妻", "妻子", "丈夫", "男友", "女友",
@@ -63,8 +76,10 @@ WORLDBUILDING_TERMS = (
 # 人物名字模式：2-4个中文字符
 CHARACTER_NAME_RE = re.compile(r"[\u4e00-\u9fff]{2,4}")
 
-# 单个 source 最多贡献的 chunk 数，避免一个长资料淹没证据池
-MAX_CHUNKS_PER_SOURCE = 8
+# 单个 source 最多贡献的 chunk 数，避免一个长资料淹没证据池。
+# 8.7MB 小说原文会切出 7000+ 个 chunk，上限太小会把关键实战片段（许昭霆
+# 雷印战幽狼兽）挤出证据池——按长原文场景放宽到 16。
+MAX_CHUNKS_PER_SOURCE = 16
 
 
 # ── 就近绑定判定 ────────────────────────────────────────
@@ -204,6 +219,7 @@ class ClassifiedEvidence:
     score: float
     matched_query: str = ""
     source_type: str = ""  # project_source 的 source_type
+    chapter_no: int | None = None  # 引用章节（结构化 chunk 来自 metadata）
 
 
 @dataclass
@@ -309,11 +325,26 @@ class GroupedEvidence:
                 "evidence_type": item.evidence_type,
                 "matched_query": item.matched_query,
                 "score": item.score,
+                "chapter_no": item.chapter_no,
             })
         return citations[:15]
 
 
 # ── 证据分类 ────────────────────────────────────────────
+
+def _is_ability_table_shape(content: str, title: str) -> bool:
+    """判断片段是否真技能表（表格结构），而非正文里恰好出现阶位词。
+
+    特征：管道分隔的表格行（"11 | 冰系 | 初阶 | 冰蔓"）、表头词（序号/阶位/
+    技能名称）、或标题明确含"技能表"。博城篇原文每章都提"初阶魔法师"，
+    但那是正文不是表格——正文片段不得被误判为技能表。
+    """
+    return (
+        "|" in content
+        or "技能表" in title
+        or bool(re.search(r"(序号|阶位|技能名称|法术名称|技能描述)", content))
+    )
+
 
 def _classify_evidence(result: dict, intent: str, entities: list[str], attributes: list[str]) -> str:
     """根据内容特征和查询意图，将单条检索结果分类。
@@ -324,22 +355,52 @@ def _classify_evidence(result: dict, intent: str, entities: list[str], attribute
     content = (result.get("snippet", "") or "").lower()
     title = (result.get("title", "") or "").lower()
     source_type = result.get("source_type", "")
+    snippet_raw = result.get("snippet", "") or ""
+    clauses = _split_clauses(snippet_raw)
 
-    # 1. 否定证据
-    neg_count = sum(1 for t in NEGATION_TERMS if t in content)
-    if neg_count >= 2:
-        return "negative_evidence"
+    # 1. 否定证据：按句子语义判断，不能按整块是否含人名判断。
+    # "资料中没有说明莫凡的土系表现，无法确定他是否拥有土系"这类缺失/否定
+    # 声明句，即使含查询实体也判 negative（用户问什么、资料就没写什么）；
+    # 而"张英璐被杀死，没有反抗"这类实体句本身是正向事实的片段不判 negative
+    # （"没有反抗"只是另一子句的否定，实体句"张英璐被杀死"仍是直接证据）。
+    neg_clauses = [cl for cl in clauses if any(t in cl.lower() for t in NEGATION_TERMS)]
+    if neg_clauses:
+        focus_clauses = [
+            cl for cl in clauses
+            if (entities and any(e.lower() in cl.lower() for e in entities))
+            or (attributes and any(a.lower() in cl.lower() for a in attributes))
+        ]
+        if focus_clauses:
+            # 实体/属性所在的子句全部是否定句 → 整条证据是"缺失声明"，判 negative
+            if all(cl in neg_clauses for cl in focus_clauses):
+                return "negative_evidence"
+        elif len(neg_clauses) >= 2:
+            # 实体/属性完全没出现，纯否定/缺失背景 → 高置信否定
+            return "negative_evidence"
 
-    # 2. 世界观设定（来自设定类 source_type 或内容含设定关键词）
-    if source_type in ("reference", "note") or any(t in content for t in WORLDBUILDING_TERMS):
-        if not any(t in content for t in ABILITY_TABLE_TERMS):
+    # 设定类条目特征：reference/note 来源、标题含设定词、或内容带设定语气。
+    # 剧情正文（博城篇含"灾难/大战/事件"等词）不是设定，不得判世界观——
+    # 否则"莫凡在博城篇达到了什么水平"的正文证据全被归为 worldbuilding_entry。
+    is_setting_entry = (
+        source_type in ("reference", "note")
+        or "设定" in title or "世界观" in title or "规则" in title
+        or any(m in content for m in ("设定：", "设定是", "世界观", "本世界", "这个世界"))
+    )
+
+    # 2. 世界观设定（仅设定类条目）
+    if is_setting_entry:
+        if not _is_ability_table_shape(content, title):
             # 设定类但不是技能表
             if intent in ("worldbuilding", "plot_event"):
                 return "worldbuilding_entry"
 
-    # 3. 技能表
+    # 3. 技能表：必须有表格结构（管道分隔行 / 表头词 / 标题含"技能表"）。
+    # 博城篇原文大量出现"初阶/中阶/高阶"字样，若仅凭阶位词计数就判技能表，
+    # 会把全部正文片段打成 ability_table，真正的剧情证据进不了 prompt
+    # （"莫凡在博城篇达到了什么水平"被技能表罗列带偏、时间线答错）。
     table_hits = sum(1 for t in ABILITY_TABLE_TERMS if t in content)
-    if table_hits >= 2 or "技能表" in title:
+    is_table = _is_ability_table_shape(content, title)
+    if is_table and (table_hits >= 1 or "技能表" in title):
         return "ability_table"
 
     # 4. 关系证据
@@ -360,10 +421,8 @@ def _classify_evidence(result: dict, intent: str, entities: list[str], attribute
     if entities and attributes:
         entity_present = any(e.lower() in content for e in entities)
         attr_present = any(a.lower() in content for a in attributes)
-        if entity_present and attr_present and table_hits < 2:
+        if entity_present and attr_present and not is_table:
             known = tuple(entities)
-            snippet_raw = result.get("snippet", "") or ""
-            clauses = _split_clauses(snippet_raw)
             target = entities[0]
             others = [e for e in entities[1:] if e]
 
@@ -385,25 +444,33 @@ def _classify_evidence(result: dict, intent: str, entities: list[str], attribute
             # 同段出现但无任何就近绑定 → 普通正文，避免误归因
             return "generic_context"
 
-    # 6. 人物直接证据（人物资料类，无明确属性绑定时降级）
-    # 原：character_ability 意图 + 含人物名 → direct。
-    # 问题：无属性时把所有含人物名的片段都当直接证据，易引入与该人物无关的法系片段。
-    # 改：仅当确实无法解析出属性时保留为 generic（人物资料相关但不构成能力绑定）。
+    # 6. 人物直接证据（人物资料类，无明确属性绑定时的处理）
+    # character_profile（"张小侯家庭"、"许昭霆是谁"）：无属性时含查询主语实体的
+    # 片段即该人物的直接相关证据，避免配角片段被 ability_table/worldbuilding
+    # 兜底类型挤出 citations；
+    # character_ability 但 attributes 为空或字面未命中时：只有 snippet 含
+    # 能力语义词（法系/技能/战斗）才判直接证据——"许昭霆雷电实力如何"的
+    # 原文实战（"尝我的雷印！！…雷弧…"）不含"雷电能力/实力"字面但明显是
+    # 能力内容；"张小侯站在城墙之上望着敌军"（纯场景）仍降级 generic，
+    # 避免无关片段伪装成能力直接证据。
     if intent in ("character_profile", "character_ability") and entities:
         if any(e.lower() in content for e in entities):
-            if table_hits < 2:
-                return "generic_context"
+            if not is_table and (
+                intent == "character_profile"
+                or any(t in content for t in ABILITY_CONTEXT_TERMS)
+            ):
+                return "direct_character_evidence"
 
     # 7. 时间线 / 事件
     if intent in ("timeline", "plot_event"):
         return "timeline_event"
 
-    # 8. 世界观设定（兜底）
-    if any(t in content for t in WORLDBUILDING_TERMS):
+    # 8. 世界观设定（兜底：仅设定类条目，剧情正文不判）
+    if is_setting_entry and any(t in content for t in WORLDBUILDING_TERMS):
         return "worldbuilding_entry"
 
-    # 9. 技能表（兜底）
-    if table_hits >= 1:
+    # 9. 技能表（兜底，同样要求表格结构）
+    if is_table and table_hits >= 1:
         return "ability_table"
 
     # 10. 关系证据（兜底）
@@ -474,6 +541,14 @@ def _rerank_priority(evidence_type: str, intent: str) -> int:
 
 # ── 主入口 ────────────────────────────────────────────────
 
+def clean_query_entities(entities: list[str] | None) -> list[str]:
+    """清洗查询实体：剔除"X系"法系词（规则路径下 v2_plan.entities 可能混入），
+    避免把法系词当作"第三人人名"参与就近绑定判定；全部被剔除时保留原样。"""
+    entities = [e for e in (entities or []) if e]
+    cleaned = [e for e in entities if not e.endswith("系")]
+    return cleaned if cleaned else entities
+
+
 async def retrieve_and_classify(
     db: AsyncSession,
     project_id: str,
@@ -500,9 +575,7 @@ async def retrieve_and_classify(
     attributes = attributes or []
     # 清洗：规则路径下 v2_plan.entities 可能混入"X系"法系词，剔除后才是干净人名，
     # 避免把法系词当作"第三人人名"参与就近绑定判定。
-    clean_entities = [e for e in entities if e and not e.endswith("系")]
-    if clean_entities:
-        entities = clean_entities
+    entities = clean_query_entities(entities)
 
     # 1. 复用现有检索：include_structured=True 时先查正式结构化表，再查资料切片。
     if include_structured:
@@ -510,43 +583,18 @@ async def retrieve_and_classify(
             db, project_id, plan, limit=limit,
         )
     else:
-        from services.knowledge_source import search_project_knowledge
-        structured_results = []
-        chunk_results = await search_project_knowledge(
-            db, project_id, plan.original_question,
-            required_terms=plan.required_terms, limit=limit,
+        # 资料问答（ask）：仅检索上传资料切片（写作域隔离），但执行 Query Planner
+        # 已生成的多条子查询（plan.search_queries，最多 3 条，不额外调用 LLM），
+        # 按 chunk_id 合并去重、保留最高分/最完整 snippet，再按分数重排。
+        # 避免单次检索被某个子主题带偏，丢失铁笼、结局等关联证据。
+        structured_results, chunk_results = await search_project_knowledge_with_plan(
+            db, project_id, plan, limit=limit, include_structured=False,
         )
 
     # 2. 分类：结构化结果和 chunk 结果统一变成 ClassifiedEvidence，后续统一排序/分组。
-    all_classified: list[ClassifiedEvidence] = []
-
-    for r in structured_results:
-        ev_type = _classify_evidence(r, intent, entities, attributes)
-        all_classified.append(ClassifiedEvidence(
-            evidence_type=ev_type,
-            source_kind=r.get("source_kind", "unknown"),
-            source_id=str(r.get("source_id", "")),
-            chunk_id=str(r.get("chunk_id", "")) if r.get("chunk_id") else None,
-            title=r.get("title", ""),
-            snippet=r.get("snippet", "")[:600],
-            score=r.get("score", 0.0),
-            matched_query=r.get("matched_query", ""),
-            source_type=r.get("source_type", ""),
-        ))
-
-    for r in chunk_results:
-        ev_type = _classify_evidence(r, intent, entities, attributes)
-        all_classified.append(ClassifiedEvidence(
-            evidence_type=ev_type,
-            source_kind=r.get("source_kind", "unknown"),
-            source_id=str(r.get("source_id", "")),
-            chunk_id=str(r.get("chunk_id", "")) if r.get("chunk_id") else None,
-            title=r.get("title", ""),
-            snippet=r.get("snippet", "")[:600],
-            score=r.get("score", 0.0),
-            matched_query=r.get("matched_query", ""),
-            source_type=r.get("source_type", ""),
-        ))
+    all_classified = _classify_results(
+        structured_results, chunk_results, intent, entities, attributes,
+    )
 
     # 3. 重排：按类型优先级 + 原始分数。
     # 类型优先级保证“高可信证据”靠前，原始分数保证同类证据中更相关的靠前。
@@ -568,6 +616,56 @@ async def retrieve_and_classify(
     all_classified = capped
 
     # 4. 分组
+    grouped = _group_evidence(all_classified)
+
+    return structured_results, chunk_results, grouped
+
+
+def _classify_results(
+    structured_results: list[dict],
+    chunk_results: list[dict],
+    intent: str,
+    entities: list[str],
+    attributes: list[str],
+) -> list[ClassifiedEvidence]:
+    """把检索结果（结构化 + chunk 字典）统一分类为 ClassifiedEvidence。"""
+    all_classified: list[ClassifiedEvidence] = []
+
+    for r in structured_results:
+        ev_type = _classify_evidence(r, intent, entities, attributes)
+        all_classified.append(ClassifiedEvidence(
+            evidence_type=ev_type,
+            source_kind=r.get("source_kind", "unknown"),
+            source_id=str(r.get("source_id", "")),
+            chunk_id=str(r.get("chunk_id", "")) if r.get("chunk_id") else None,
+            title=r.get("title", ""),
+            snippet=r.get("snippet", "")[:600],
+            score=r.get("score", 0.0),
+            matched_query=r.get("matched_query", ""),
+            source_type=r.get("source_type", ""),
+            chapter_no=r.get("chapter_no"),
+        ))
+
+    for r in chunk_results:
+        ev_type = _classify_evidence(r, intent, entities, attributes)
+        all_classified.append(ClassifiedEvidence(
+            evidence_type=ev_type,
+            source_kind=r.get("source_kind", "unknown"),
+            source_id=str(r.get("source_id", "")),
+            chunk_id=str(r.get("chunk_id", "")) if r.get("chunk_id") else None,
+            title=r.get("title", ""),
+            snippet=r.get("snippet", "")[:600],
+            score=r.get("score", 0.0),
+            matched_query=r.get("matched_query", ""),
+            source_type=r.get("source_type", ""),
+            chapter_no=r.get("chapter_no"),
+        ))
+
+    return all_classified
+
+
+def _group_evidence(all_classified: list[ClassifiedEvidence]) -> GroupedEvidence:
+    """按证据类型分组。"""
     grouped = GroupedEvidence()
     for item in all_classified:
         if item.evidence_type == "direct_character_evidence":
@@ -584,5 +682,122 @@ async def retrieve_and_classify(
             grouped.negative.append(item)
         else:
             grouped.generic.append(item)
+    return grouped
 
-    return structured_results, chunk_results, grouped
+
+# ── 证据充分性判断 + 有上限的补查 ─────────────────────────
+
+@dataclass
+class SufficiencyReport:
+    """第一轮多查询检索后的证据充分性报告（规则型，不调用 LLM）。"""
+    sufficient: bool
+    missing_entities: list[str]      # 未被任何正向证据覆盖的查询实体
+    missing_attributes: list[str]    # 无对应句子覆盖的目标属性（地点/结局/实力等）
+    has_exact_hit: bool              # 是否至少一条证据中实体与核心词同句（非顺带提及）
+    positive_count: int              # 正向证据总数
+
+
+def _question_core_terms(plan) -> list[str]:
+    """补查/精确命中用的核心词：优先 planner 的属性与 required_terms，回退问题本身。
+
+    V1 规则 plan 没有 attributes 字段（只有 V2 LLM plan 有），统一用 getattr 兼容。
+    """
+    terms = [a for a in (getattr(plan, "attributes", None) or []) if a]
+    for t in (getattr(plan, "required_terms", None) or []):
+        if t and t not in terms:
+            terms.append(t)
+    return terms
+
+
+def check_evidence_sufficiency(plan, grouped: GroupedEvidence) -> SufficiencyReport:
+    """判断第一轮证据是否充分（人物覆盖 / 属性句 / 精确命中 / 顺带提及）。
+
+    全部满足才算充分：
+    1. 每个查询实体至少出现在一条正向证据的 snippet 中；
+    2. 每个目标属性（地点/结局/实力等）至少有一条证据句子覆盖；
+    3. 至少一条证据中查询主语实体与核心词同子句（排除"只是被顺带提及"）；
+    4. 存在至少一条正向证据。
+    任一不满足 → 返回 insufficient，由 ask 流程执行一次有上限的补查。
+    """
+    entities = [e for e in (plan.entities or []) if e]
+    core_terms = _question_core_terms(plan)
+    positive = grouped.positive_evidence()
+    blob = " ".join(ev.snippet.lower() for ev in positive)
+
+    missing_entities = [e for e in entities if e.lower() not in blob]
+    missing_attributes = [a for a in core_terms if a.lower() not in blob]
+
+    # 精确命中：实体与任一核心词出现在同一条证据的同一子句（就近，非全篇散落）。
+    has_exact_hit = False
+    if entities:
+        e0 = entities[0].lower()
+        for ev in positive:
+            for cl in _split_clauses(ev.snippet):
+                cll = cl.lower()
+                if e0 in cll and any(t.lower() in cll for t in core_terms):
+                    has_exact_hit = True
+                    break
+            if has_exact_hit:
+                break
+    else:
+        # 无查询实体（general 意图）：只要有正向证据即视为覆盖
+        has_exact_hit = len(positive) > 0
+
+    sufficient = (
+        len(positive) > 0
+        and not missing_entities
+        and not missing_attributes
+        and has_exact_hit
+    )
+    return SufficiencyReport(
+        sufficient=sufficient,
+        missing_entities=missing_entities,
+        missing_attributes=missing_attributes,
+        has_exact_hit=has_exact_hit,
+        positive_count=len(positive),
+    )
+
+
+def build_supplemental_queries(plan, report: SufficiencyReport) -> list[str]:
+    """规则生成补充查询（最多 2 条），用于一次有上限的补查。
+
+    不调用 LLM：基于"原问题 + 第一轮缺失维度"组合拼接，天然有界；
+    补查只执行一轮，禁止循环。
+
+    缺失实体/属性之外，**无精确命中**（has_exact_hit=False，证据全是顺带提及）
+    同样触发补查——否则"许昭霆雷电实力如何"召回的只是"雷系座位上/莫凡怎么
+    这么变态"这类提及片段，关键实战（雷印战幽狼兽）永远进不了证据池。
+    """
+    entities = [e for e in (plan.entities or []) if e]
+    core_terms = _question_core_terms(plan)
+    qs: list[str] = []
+
+    # 缺失实体 → 实体 + 核心词（属性/必含词优先）
+    for e in report.missing_entities[:2]:
+        suffix = core_terms[0] if core_terms else plan.original_question
+        qs.append(f"{e} {suffix}")
+
+    # 缺失属性 → 查询主语 + 属性
+    for a in report.missing_attributes[:1]:
+        prefix = entities[0] if entities else ""
+        qs.append(f"{prefix} {a}".strip() or a)
+
+    # 无精确命中（全是顺带提及）→ 用原问题核心词 + 实体重新组合，
+    # 换一组子查询打捞被 top-N 截掉的实战片段
+    if report.has_exact_hit is False and not qs:
+        anchor = entities[0] if entities else ""
+        terms = [t for t in core_terms if t and t != anchor]
+        if anchor and terms:
+            qs.append(f"{anchor} {terms[0]}")
+            if len(terms) > 1:
+                qs.append(f"{anchor} {terms[1]}")
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for q in qs:
+        q = " ".join(q.split())
+        if q and q not in seen:
+            seen.add(q)
+            out.append(q)
+    return out[:2]
+

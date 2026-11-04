@@ -27,6 +27,7 @@ from .project_source import ProjectSource
 from .project_source_chunk import ProjectSourceChunk
 from .project_knowledge_fact import ProjectKnowledgeFact
 from .extraction_pipeline import ProjectSourceChapter, ExtractionJob, ExtractionStaging
+from .split_generation import SplitGeneration, SourceSplitState, SplitExclusion
 from .structured_knowledge import (
     CharacterProfile, CharacterAppearance, AbilityProfile, EventTimeline, WorldRule,
     CharacterAliasCluster,
@@ -40,6 +41,8 @@ from .llm_call_log import LlmCallLog
 from .human_interrupt import HumanInterrupt
 from .writing_memory_staging import WritingMemoryStaging
 from .story_arc import StoryArc
+from .chat_conversation import ChatSession, ChatMessage, TaskConstraint
+from .change_set import ChangeSet
 
 __all__ = [
     "Base", "UUIDMixin", "TimestampMixin", "Project", "Chapter", "Document",
@@ -56,4 +59,6 @@ __all__ = [
     "AiRun", "AiRunStep", "LlmCallLog", "HumanInterrupt",
     "WritingMemoryStaging", "MemoryStagingStatus", "MemoryType",
     "StoryArc",
+    "ChatSession", "ChatMessage", "TaskConstraint",
+    "ChangeSet",
 ]

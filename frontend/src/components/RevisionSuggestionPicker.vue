@@ -16,9 +16,11 @@ const emit = defineEmits<{
 
 const isNovel = computed(() => props.projectMode !== 'article')
 const unitLabel = computed(() => isNovel.value ? '章节' : '稿件')
-const loadingHint = computed(() => isNovel.value ? 'Agent 正在审核候选稿...' : 'Agent 正在审核候选内容...')
+const emptyHint = computed(() => isNovel.value
+  ? 'AI 没有返回可用的修改建议，你可以直接填写本章的修改要求。'
+  : 'AI 没有返回可用的修改建议，你可以直接填写稿件的修改要求。')
 
-const selectedMode = ref<'suggestion' | 'custom'>('suggestion')
+const selectedMode = ref<'suggestion' | 'custom'>(props.directions.length ? 'suggestion' : 'custom')
 const selectedDirection = ref(props.directions[0] ?? '')
 const customDirection = ref('')
 const userNote = ref('')
@@ -26,8 +28,14 @@ const userNote = ref('')
 watch(
   () => props.directions,
   (directions) => {
-    if (directions.length && selectedMode.value === 'suggestion' && !directions.includes(selectedDirection.value)) {
-      selectedDirection.value = directions[0]
+    if (directions.length) {
+      if (!directions.includes(selectedDirection.value)) {
+        selectedDirection.value = directions[0]
+      }
+      if (!customDirection.value.trim()) selectedMode.value = 'suggestion'
+    } else {
+      selectedDirection.value = ''
+      selectedMode.value = 'custom'
     }
   },
 )
@@ -55,9 +63,8 @@ function handleConfirm() {
       </div>
 
       <div class="picker-body">
-        <div v-if="!directions.length" class="loading-hint">
-          <span class="spinner"></span>
-          <span>{{ loadingHint }}</span>
+        <div v-if="!directions.length" class="empty-hint" role="status">
+          <span>{{ emptyHint }}</span>
         </div>
         <div v-else class="direction-list">
           <div
@@ -72,7 +79,7 @@ function handleConfirm() {
           </div>
         </div>
 
-        <div v-if="directions.length" class="note-section">
+        <div class="note-section">
           <label class="note-label">自定义修改方向</label>
           <textarea
             v-model="customDirection"
@@ -142,21 +149,16 @@ function handleConfirm() {
   gap: var(--sp-3);
   min-height: 0;
 }
-.loading-hint {
+.empty-hint {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-4);
   font-size: var(--text-sm);
   color: var(--text-secondary);
-}
-.spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-hover);
 }
 .direction-list {
   display: flex;
@@ -260,7 +262,4 @@ function handleConfirm() {
 .btn-confirm:hover { background: var(--accent-hover); }
 .btn-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
 </style>

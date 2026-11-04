@@ -4,8 +4,11 @@
 - 切片是纯文本处理，不调用 LLM。
 - 搜索返回命中结果，不生成回答。
 - 摘要/事实/约束等 AI 字段在 Commit 3 的 summarize_project_source 中填充。
-- 检索当前走关键词匹配（ILIKE + 打分），向量检索尚未接入：
-  project_source_chunks.embedding 字段已就位但暂不填充，_mock_embedding 已停用。
+- 检索模式由 settings.RETRIEVAL_MODE 控制（阶段一启用）：
+  默认 ilike 走关键词匹配（ILIKE + 打分，行为不变）；lexical/hybrid 时，
+  search_project_knowledge 内部经 retrieval_policy(intent) 分发到
+  LexicalRetriever（见 _dispatch_lexical_or_ilike），索引缺失/异常/策略要求
+  回退时降级为 ILIKE。向量检索（embedding）尚未接入。
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String as SAString, select, or_
+from sqlalchemy import String as SAString, select, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
@@ -24,6 +27,9 @@ from models.project_source import ProjectSource
 from models.project_source_chunk import ProjectSourceChunk
 from models.knowledge_qa_session import KnowledgeQaSession
 from models.knowledge_qa_message import KnowledgeQaMessage
+
+from config.settings import settings
+from services.retrieval_policy import get_retrieval_policy
 
 logger = logging.getLogger(__name__)
 
@@ -391,6 +397,185 @@ async def chunk_and_save(
     return len(raw_chunks)
 
 
+# ── 检索模式分发（RETRIEVAL_MODE，阶段一启用） ─────────────
+# 默认 ilike：完全走 _search_project_knowledge_ilike 原逻辑；
+# lexical / hybrid：项目存在检索索引时按 retrieval_policy.get_retrieval_policy(intent)
+# 分发到 LexicalRetriever（D5：策略参数集中在 retrieval_policy 模块）。
+# RetrievalHit 的 source_kind 是检索投影侧命名（source_chunk / chapter_version ...），
+# 映射为 knowledge_source 检索结果约定（project_source_chunk / chapter ...），
+# 让下游证据分类/重排/引用无需感知索引侧命名。
+_SOURCE_KIND_TO_RESULT_KIND = {
+    "source_chunk": "project_source_chunk",
+    "chapter_version": "chapter",
+    "character_profile": "character",
+    "timeline_event": "character_event",
+    "world_entry": "world_entry",
+    # "ability_profile" 在 ILIKE 结构检索中无对应约定，保持原名透传
+}
+
+
+async def _project_has_retrieval_index(db: AsyncSession, project_id: str) -> bool:
+    """项目是否存在检索索引（retrieval_chunks 投影表有该项目数据）。
+
+    表不存在或查询失败一律视为无索引（返回 False），由调用方回退 ILIKE，
+    避免检索链路因索引未构建而中断。
+    """
+    try:
+        result = await db.execute(
+            text("SELECT 1 FROM retrieval_chunks WHERE project_id = :pid LIMIT 1"),
+            {"pid": str(project_id)},
+        )
+        return result.scalar_one_or_none() is not None
+    except Exception:
+        return False
+
+
+def _retrieval_hit_to_result(hit, query: str) -> dict:
+    """RetrievalHit → knowledge_source 检索结果格式（与 ILIKE 返回同构）。
+
+    保留 source_kind / source_id / chunk_id / title / snippet / score /
+    matched_query 字段，下游证据分类/重排/分组无需改动。
+    matched_query 语义与 ILIKE 一致：取第一个真实出现在命中片段里的查询关键词。
+    chapter_no 透传检索侧值（source_chunk 来自 FTS 表；结构化 chunk 来自
+    metadata），供前端展示"引自第几章"。
+    """
+    chunk_id = str(hit.chunk_id)
+    source_kind = _SOURCE_KIND_TO_RESULT_KIND.get(hit.source_kind, hit.source_kind)
+    matched_query = ""
+    for kw in _extract_search_keywords(query):
+        if kw and (kw in (hit.content or "") or kw in (hit.title or "")):
+            matched_query = kw
+            break
+    return {
+        "source_kind": source_kind or "project_source_chunk",
+        "source_id": str(hit.source_id),
+        "chunk_id": chunk_id,
+        "title": hit.title or "",
+        "snippet": hit.snippet or (hit.content or "")[:300],
+        "score": round(float(hit.score), 4),
+        "matched_query": matched_query,
+        "chapter_no": hit.chapter_no,
+    }
+
+
+def _merge_lexical_and_ilike(
+    lexical_results: list[dict],
+    ilike_results: list[dict],
+    *,
+    limit: int,
+) -> list[dict]:
+    """hybrid 模式合并：lexical 优先 + 按 chunk_id 去重。
+
+    lexical 结果整体在前（实体加权/词法相关度更高），ilike 仅补充未出现的
+    chunk；重复 chunk 保留 lexical 版本。总条数截断到 limit。
+    """
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for results in (lexical_results, ilike_results):
+        for r in results:
+            cid = r.get("chunk_id", "")
+            if cid and cid in seen:
+                continue
+            if cid:
+                seen.add(cid)
+            merged.append(r)
+    return merged[:limit]
+
+
+async def _dispatch_lexical_or_ilike(
+    db: AsyncSession,
+    project_id: str,
+    query: str,
+    *,
+    source_type: str | None,
+    limit: int,
+    required_terms: list[str] | None,
+    boost_terms: list[str] | None,
+    chapter_num: int | None,
+    intent: str | None,
+) -> list[dict] | None:
+    """RETRIEVAL_MODE=lexical/hybrid 时的检索分发。
+
+    返回 list 表示直接使用该结果；返回 None 表示应回退 ILIKE 原逻辑。
+    降级路径（均记日志，不阻断问答）：
+    1. 项目无检索索引（retrieval_chunks 表缺失 / 无该项目数据）；
+    2. LexicalRetriever.search 抛异常（logger.warning）；
+    3. lexical 模式无命中且策略 on_no_result == "fallback"（回退更宽泛检索，
+       logger.info）。
+
+    调用参数：source_kinds / entity_first 来自
+    retrieval_policy.get_retrieval_policy(intent)（D5 集中映射）；limit 沿用
+    调用方 limit（RetrievalPolicy 无 flat limit 字段，max_per_kind 是每类来源
+    上限，由下游证据分类层 MAX_CHUNKS_PER_SOURCE 执行）。
+    source_type 过滤是 ILIKE 独有能力（按 ProjectSource.source_type），
+    词法检索投影无法表达，此时直接回退 ILIKE。
+    """
+    mode = settings.RETRIEVAL_MODE
+    if mode not in ("lexical", "hybrid"):
+        return None
+    if source_type is not None:
+        return None
+    if not await _project_has_retrieval_index(db, project_id):
+        logger.warning(
+            "RETRIEVAL_MODE=%s 项目 %s 无检索索引（retrieval_chunks），回退 ILIKE",
+            mode, project_id,
+        )
+        return None
+    try:
+        from services.lexical_retriever import LexicalRetriever
+
+        policy = get_retrieval_policy(intent)
+        hits = await LexicalRetriever().search(
+            db, str(project_id), query,
+            source_kinds=policy.source_kinds,
+            limit=limit,
+            entity_first=policy.entity_first,
+            chapter_num=chapter_num,
+        )
+    except Exception:
+        logger.warning(
+            "lexical 检索失败（RETRIEVAL_MODE=%s），回退 ILIKE: query=%s",
+            mode, query, exc_info=True,
+        )
+        return None
+
+    lexical_results = [_retrieval_hit_to_result(h, query) for h in hits]
+    if mode == "lexical":
+        if lexical_results or get_retrieval_policy(intent).on_no_result != "fallback":
+            return lexical_results
+        logger.info("lexical 无命中且策略要求回退，转 ILIKE: query=%s", query)
+        return None
+
+    # hybrid：三通道 RRF 融合（精确实体 / 词法 / 向量，决策 D4）。
+    # 向量通道无数据时 search_hybrid 自动退化为两路（实体 + 词法），
+    # 与旧 hybrid（lexical + ILIKE 合并）相比语义检索更强；融合无命中
+    # 或异常时回退 ILIKE（与 lexical 无命中回退路径一致）。
+    # weights：实体通道 2 倍权重——查询词里的高频噪声词（如"死了吗"的
+    # "死"）会让词法/向量通道召回大量无关片段，RRF 均权时实体精确命中
+    # （含查询实体的片段）会被挤出 top-N。实体通道命中语义最确定，提权。
+    try:
+        from services.retrieval_reranker import search_hybrid
+
+        fused_hits = await search_hybrid(
+            db, str(project_id), query,
+            limit=limit,
+            source_kinds=policy.source_kinds,
+            chapter_num=chapter_num,
+            weights=[2.0, 1.0, 1.0],
+        )
+        fused_results = [_retrieval_hit_to_result(h, query) for h in fused_hits]
+        if fused_results:
+            return fused_results
+        logger.info("hybrid 三通道融合无命中，回退 ILIKE: query=%s", query)
+    except Exception:
+        logger.warning(
+            "hybrid 三通道融合失败（RETRIEVAL_MODE=%s），回退 ILIKE: query=%s",
+            mode, query, exc_info=True,
+        )
+    return None
+
+
+
 async def search_project_knowledge(
     db: AsyncSession,
     project_id: str | uuid.UUID,
@@ -407,10 +592,47 @@ async def search_project_knowledge(
 
     通过 required_terms / boost_terms 增强召回质量。
     不调用 LLM，只返回命中结果。
-    
+
     Args:
         intent: 查询意图，如 "character_by_ability" 表示反向属性检索
+
+    检索模式（settings.RETRIEVAL_MODE）：
+        - ilike（默认）：直接走下方 ILIKE 关键词检索，行为完全不变；
+        - lexical / hybrid：项目存在检索索引时按 retrieval_policy(intent)
+          分发到 LexicalRetriever（hybrid 时与 ILIKE 合并去重，lexical 优先）；
+          索引缺失 / 检索异常 / 策略要求回退时自动降级为 ILIKE。
     """
+    pid = str(project_id)
+    if settings.RETRIEVAL_MODE in ("lexical", "hybrid"):
+        dispatched = await _dispatch_lexical_or_ilike(
+            db, pid, query,
+            source_type=source_type, limit=limit,
+            required_terms=required_terms, boost_terms=boost_terms,
+            chapter_num=chapter_num, intent=intent,
+        )
+        if dispatched is not None:
+            return dispatched
+    return await _search_project_knowledge_ilike(
+        db, pid, query,
+        source_type=source_type, limit=limit,
+        required_terms=required_terms, boost_terms=boost_terms,
+        chapter_num=chapter_num, intent=intent,
+    )
+
+
+async def _search_project_knowledge_ilike(
+    db: AsyncSession,
+    project_id: str | uuid.UUID,
+    query: str,
+    *,
+    source_type: str | None = None,
+    limit: int = 10,
+    required_terms: list[str] | None = None,
+    boost_terms: list[str] | None = None,
+    chapter_num: int | None = None,
+    intent: str | None = None,
+) -> list[dict]:
+    """ILIKE 关键词检索（原 search_project_knowledge 逻辑，检索模式回退路径）。"""
     pid = str(project_id)
     keywords = _extract_search_keywords(query)
     if not keywords and not required_terms:
@@ -894,12 +1116,113 @@ async def _search_structured_knowledge(
     return results[:limit]
 
 
+def merge_chunk_results_by_id(results: list[dict]) -> list[dict]:
+    """按 chunk_id 合并多条检索结果：同一 chunk 保留分数更高或 snippet 更完整的版本。
+
+    用于多 query 并集与补查合并（第一轮 + 补查结果），保证证据池无重复。
+    """
+    by_id: dict[str, dict] = {}
+    for h in results:
+        cid = h.get("chunk_id", "")
+        if not cid:
+            continue
+        existing = by_id.get(cid)
+        if (
+            existing is None
+            or h.get("score", 0) > existing.get("score", 0)
+            or len(h.get("snippet", "")) > len(existing.get("snippet", ""))
+        ):
+            by_id[cid] = h
+    return list(by_id.values())
+
+
+async def _search_timeline_tail(
+    db: AsyncSession,
+    project_id: str,
+    entity: str,
+    limit: int = 5,
+) -> list[dict]:
+    """结局线索检索：实体在时间线末端（最后章节）的出现。
+
+    普通相关性检索按"实体+结局词"找片段，命中中早期章节；结局 = 实体在
+    资料收录的最后章节的状态。这里直接按 chunk_index 倒序取含实体的片段，
+    与 knowledge_source 同构返回（source_kind/source_id/chunk_id/title/
+    snippet/score/chapter_no），供合并去重后统一分类。
+    """
+    from sqlalchemy import text as _text
+
+    pid = str(project_id)
+    like = f"%{entity}%"
+    sql = _text(
+        """
+        SELECT id AS chunk_id, project_id, source_kind, source_id,
+               source_version_id, chunk_index, content, search_text,
+               content_hash, metadata
+        FROM retrieval_chunks
+        WHERE project_id = :pid AND source_kind = 'source_chunk'
+          AND content LIKE :like
+        ORDER BY chunk_index DESC
+        LIMIT :lim
+        """
+    )
+    try:
+        rows = (await db.execute(sql, {"pid": pid, "like": like, "lim": limit})).mappings().all()
+    except Exception:
+        logger.warning("结局时间线通道失败，跳过: entity=%s", entity, exc_info=True)
+        return []
+    if not rows:
+        return []
+
+    results: list[dict] = []
+    for r in rows:
+        content = r["content"] or ""
+        meta = r["metadata"] or "{}"
+        try:
+            meta_dict = json.loads(meta) if isinstance(meta, str) else (meta or {})
+        except Exception:
+            meta_dict = {}
+        chapter_no = None
+        for key in ("chapter_no", "chapter"):
+            val = meta_dict.get(key)
+            if val is not None:
+                try:
+                    chapter_no = int(val)
+                except (TypeError, ValueError):
+                    pass
+                break
+        results.append({
+            "source_kind": "source_chunk",
+            "source_id": str(r["source_id"] or ""),
+            "chunk_id": str(r["chunk_id"] or ""),
+            "title": meta_dict.get("title") or "",
+            "snippet": _make_qa_snippet(content, entity),
+            "score": float(limit - len(results)) * 0.01,  # 时间线靠后分数略高，仅用于排序去重
+            "matched_query": entity,
+            "chapter_no": chapter_no,
+        })
+    return results
+
+
+def _make_qa_snippet(content: str, term: str, radius: int = 90) -> str:
+    """按实体位置截取 snippet（与 lexical 检索同思路，供结局通道使用）。"""
+    content = content or ""
+    idx = content.find(term)
+    if idx < 0:
+        return content[: 2 * radius]
+    start = max(0, idx - radius)
+    end = min(len(content), idx + len(term) + radius)
+    prefix = "…" if start > 0 else ""
+    suffix = "…" if end < len(content) else ""
+    return (prefix + content[start:end] + suffix)[: 2 * radius + 4]
+
+
 async def search_project_knowledge_with_plan(
     db: AsyncSession,
     project_id: str,
     plan,
     *,
     limit: int = 12,
+    include_structured: bool = True,
 ) -> tuple[list[dict], list[dict]]:
     """多路检索：结构化 + 非结构化联合召回，去重排序。
 
@@ -907,15 +1230,23 @@ async def search_project_knowledge_with_plan(
 
     plan.search_queries 可能有多条，例如“莫凡 雷系”“莫凡 能力”，每条都跑一次
     search_project_knowledge，最后按 chunk_id 去重并保留最高分结果。
+    include_structured=False 时跳过结构化表（写作域隔离：资料问答只检索
+    source_chunk，由 _QA_POLICY.source_kinds 限定），chunk 多查询融合不受影响。
     """
     # 1. 结构化表检索：角色表、事件表、世界观等“可信结构化数据”优先召回。
-    structured = await _search_structured_knowledge(db, project_id, plan, limit=limit)
+    structured = await _search_structured_knowledge(db, project_id, plan, limit=limit) if include_structured else []
 
     # 2. 非结构化 chunk 检索（多 query 并集）。
     # 同一个 chunk 被多条 query 命中时，保留分数更高或 snippet 更完整的版本。
+    # 子查询最多执行 3 条（Query Planner 生成的 sub_queries 通常 2~3 条），
+    # 全部复用已生成的计划，不额外调用 LLM。
     chunk_results_by_id: dict[str, dict] = {}
 
-    for sq in plan.search_queries:
+    sub_queries = [q for q in (plan.search_queries or []) if q][:3]
+    if not sub_queries:
+        sub_queries = [plan.original_question]
+
+    for sq in sub_queries:
         hits = await search_project_knowledge(
             db, project_id, sq,
             required_terms=plan.required_terms,
@@ -1182,6 +1513,14 @@ QA_SYSTEM_PROMPT = """\
 - 先找资料中是否明确写了该人物与该法系的个人绑定、觉醒、修炼或表现。
 - 如果没有直接个人证据，但资料库提供了该法系的通用技能表或设定，可以回答"当前资料未明确该人物个人的该系表现；通用该系资料如下..."。
 - 不要因为缺少"人物+法系"同句证据就忽略通用法系资料。
+当用户询问"某人的结局 / 最终命运 / 到小说结尾"时：
+- 优先找该人物在时间线末尾（资料收录的最后章节）的出现与状态，那才是结局线索。
+- 区分"资料最后写到的状态"与"小说正式结局"：资料未收录小说结尾时，如实说明资料覆盖范围（如"资料收录到第 X 章，该章之后无此人记录"）。
+简洁性要求（必须遵守）：
+- 第一句话直接给结论，之后最多列 2-3 条关键证据（分行列表，每条一行）。
+- 同一结论只表述一次：不要在开头说一遍、结尾再重复一遍。
+- 不要逐条复述引用片段；证据只提炼要点，引用靠 citations 承载。
+- "未找到 / 无法确认"只说一次，紧接着给出资料实际覆盖的内容。
 回答尽量用简洁 Markdown：短结论在前，后面用分行列表；不要把 1、2、3 全挤在同一段里。
 引用来源只能来自提供的资料片段、结构化数据或联网查询结果，不能编造新的资料标题。
 联网查询结果属于外部参考，回答时应和项目资料区分；不要把网页信息自动写成小说内既定设定。
@@ -1218,6 +1557,54 @@ def _polish_qa_answer_format(answer: str) -> str:
     text = re.sub(r"(:|：)\n(1\.\s+)", r"\1\n\n\2", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+async def _generate_qa_answer_with_retry(provider, user_prompt: str) -> tuple[str, list, bool]:
+    """生成 QA 回答；空输出 / JSON 格式错误 / 临时异常都**真正重试一次**。
+
+    返回 (answer, citations, ok)：
+    - 成功：ok=True，answer 为最终回答文本；
+    - 两次尝试都空输出或格式错误：ok=False、answer=""（调用方负责给兜底文案）；
+    - 两次尝试都抛异常：最后一次异常向上抛（调用方按现有 500 兜底处理）。
+    成功结果永不返回空字符串，调用方保存消息前还有一道 strip 防线。
+    """
+    retry_hint = (
+        "你的上一条回答为空或格式错误。请重新输出，必须直接以 JSON 格式回答："
+        '{"answer": "你的完整回答", "citations": []}。'
+        "基于给定证据给出明确回答；证据不足时明确说明未知，不要输出空内容。"
+    )
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        prompt = user_prompt if attempt == 0 else f"{retry_hint}\n\n{user_prompt}"
+        try:
+            result_text = await provider.generate(
+                QA_SYSTEM_PROMPT, prompt, temperature=0.3, max_tokens=4000,
+            )
+        except Exception as exc:  # 网络 / 临时 500 等
+            last_exc = exc
+            if attempt == 0:
+                logger.warning("LLM 调用失败（第 1 次），重试一次: %s", exc)
+                continue
+            raise last_exc
+
+        if not (result_text or "").strip():
+            if attempt == 0:
+                logger.warning("LLM 输出为空（第 1 次），带格式提示重试")
+                continue
+            return "", [], False
+
+        parsed = _safe_parse_json(result_text)
+        answer = parsed.get("answer")
+        if isinstance(answer, str) and answer.strip():
+            return _polish_qa_answer_format(answer), list(parsed.get("citations", [])), True
+        if attempt == 0:
+            logger.warning("LLM 输出缺少 answer 字段（第 1 次），带格式提示重试")
+            continue
+        # 第二次仍非 JSON：降级用原始文本（非空即算成功，避免丢信息）
+        if (result_text or "").strip():
+            return _polish_qa_answer_format(result_text), [], True
+        return "", [], False
+    return "", [], False
 
 
 def _clean_table_cell(value: str) -> str:
@@ -1678,6 +2065,10 @@ async def ask_knowledge_question(
 
     # -- 3. 证据检索（分类 + 重排 + 分组）--
     # retrieve_and_classify 会把证据分为人物直接证据、技能表、世界观、时间线等类型。
+    # include_structured 固定 False：资料问答只检索上传资料（source_chunk，
+    # 由 _QA_POLICY.source_kinds 限定）；characters / world_entries 等写作侧
+    # 结构化表不进入资料问答证据（资料域与写作域隔离）。规则事实索引
+    # （_try_answer_from_facts，由资料生成的 fact）走独立通道，不受此影响。
     from services.knowledge_retrieval import retrieve_and_classify
 
     structured_results, chunk_results, evidence_grouped = await retrieve_and_classify(
@@ -1685,11 +2076,70 @@ async def ask_knowledge_question(
         intent=v2_plan.intent,
         entities=v2_plan.entities,
         attributes=v2_plan.attributes,
-        include_structured=include_structured,
-        limit=10,
+        include_structured=False,
+        limit=96,
     )
 
-    # -- 3.5 可选联网检索 --
+    # -- 3.4 证据充分性判断 + 最多一次补查（禁止循环）--
+    # 第一轮多查询融合后，若证据不足（查询人物未覆盖 / 目标属性无对应句子 /
+    # 无实体精确命中 / 全部只是顺带提及），按"原问题 + 第一轮缺失维度"规则生成
+    # 补充查询（最多 2 条，不调用 LLM），补查一轮后按 chunk_id 合并去重、
+    # 重新分类分组。无论结果如何都不再补第二轮，避免检索死循环。
+    from services.knowledge_retrieval import (
+        check_evidence_sufficiency,
+        build_supplemental_queries,
+        _classify_results,
+        _group_evidence,
+        clean_query_entities,
+    )
+
+    sufficiency = check_evidence_sufficiency(plan, evidence_grouped)
+    if not sufficiency.sufficient:
+        supplemental = build_supplemental_queries(plan, sufficiency)
+        if supplemental:
+            extra_hits: list[dict] = []
+            for sq in supplemental:
+                extra_hits.extend(
+                    await search_project_knowledge(
+                        db, pid, sq,
+                        limit=24,
+                        intent=v2_plan.intent,
+                    )
+                )
+            if extra_hits:
+                merged = merge_chunk_results_by_id(chunk_results + extra_hits)
+                merged.sort(key=lambda r: r.get("score", 0), reverse=True)
+                chunk_results = merged
+                evidence_grouped = _group_evidence(_classify_results(
+                    [], merged, v2_plan.intent,
+                    clean_query_entities(v2_plan.entities),
+                    v2_plan.attributes,
+                ))
+
+    # -- 3.5 结局时间线通道（结局/最终类问题）--
+    # "穆白的结局是什么"这类问题，结局线索 = 人物在时间线**末端**（最后章节）
+    # 的出现与状态，而普通相关性检索只找"穆白+结局词"的片段（命中中早期章节
+    # 的顺带提及）。这里按 chunk_index 倒序取实体最后出现的片段，直接打捞
+    # 结尾章节内容（如第3195章"堕落之翼的穆白"），再合并去重重新分类。
+    _ENDING_MARKERS = ("结局", "最终", "结尾", "最后", "终局", "下场", "归宿")
+    asking_ending = (
+        any(m in question for m in _ENDING_MARKERS)
+        or any(m in (v2_plan.attributes or []) for m in _ENDING_MARKERS)
+    )
+    tail_entities = clean_query_entities(v2_plan.entities)
+    if asking_ending and tail_entities:
+        tail_hits = await _search_timeline_tail(db, pid, tail_entities[0], limit=5)
+        if tail_hits:
+            merged = merge_chunk_results_by_id(chunk_results + tail_hits)
+            merged.sort(key=lambda r: r.get("score", 0), reverse=True)
+            chunk_results = merged
+            evidence_grouped = _group_evidence(_classify_results(
+                [], merged, v2_plan.intent,
+                tail_entities,
+                v2_plan.attributes,
+            ))
+
+    # -- 3.6 可选联网检索 --
     # 默认关闭。创作资料问答一般应以用户资料库为准，联网结果只能作为补充材料。
     web_results: list[dict] = []
     if include_web:
@@ -1787,7 +2237,21 @@ async def ask_knowledge_question(
 
     # -- 7. LLM 调用（facts 命中时短路，不调 LLM）--
     provider = None
-    if fact_answer is not None:
+    # 程度/细节类问题不短路：fact 只证明"是什么系"，程度需要 LLM 从原文
+    # 归纳（向量检索召回的原文此时才有机会进上下文）。纯系别问题（"X 是
+    # 什么系"）保持短路，快且省 token。
+    _FACT_SHORTCUT_SKIP_WORDS = (
+        "程度", "多强", "实力", "详情", "怎么样", "如何", "为什么",
+        "结局", "后来", "表现", "变化", "发展",
+        "水平", "级别", "层次", "阶段", "境界", "几级", "几阶",
+    )
+    detail_question = any(w in question for w in _FACT_SHORTCUT_SKIP_WORDS)
+    # 短追问（"周敏呢"）不短路：这类省略句承接上文语境（如前面在聊结局），
+    # fact 索引只看当前文本，会把"周敏呢"窄化成"周敏是什么系"答非所问；
+    # 必须走 LLM + 对话历史才能还原真实意图。只认"呢"结尾的省略追问，
+    # 避免误伤"谁是风系"这类 4 字完整问句。
+    followup_question = question.strip().endswith("呢")
+    if fact_answer is not None and not detail_question and not followup_question:
         # 规则事实索引命中：直接用确定性答案，citations 只含 fact evidence
         answer, all_citations = fact_answer
     else:
@@ -1798,24 +2262,37 @@ async def ask_knowledge_question(
             from api.llm_deps import get_user_llm_config
             llm_config_dict = await get_user_llm_config(str(user_id), db)
             provider = get_llm_provider(llm_config_dict)
-            if not compiled_answer:
-                result_text = await provider.generate(QA_SYSTEM_PROMPT, user_prompt, temperature=0.3, max_tokens=2000)
-                parsed = _safe_parse_json(result_text)
-                answer = _polish_qa_answer_format(parsed.get("answer", result_text))
-                llm_citations = parsed.get("citations", [])
+            # compiled（本地编译答案）只覆盖"法系归属/技能罗列"类问题；
+            # 程度/水平类问题（detail_question，如"博城篇达到了什么水平"）
+            # 编译答案无法回答"到了什么程度"，必须由 LLM 从原文证据归纳——
+            # 否则"莫凡在博城篇魔法达到了什么水平"会答成"莫凡有哪些系"。
+            # LLM 彻底失败（空输出两次）时回退 compiled，避免丢已有信息。
+            if not compiled_answer or detail_question:
+                # 空输出 / JSON 格式错误 / 临时异常都会在内部真正重试一次
+                answer, llm_citations, _ok = await _generate_qa_answer_with_retry(
+                    provider, user_prompt,
+                )
+                if not _ok and compiled_answer:
+                    answer = compiled_answer
         except LLMConfigError as exc:
             logger.warning("模型配置不可用: %s", exc)
             if not answer:
                 answer = f"模型配置不可用: {exc}"
         except Exception:
-            logger.exception("LLM 调用失败")
+            logger.exception("LLM 调用失败（重试后仍失败）")
             if not answer:
                 answer = "抱歉，AI 模型暂时无法响应，请稍后重试。"
+        # 永不保存空消息：重试后仍为空时给兜底文案（下一条语句保证 answer 非空才落库）
+        if not (answer or "").strip():
+            answer = "资料中没有找到足够的信息来回答这个问题，请尝试换个问法或补充相关资料。"
 
         # -- 8. citations：用分组证据顺序（含 evidence_type），否定证据不返回引用
         all_citations = evidence_grouped.to_citations() + web_results
 
     # -- 9. 保存消息 --
+    # 永不保存空消息：所有路径（fact 短路 / compiled / LLM / 兜底）汇合后的最后防线
+    if not (answer or "").strip():
+        answer = "资料中没有找到足够的信息来回答这个问题，请尝试换个问法或补充相关资料。"
     if session_obj.message_count == 0 and session_obj.title == "资料问答":
         session_obj.title = _make_qa_session_title(question)
     user_msg = KnowledgeQaMessage(session_id=str(session_obj.id), project_id=pid, role="user", content=question)

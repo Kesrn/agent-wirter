@@ -17,7 +17,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
@@ -90,6 +90,7 @@ class WorldEntryInfo:
     category: str
     scope_type: str
     content: str
+    chapter_sequence_number: int | None = None
 
 
 @dataclass
@@ -273,6 +274,7 @@ class ChapterContext:
                 item_id=entry.id,
                 source_type="world_entry",
                 is_selected=entry.id in selected["world_entries"],
+                chapter_sequence_number=entry.chapter_sequence_number,
             )
             for entry in self.world_entries
         ]
@@ -397,6 +399,7 @@ class ChapterContext:
                     "title": w.title,
                     "category": w.category,
                     "scope_type": w.scope_type,
+                    "chapter_sequence_number": w.chapter_sequence_number,
                     "content": w.content,
                 }
                 for w in self.world_entries
@@ -472,6 +475,7 @@ async def build_chapter_context(
     selected_hidden_thread_ids: list[str] | None = None,
     include_knowledge_sources: bool = False,
     include_previous_summary: bool = False,
+    strict_material_selection: bool = False,
 ) -> ChapterContext:
     """为指定章节聚合上下文。
 
@@ -553,7 +557,7 @@ async def build_chapter_context(
 
     # ── 相关设定 ──
     # 全局设定和章节级设定一起进入上下文，保证本章不违反世界观规则。
-    await _load_world_entries(db, pid, ctx, stats)
+    await _load_world_entries(db, pid, seq, ctx, stats)
 
     # ── 前文 ──
     # full_pipeline 默认只保留“上章结尾锚点”（见下方 _load_previous_chapter_ending）。
@@ -574,6 +578,23 @@ async def build_chapter_context(
         stats,
         current_seq=seq,
     )
+
+    if strict_material_selection:
+        selected_character_set = {str(value) for value in (selected_character_ids or [])}
+        selected_world_set = {str(value) for value in (selected_world_entry_ids or [])}
+        selected_hidden_set = {str(value) for value in (selected_hidden_thread_ids or [])}
+
+        ctx.characters = [value for value in ctx.characters if value.id in selected_character_set]
+        ctx.character_events = [value for value in ctx.character_events if value.character_id in selected_character_set]
+        ctx.world_entries = [value for value in ctx.world_entries if value.id in selected_world_set]
+        ctx.hidden_threads = [value for value in ctx.hidden_threads if value.id in selected_hidden_set]
+        # 长线结构目前没有出现在素材选择器中；严格模式不隐式注入，避免任务卡
+        # 展示用户未确认的创作资料。当前章节、大纲、上章结尾仍是系统必需项。
+        ctx.story_arcs = []
+        stats.characters = len(ctx.characters)
+        stats.events = len(ctx.character_events)
+        stats.world_entries = len(ctx.world_entries)
+        stats.hidden_threads = len(ctx.hidden_threads)
 
     # ── 接入 project_sources（同人规则 + 检索资料）：默认关闭，避免资料库污染本章 prompt ──
     # 普通知识库资料量可能很大、来源复杂，默认不注入可以减少无关材料影响写作。
@@ -841,16 +862,21 @@ async def _load_hidden_threads(
 
 
 async def _load_world_entries(
-    db: AsyncSession, project_id: str, ctx: ChapterContext, stats: ContextStats
+    db: AsyncSession, project_id: str, chapter_sequence_number: int, ctx: ChapterContext, stats: ContextStats
 ) -> None:
     from models.world_entry import WorldEntry
 
-    # 全局设定 + 章节设定（scope_type == "chapter" 兜底：无 chapter_sequence_number 字段时全量加载）
+    # 自动上下文只加载全局设定和明确归属于当前章节的章节设定。旧数据中未归属
+    # 章节的条目不会隐式注入，但仍可在素材选择器中由用户显式勾选。
     entries = (
         await db.execute(
             select(WorldEntry).where(
                 WorldEntry.project_id == project_id,
-                WorldEntry.scope_type.in_(["global", "chapter"]),
+                or_(
+                    WorldEntry.scope_type == "global",
+                    (WorldEntry.scope_type == "chapter")
+                    & (WorldEntry.chapter_sequence_number == chapter_sequence_number),
+                ),
             )
         )
     ).scalars().all()
@@ -863,6 +889,7 @@ async def _load_world_entries(
                 category=we.category,
                 scope_type=we.scope_type,
                 content=we.content or "",
+                chapter_sequence_number=we.chapter_sequence_number,
             )
         )
     stats.world_entries = len(ctx.world_entries)
@@ -1168,6 +1195,7 @@ async def _load_selected(
                         category=we.category,
                         scope_type=we.scope_type,
                         content=we.content or "",
+                        chapter_sequence_number=we.chapter_sequence_number,
                     )
                 )
                 existing_we_ids.add(str(we.id))

@@ -488,7 +488,7 @@ onMounted(async () => {
         <div v-if="chapterEvents.length" class="event-list">
           <div v-for="event in chapterEvents" :key="event.id" class="event-card">
             <div class="event-card-head">
-              <span class="event-char-name">{{ characterStore.characters.find(c => c.id === event.character_id)?.name ?? '未知角色' }}</span>
+              <span class="event-char-name">{{ characterStore.characters.find(c => c.id === event.character_id)?.name ?? '已删除角色' }}</span>
               <span class="badge badge-appearance" :class="event.appearance_type">{{ appearanceLabel(event.appearance_type) }}</span>
               <span class="event-importance">重要度 {{ event.importance }}/5</span>
               <span class="event-actions-btn">

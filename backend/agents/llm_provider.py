@@ -20,6 +20,7 @@ import re
 
 from config.settings import settings
 from observability.langfuse import current_langfuse_metadata, get_langfuse_async_openai_class
+from utils.crypto import decrypt_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +156,9 @@ class MockProvider(LLMProvider):
 
         # ── Expert System v2 节点响应 ──
         # ChapterTaskCard (architect)
-        if "chaptertaskcard" in prompt_lower:
+        # 只在 architect 明确要求输出任务卡 JSON 时返回结构化数据。Writer 的
+        # skill/context 也可能提到 ChapterTaskCard，不能因此把任务卡 JSON 当正文。
+        if "请输出 chaptertaskcard json" in user_prompt.lower():
             return json.dumps({
                 "chapter_number": 1,
                 "chapter_title": "mock章节标题",
@@ -174,7 +177,7 @@ class MockProvider(LLMProvider):
             }, ensure_ascii=False)
 
         # StructuralCritique (critic)
-        if "structuralcritique" in prompt_lower:
+        if "请诊断并输出 structuralcritique json" in user_prompt.lower():
             return json.dumps({
                 "summary": "mock 审稿意见：整体结构合理",
                 "p0": [],
@@ -254,8 +257,8 @@ class MockProvider(LLMProvider):
         if "审稿指令" in user_prompt and "修订稿" in prompt_lower:
             draft_text = self._extract_marked_text(user_prompt, ("## 待修改正文",))
             if draft_text:
-                return self._mock_polish(draft_text)
-            return "（mock 修订稿）打磨后的正文内容更加流畅。"
+                return self._mock_novel_prose(user_prompt, edited=True)
+            return self._mock_novel_prose(user_prompt, edited=True)
 
         original_article = self._extract_marked_text(user_prompt, ("## 原文案/文章", "## 当前稿件"))
         if is_article_request and original_article and ("改写" in prompt_lower or "优化" in prompt_lower or "编辑" in prompt_lower):
@@ -275,12 +278,34 @@ class MockProvider(LLMProvider):
             return self._mock_article(user_prompt)
         else:
             # Writer: include context references
-            outline_note = ""
-            if "大纲" in user_prompt:
-                ch_matches = re.findall(r"### 第(\d+)章 (.+)", user_prompt)
-                if ch_matches:
-                    outline_note = f"，基于第{ch_matches[0][0]}章「{ch_matches[0][1]}」大纲"
-            return f"（生成内容）{outline_note}{char_note}\n\n夜色渐深，城市的灯火在远处明灭不定。她站在窗前，手指轻轻拂过冰凉的玻璃，心中涌起一股难以名状的情绪。\n\n\"你来了。\"她的声音很轻，像是怕惊扰了什么。\n\n身后的脚步声停顿了一瞬，然后继续靠近。\"我别无选择。\""
+            return self._mock_novel_prose(user_prompt, char_note=char_note)
+
+    def _mock_novel_prose(self, user_prompt: str, *, edited: bool = False, char_note: str = "") -> str:
+        """生成能通过确定性章节质量门的稳定 Mock 正文。"""
+        target_match = re.search(r"目标字数[：:\s]*约?\s*(\d+)", user_prompt)
+        target_chars = int(target_match.group(1)) if target_match else 480
+        target_chars = max(120, min(target_chars, 6000))
+        if edited:
+            if "雨声敲在窗沿" in user_prompt:
+                seed = (
+                    "清晨的雾从河面缓慢升起，她沿着空旷的石阶向上走，终于看见等在钟楼下的人。"
+                    "昨夜没有说完的话被重新摆到两人之间，这一次谁都没有回避。"
+                    "钟声响起时，她先一步打破沉默，把真正的条件和最后的底线逐一说明。"
+                )
+            else:
+                seed = (
+                    "雨声敲在窗沿上，她没有立即回头，而是先把掌心那张折皱的纸压平。"
+                    "走廊里的脚步由远及近，每一步都让先前的犹豫变得更清晰。"
+                    "当门锁轻响，她终于抬起眼睛，平静地说出了已经准备许久的决定。"
+                )
+        else:
+            seed = (
+                f"夜色渐深，城市的灯火在远处明灭不定{char_note}。"
+                "她站在窗前，手指轻轻拂过冰凉的玻璃，心中那股难以名状的情绪逐渐沉静。"
+                "身后的脚步声停顿了一瞬，然后继续靠近，她知道这场迟来的谈话已经无法回避。"
+            )
+        repeated = (seed * ((target_chars // max(len(seed), 1)) + 2))[: max(target_chars - 1, 1)]
+        return repeated.rstrip("，；：、") + "。"
 
     def _extract_original_chapter(self, user_prompt: str) -> str:
         return self._extract_marked_text(user_prompt, ("## 原文章节", "## 待润色文本"))
@@ -655,6 +680,13 @@ def get_llm_provider(config: dict | None = None) -> LLMProvider:
             logger.warning("检测到 mock provider 配置，但 mock 已被禁用，将抛出错误")
             raise LLMConfigError("Mock provider 已被禁用，请配置真实的 LLM provider (OpenAI/DeepSeek等)")
         api_key = (config.get("api_key") or "").strip()
+        if not api_key and config.get("encrypted_api_key"):
+            try:
+                api_key = decrypt_api_key(str(config["encrypted_api_key"])).strip()
+            except Exception as exc:
+                raise LLMConfigError(
+                    "当前模型配置的 API Key 无法解密，请在设置里重新保存后再试"
+                ) from exc
         if not api_key:
             raise LLMConfigError("当前模型配置缺少 API Key，请在设置里重新保存 API Key 后再试")
         else:

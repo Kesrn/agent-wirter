@@ -358,6 +358,7 @@ export const useChapterStore = defineStore('chapter', () => {
     const updated = apiChapterToChapter(await api.updateChapter(projectId, chapterNum, { title }), projectId)
     const idx = chapters.value.findIndex(c => c.chapter_num === chapterNum && c.project_id === projectId)
     if (idx !== -1) chapters.value[idx] = updated
+    useOutlineStore().syncTitleForChapter(projectId, chapterNum, title)
   }
 
   async function deleteChapterRemote(projectId: string, chapterNum: number) {
@@ -492,6 +493,7 @@ export const useDocumentStore = defineStore('document', () => {
 
 export interface ExpertProjectState {
   isGenerating: boolean
+  generationError: string
   streamOutput: string
   initialDraft: string
   finalDraft: string
@@ -504,6 +506,7 @@ export interface ExpertProjectState {
 
 const EMPTY_EXPERT_STATE: ExpertProjectState = {
   isGenerating: false,
+  generationError: '',
   streamOutput: '',
   initialDraft: '',
   finalDraft: '',
@@ -547,6 +550,7 @@ export const useExpertStore = defineStore('expert', () => {
   function startGenerating(pid: string) {
     const s = ensureState(pid)
     s.isGenerating = true
+    s.generationError = ''
     s.streamOutput = ''
     s.initialDraft = ''
     s.finalDraft = ''
@@ -571,6 +575,10 @@ export const useExpertStore = defineStore('expert', () => {
 
   function setGenerating(pid: string, isGenerating: boolean) {
     ensureState(pid).isGenerating = isGenerating
+  }
+
+  function setGenerationError(pid: string, message: string) {
+    ensureState(pid).generationError = message
   }
 
   function appendOutput(pid: string, text: string) {
@@ -678,7 +686,7 @@ export const useExpertStore = defineStore('expert', () => {
   return {
     experts, activeExpertId, activeExpert, states, loading, loadError,
     getExpertName, setActive,
-    getState, startGenerating, stopGenerating, setGenerating, appendOutput,
+    getState, startGenerating, stopGenerating, setGenerating, setGenerationError, appendOutput,
     appendDraft, appendInitialDraft, setDraft, setInitialDraft,
     setWorkflowSteps, updateStepStatus, clearProjectState,
       setExpertSkill, setExpertSkillPack, setRevisionInfo,
@@ -777,6 +785,7 @@ function apiWorldEntryToWorldEntry(awe: ApiWorldEntry): WorldEntry {
     title: awe.title,
     category: awe.category,
     scope_type: awe.scope_type === 'chapter' ? 'chapter' : 'global',
+    chapter_sequence_number: awe.chapter_sequence_number ?? null,
     content: awe.content,
     rules: awe.rules,
     confidence: (awe.confidence === 'low' || awe.confidence === 'medium' || awe.confidence === 'high')
@@ -1084,6 +1093,13 @@ export const useOutlineStore = defineStore('outline', () => {
     }
   }
 
+  function syncTitleForChapter(projectId: string, chapterNum: number, title: string) {
+    const item = outlines.value.find(
+      outline => outline.project_id === projectId && outline.chapter_num === chapterNum,
+    )
+    if (item) item.title = title
+  }
+
   async function deleteOutlineItem(projectId: string, outlineId: string) {
     try {
       await api.deleteOutline(projectId, outlineId)
@@ -1095,7 +1111,7 @@ export const useOutlineStore = defineStore('outline', () => {
     }
   }
 
-  return { outlines, loading, loadError, entriesForProject, loadOutlines, createOutlineItem, updateOutlineItem, deleteOutlineItem }
+  return { outlines, loading, loadError, entriesForProject, loadOutlines, createOutlineItem, updateOutlineItem, syncTitleForChapter, deleteOutlineItem }
 })
 
 // ─── HiddenThread store ───
@@ -1669,3 +1685,4 @@ export function friendlyError(e: unknown, fallback: string): string {
 }
 
 export { useLLMSettingsStore } from './llmSettings'
+export { useConversationStore } from './useConversationStore'

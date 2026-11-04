@@ -146,6 +146,38 @@ describe('useDocumentStore', () => {
     store.setCurrentDocument(99)
     await expect(store.saveCurrentDocument('project-1')).rejects.toThrow('请先选择一个稿件')
   })
+
+  it('replaces the document with the backend response after save', async () => {
+    vi.spyOn(api, 'updateDocument').mockResolvedValue(
+      apiDocument({ id: 'doc-1', title: '后端标题', content: '后端正文', position: 2 }),
+    )
+
+    const store = useDocumentStore()
+    store.documents.push({
+      id: 'doc-1',
+      project_id: 'project-1',
+      position: 2,
+      title: '旧标题',
+      draft: '保存前正文',
+      final_text: '',
+      status: 'draft',
+      word_count: 5,
+      created_at: '2026-05-24T00:00:00Z',
+      updated_at: '2026-05-24T00:00:00Z',
+    })
+    store.setCurrentDocument(2)
+    const before = store.currentDocumentForProject('project-1')
+
+    await store.saveCurrentDocument('project-1')
+
+    // 保存后的正文与标题必须来自后端返回结果
+    const after = store.currentDocumentForProject('project-1')
+    expect(after?.id).toBe('doc-1')
+    expect(after?.title).toBe('后端标题')
+    expect(after?.draft).toBe('后端正文')
+    // 对象被整体替换（id 不变、引用变化），触发编辑器 watch(currentUnit) 回写路径
+    expect(after).not.toBe(before)
+  })
 })
 
 describe('useGenerationHistoryStore', () => {

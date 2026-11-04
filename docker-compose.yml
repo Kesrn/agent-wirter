@@ -18,5 +18,25 @@ services:
       timeout: 5s
       retries: 5
 
+  # 检索索引 outbox Worker（PG 异步索引构建消费端，P0 闭环）。
+  # 挂载 backend 目录 + 启动时安装 requirements：不引入独立镜像；
+  # 生产可改为构建应用镜像后与此服务共用（同镜像、command 指向入口脚本）。
+  # SQLite 桌面端不启动本服务（finalize 由 request_chapter_index 同步构建）。
+  index-worker:
+    image: python:3.12-slim
+    container_name: ai_creative_index_worker
+    working_dir: /app
+    command: >
+      sh -c "pip install --no-cache-dir -r /app/requirements.txt &&
+             exec python /app/scripts/run_index_worker.py --interval 5 --batch 10"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/ai_creative
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pgdata:

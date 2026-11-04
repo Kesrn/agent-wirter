@@ -8,9 +8,45 @@
 """
 
 import logging
+import re
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+
+_SK_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9._-]{8,}")
+_BEARER_TOKEN_RE = re.compile(
+    r"(?i)(authorization\s*[:=]\s*bearer\s+)[A-Za-z0-9._~+/=-]+"
+)
+_QUOTED_SECRET_RE = re.compile(
+    r"""(?ix)
+    (["']?(?:api[_-]?key|access[_-]?token)["']?\s*[:=]\s*)
+    (["'])
+    .*?
+    \2
+    """
+)
+
+
+def redact_sensitive_text(value: object) -> str:
+    """对日志文本中的常见 API Key/Authorization 值做兜底脱敏。"""
+    text = str(value)
+    text = _SK_TOKEN_RE.sub("[REDACTED]", text)
+    text = _BEARER_TOKEN_RE.sub(r"\1[REDACTED]", text)
+    text = _QUOTED_SECRET_RE.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]{match.group(2)}",
+        text,
+    )
+    return text
+
+
+class SensitiveDataFilter(logging.Filter):
+    """在任何 handler 输出前，把格式化后的消息统一脱敏。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = redact_sensitive_text(record.getMessage())
+        record.args = ()
+        return True
 
 
 def setup_logging(log_level: str = "INFO", log_file: str = "", max_bytes: int = 10 * 1024 * 1024, backup_count: int = 5, sql_echo: bool = False) -> None:
@@ -52,8 +88,17 @@ def setup_logging(log_level: str = "INFO", log_file: str = "", max_bytes: int = 
         )
         root_logger.addHandler(file_handler)
 
+    for handler in root_logger.handlers:
+        if not any(isinstance(item, SensitiveDataFilter) for item in handler.filters):
+            handler.addFilter(SensitiveDataFilter())
+
     # 抑制第三方库噪音
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+    # openai DEBUG 会打印完整请求，aiosqlite DEBUG 会打印 checkpoint 二进制参数；
+    # 两者都可能间接包含模型配置，必须无条件压到 WARNING。
+    logging.getLogger("openai").setLevel(logging.WARNING)
+    logging.getLogger("openai._base_client").setLevel(logging.WARNING)
+    logging.getLogger("aiosqlite").setLevel(logging.WARNING)
     # sqlalchemy.engine 随 SQL_ECHO：echo 开启时设 INFO 才能看到 SQL，否则压到 WARNING
     logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO if sql_echo else logging.WARNING)

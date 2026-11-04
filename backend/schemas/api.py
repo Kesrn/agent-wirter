@@ -304,6 +304,7 @@ class WorldEntryCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     category: str = Field(default="general", max_length=50)
     scope_type: str = Field(default="global", pattern=r"^(global|chapter)$")
+    chapter_sequence_number: int | None = Field(default=None, ge=1)
     content: str = Field(default="", max_length=10000)
     rules: dict | None = None
     confidence: str = Field(default="medium", pattern=r"^(low|medium|high)$")
@@ -313,6 +314,7 @@ class WorldEntryUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     category: str | None = Field(default=None, max_length=50)
     scope_type: str | None = Field(default=None, pattern=r"^(global|chapter)$")
+    chapter_sequence_number: int | None = Field(default=None, ge=1)
     content: str | None = Field(default=None, max_length=10000)
     rules: dict | None = None
     confidence: str | None = Field(default=None, pattern=r"^(low|medium|high)$")
@@ -324,6 +326,7 @@ class WorldEntryResponse(BaseModel):
     title: str
     category: str
     scope_type: str
+    chapter_sequence_number: int | None
     content: str
     rules: dict | None
     confidence: str
@@ -1237,3 +1240,61 @@ class ClarificationResponse(BaseModel):
     resolved: bool = False
 
     model_config = {"from_attributes": True}
+
+
+# ==================== 对话式创作（chat） ====================
+# 契约草案：方案 §12。响应字段用 dict 保持前端契约稳定，
+# 仅对请求做 pydantic 参数校验。
+
+
+class ChatSessionCreateRequest(BaseModel):
+    project_id: str = Field(..., min_length=1)
+
+
+class ChatSessionResponse(BaseModel):
+    session_id: str
+    project_id: str
+    title: str | None = None
+    summary: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ChatContextRequest(BaseModel):
+    """当前工作区上下文，不替代正文事实，只用于定位当前操作对象。"""
+    chapter_no: int | None = Field(default=None, ge=0)
+    chapter_title: str | None = None
+    current_version_id: str | None = None
+    draft: str | None = None
+    # 补锁 3：用户选中的文本与光标所在段落（供 LLM 理解"改这段/改选中部分"）
+    selection: str | None = Field(default=None, max_length=2000)
+    current_paragraph: str | None = Field(default=None, max_length=2000)
+
+
+class ChatSendMessageRequest(BaseModel):
+    content: str = Field(..., min_length=1, max_length=20000)
+    idempotency_key: str | None = Field(default=None, max_length=64)
+    context: ChatContextRequest | None = None
+
+
+class ChatConfirmRequest(BaseModel):
+    confirmed: bool = True
+    overrides: dict | None = None
+    idempotency_key: str | None = Field(default=None, max_length=64)
+    # 重新生成场景：显式传入基于的最新正式版本（覆盖任务卡中的旧 base_version_id）
+    base_version_id: str | None = Field(default=None, max_length=36)
+
+
+class ChatReviseRequest(BaseModel):
+    revise_instruction: str = Field(..., min_length=1, max_length=20000)
+    idempotency_key: str | None = Field(default=None, max_length=64)
+
+
+class ChatSessionDetailResponse(BaseModel):
+    session_id: str
+    project_id: str
+    title: str | None = None
+    summary: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    messages: list[dict] = Field(default_factory=list)

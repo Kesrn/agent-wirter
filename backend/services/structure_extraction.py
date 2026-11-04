@@ -259,6 +259,7 @@ async def apply_structure_extraction(
     *,
     background_tasks: Any | None = None,
     commit: bool = True,
+    chapter_sequence_number: int | None = None,
 ) -> dict[str, Any]:
     """Upsert normalized extraction data into project structure tables."""
     pid = _to_uuid(project_id)
@@ -281,7 +282,12 @@ async def apply_structure_extraction(
         result["characters"].append(character)
 
     for item in normalized["world_entries"]:
-        entry = await upsert_world_entry(db, pid, item)
+        entry = await upsert_world_entry(
+            db,
+            pid,
+            item,
+            chapter_sequence_number=chapter_sequence_number,
+        )
         result["world_entries"].append(entry)
 
     for item in normalized["hidden_threads"]:
@@ -355,7 +361,13 @@ async def upsert_character(db: AsyncSession, project_id: uuid.UUID, item: dict[s
     return character
 
 
-async def upsert_world_entry(db: AsyncSession, project_id: uuid.UUID, item: dict[str, Any]) -> WorldEntry:
+async def upsert_world_entry(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    item: dict[str, Any],
+    *,
+    chapter_sequence_number: int | None = None,
+) -> WorldEntry:
     result = await db.execute(select(WorldEntry).where(WorldEntry.project_id == project_id, WorldEntry.title == item["title"]))
     entry = result.scalar_one_or_none()
     if entry is None:
@@ -363,6 +375,7 @@ async def upsert_world_entry(db: AsyncSession, project_id: uuid.UUID, item: dict
         db.add(entry)
     entry.category = item["category"]
     entry.scope_type = item["scope_type"]
+    entry.chapter_sequence_number = chapter_sequence_number if item["scope_type"] == "chapter" else None
     entry.content = item["content"]
     entry.rules = item.get("rules")
     entry.confidence = item["confidence"]

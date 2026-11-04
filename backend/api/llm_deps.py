@@ -7,8 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.llm_config import LLMConfig
-from utils.crypto import decrypt_api_key
-
 logger = logging.getLogger(__name__)
 
 
@@ -28,18 +26,13 @@ async def get_user_llm_config(user_id: str, db: AsyncSession) -> dict | None:
     if not config:
         return None
 
-    api_key = ""
-    if config.encrypted_api_key:
-        try:
-            api_key = decrypt_api_key(config.encrypted_api_key)
-        except Exception:
-            logger.exception("解密 API Key 失败")
-
     return {
         "config_id": str(config.id),
         "config_name": config.name,
         "provider": config.provider,
-        "api_key": api_key,
+        # 只携带密文，避免明文进入 LangGraph checkpoint 和任务快照。
+        # Provider 真正发起请求前才在进程内存中解密。
+        "encrypted_api_key": config.encrypted_api_key or "",
         "base_url": config.base_url,
         "model": config.model_id,
     }

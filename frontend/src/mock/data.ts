@@ -281,6 +281,7 @@ export const MOCK_WORLD_ENTRIES: WorldEntry[] = [
     title: '星际时代背景',
     category: '背景',
     scope_type: 'global',
+    chapter_sequence_number: null,
     content: '2187年，人类已在太阳系建立多个空间站，但尚未实现星际航行。一艘改装的深空探测器意外截获了来自半人马座方向的规律信号，频率模式不符合任何已知自然现象。联合国太空署将信号列为最高机密，但消息还是泄露了出去。民间探险家开始私自追踪信号源……',
     rules: null,
     confidence: 'high',

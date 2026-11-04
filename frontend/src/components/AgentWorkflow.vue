@@ -13,8 +13,12 @@ const isNovel = computed(() => props.mode === 'novel')
 const NOVEL_NODES = [
   { id: 'context', label: '上下文加载' },
   { id: 'writer', label: '创作' },
+  { id: 'draft_validator', label: '初稿验收' },
   { id: 'critic', label: '审校' },
+  { id: 'editor', label: '编辑' },
+  { id: 'edited_validator', label: '编辑稿验收' },
   { id: 'consistency', label: '一致性检查' },
+  { id: 'final_quality', label: '最终质量门' },
   { id: 'review', label: '人工审批' },
 ]
 
@@ -66,16 +70,29 @@ const progressPercent = computed(() => {
   const running = steps.some(s => s === 'running') ? 0.5 : 0
   return Math.min(100, Math.round(((completed + running) / nodes.length) * 100))
 })
+
+const hasGenerationError = computed(() => Boolean(projectState.value.generationError))
 </script>
 
 <template>
   <div v-if="projectState.workflowSteps.length" class="wf-container">
     <div class="wf-progress-head">
       <span>{{ progressLabel }}</span>
-      <span>{{ progressPercent }}%</span>
+      <span :class="{ failed: hasGenerationError }">
+        {{ hasGenerationError ? '生成失败' : `${progressPercent}%` }}
+      </span>
     </div>
     <div class="wf-progress-track">
-      <div class="wf-progress-bar" :style="{ width: `${progressPercent}%` }"></div>
+      <div
+        class="wf-progress-bar"
+        :class="{ failed: hasGenerationError }"
+        :style="{ width: `${progressPercent}%` }"
+      ></div>
+    </div>
+    <div v-if="hasGenerationError" class="wf-error-alert" role="alert">
+      <strong>本次生成已停止</strong>
+      <span>{{ projectState.generationError }}</span>
+      <small>已完成的正式章节不会被覆盖，请检查提示后重新点击“章节生成”。</small>
     </div>
     <div v-for="(node, i) in WORKFLOW_NODES" :key="node.id" class="wf-step">
       <div class="wf-row" :class="nodeStatus(node.id)">
@@ -101,6 +118,7 @@ const progressPercent = computed(() => {
         </span>
         <!-- Running hint -->
         <span v-if="nodeStatus(node.id) === 'running'" class="wf-hint">进行中</span>
+        <span v-else-if="nodeStatus(node.id) === 'error'" class="wf-hint error">失败</span>
         <span v-else-if="nodeStatus(node.id) === 'cancelled'" class="wf-hint cancelled">已取消</span>
       </div>
       <!-- Vertical connector -->
@@ -130,6 +148,10 @@ const progressPercent = computed(() => {
   margin-bottom: var(--sp-2);
 }
 
+.wf-progress-head .failed {
+  color: #ef4444;
+}
+
 .wf-progress-track {
   height: 6px;
   overflow: hidden;
@@ -144,6 +166,31 @@ const progressPercent = computed(() => {
   background: var(--accent);
   border-radius: inherit;
   transition: width 180ms ease;
+}
+
+.wf-progress-bar.failed {
+  background: #ef4444;
+}
+
+.wf-error-alert {
+  display: grid;
+  gap: 4px;
+  padding: var(--sp-2);
+  margin-bottom: var(--sp-3);
+  color: #fecaca;
+  background: rgb(127 29 29 / 18%);
+  border: 1px solid rgb(239 68 68 / 45%);
+  border-radius: calc(var(--radius) - 2px);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.wf-error-alert strong {
+  color: #f87171;
+}
+
+.wf-error-alert small {
+  color: var(--text-tertiary);
 }
 
 .wf-step {
@@ -215,6 +262,10 @@ const progressPercent = computed(() => {
 .wf-hint.cancelled {
   color: var(--text-tertiary);
   opacity: 0.5;
+}
+
+.wf-hint.error {
+  color: #ef4444;
 }
 
 .wf-skill,

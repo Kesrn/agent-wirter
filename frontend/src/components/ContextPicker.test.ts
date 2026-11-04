@@ -14,9 +14,10 @@ describe('ContextPicker default outline selection', () => {
     expect(scriptBlock).toContain('selectedOutlines = ref<string[]>(currentChapterOutlineIds())')
   })
 
-  it('toggleAllOutlines stays within the current chapter in novel mode', () => {
-    // “全选”在小说模式下只在本章范围内切换，不再带入其他章节大纲
+  it('keeps the current chapter outline mandatory in novel mode', () => {
     expect(scriptBlock).toContain('isNovel.value ? currentChapterOutlineIds() : props.outlines.map(o => o.id)')
+    expect(scriptBlock).toContain('if (isNovel.value && currentChapterOutlineIds().includes(id)) return')
+    expect(source).toContain('本章必需')
   })
 
   it('shows “本章” label for outline select-all in novel mode', () => {
@@ -72,5 +73,12 @@ describe('ContextPicker current-chapter scope', () => {
   it('filters characters by appeared events in the current chapter', async () => {
     expect(agentPanelSource).toContain('event.chapter_sequence_number === currentUnitPosition.value')
     expect(agentPanelSource).toContain('&& event.appeared')
+  })
+
+  it('uses the picker as the strict material whitelist', () => {
+    expect(source).toContain('取消勾选后不会隐式加载')
+    expect(agentPanelSource).toContain('entry.chapter_sequence_number === currentUnitPosition.value')
+    expect(scriptBlock).toContain("w.scope_type === 'global'")
+    expect(scriptBlock).toContain('w.chapter_sequence_number === props.currentChapterNum')
   })
 })

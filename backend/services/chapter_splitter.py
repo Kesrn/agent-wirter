@@ -14,16 +14,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select, delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.extraction_pipeline import ProjectSourceChapter
 from models.project_source import ProjectSource
+from models.split_generation import SplitGeneration
+from services.split_generation_service import get_active_generation_id
 
 logger = logging.getLogger(__name__)
 
@@ -56,18 +59,19 @@ async def split_source_chapters(
 ) -> SplitResult:
     """切分资料源为章节，写入 project_source_chapters。
 
-    1. 删除该 source 旧章节
-    2. 读取 source.content
-    3. 按章节正则切分；识别不到按长度粗切
-    4. 写入章节记录
+    P-1 阶段四规则：**活动代不可变**。
+      - 已有活动代（legacy/active 新代）→ 创建**新的切分代**（parser='splitter'，
+        status='ready'，仅原文哈希，无决策账本），旧代行一律不动——已验收的
+        章节数量/偏移/validation_report/回滚语义不被破坏；重切后显式 CAS 激活。
+      - 未迁移库（无任何代）→ 旧行为：删除 NULL 行重写（初始切分路径）。
+    写入行归属新代（split_generation_id + source_ordinal 齐全）。
+
+    1. 读 source.content
+    2. 按章节正则切分；识别不到按长度粗切
+    3. 写入章节记录
     """
     pid = str(project_id)
     sid = str(source_id)
-
-    # 删旧章节
-    await db.execute(
-        delete(ProjectSourceChapter).where(ProjectSourceChapter.source_id == sid)
-    )
 
     # 读 source
     result = await db.execute(
@@ -78,6 +82,31 @@ async def split_source_chapters(
         await db.commit()
         return SplitResult(chapter_count=0, split_type="chapter_regex")
 
+    active_generation_id = await get_active_generation_id(db, pid, sid)
+    if active_generation_id is not None:
+        # 活动代不可变：新建切分代，不删除任何现有行
+        new_gen = SplitGeneration(
+            project_id=pid,
+            source_id=sid,
+            source_content_hash=hashlib.sha256(
+                content.encode("utf-8")).hexdigest(),
+            parser_version="splitter",
+            status="ready",
+        )
+        db.add(new_gen)
+        await db.flush()
+        target_generation_id = new_gen.id
+    else:
+        # 未迁移库：旧行为，删除 NULL 行后重写
+        target_generation_id = None
+        await db.execute(
+            delete(ProjectSourceChapter).where(
+                ProjectSourceChapter.project_id == pid,
+                ProjectSourceChapter.source_id == sid,
+                ProjectSourceChapter.split_generation_id.is_(None),
+            )
+        )
+
     # 尝试按章节正则切分
     chapters = _split_by_regex(content)
     split_type = "chapter_regex"
@@ -87,7 +116,7 @@ async def split_source_chapters(
         chapters = _split_by_length(content)
         split_type = "auto_length"
 
-    # 写入
+    # 写入（归属新代；未迁移库为 NULL 行）
     for i, (title, body) in enumerate(chapters, start=1):
         char_count = len(body)
         warning = None
@@ -102,10 +131,13 @@ async def split_source_chapters(
             split_type=split_type,
             char_count=char_count,
             warning=warning,
+            split_generation_id=target_generation_id,
+            source_ordinal=i,
         ))
 
     await db.commit()
-    logger.info("split_source_chapters: source=%s chapters=%d type=%s", sid, len(chapters), split_type)
+    logger.info("split_source_chapters: source=%s chapters=%d type=%s gen=%s",
+                sid, len(chapters), split_type, target_generation_id)
     return SplitResult(chapter_count=len(chapters), split_type=split_type)
 
 

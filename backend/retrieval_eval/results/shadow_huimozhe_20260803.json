@@ -1,0 +1,1106 @@
+{
+  "meta": {
+    "runner": "retrieval_eval/shadow_compare.py",
+    "created_at": "2026-08-03T05:43:40+00:00",
+    "db_path": "/Users/zcx/ai-creative-platform/backend/retrieval_eval/data/desktop_eval_20260803.sqlite3",
+    "project_id": "b68d3daa-9704-4388-ad75-1a00a415c7f3",
+    "project_title": "",
+    "new_chain": "services.knowledge_source.search_project_knowledge (RETRIEVAL_MODE=lexical -> LexicalRetriever, retrieval_chunks)",
+    "old_chain": "rag/context_loader.ContextLoader.search_similar / load_context (SHA256 哈希伪向量 embedding)",
+    "top_k_new": 5,
+    "top_n_old": 5,
+    "old_db_url": "同 dev 库: /Users/zcx/ai-creative-platform/backend/retrieval_eval/data/desktop_eval_20260803.sqlite3",
+    "matching": "ID 级 / 标题指纹 / 片段指纹 / 文本包含（较短>=20字符）任一命中即算同一证据",
+    "retrieval_mode": "lexical",
+    "new_chain_warmup_latency_ms": 458.87
+  },
+  "environment": {
+    "new_chain_index": {
+      "retrieval_chunks": 7425,
+      "retrieval_vectors": 0
+    },
+    "old_chain_data": {
+      "world_entries": 4,
+      "world_entries_with_embedding": 4,
+      "characters": 4,
+      "characters_with_embedding": 4,
+      "chapters": 3,
+      "project_sources": 1
+    },
+    "old_chain_schema": {
+      "world_entries_missing": [],
+      "characters_missing": [],
+      "dialect": "sqlite"
+    },
+    "old_chain_schema_broken": false,
+    "load_context_diag": {
+      "chapter_id": null,
+      "load_context_kwargs": {
+        "include_world": true,
+        "include_characters": true,
+        "include_previous_chapters": 3,
+        "include_outline": true
+      },
+      "latency_ms": 3.85,
+      "context_len": 523,
+      "context_preview": "## 世界观设定\n- [地点] 博远楼412宿舍: 南方某大学男生宿舍,六人间,环境炎热嘈杂,风扇老旧,有汗味、泡面味等。位于靠窗上下铺格局。\n- [物品] 《全职法师》小说: 一本网络小说,讲述魔法世界的故事,主角莫凡天生双系,博城遭遇妖魔入侵。李文斌用电子墨水屏阅读器存储。\n- [环境] 魔法世界: 现代地球平行世界，科技消失，魔法成为人类唯一力量，人类龟缩在被魔法结界保护的城市里，外部全是妖"
+    }
+  },
+  "valid_for_retirement_decision": true,
+  "schema_ok": true,
+  "eligible": true,
+  "ineligibility_reason": null,
+  "summary": {
+    "n_queries": 12,
+    "queries_with_old_results": 12,
+    "queries_with_overlap": 5,
+    "mean_overlap_ratio": 0.0959,
+    "total_overlap": 9,
+    "total_union": 111,
+    "new_covers_old_mean": 0.15,
+    "old_covers_new_mean": 0.15,
+    "new_latency": {
+      "mean_ms": 34.78,
+      "p95_ms": 45.58,
+      "max_ms": 45.58
+    },
+    "old_latency": {
+      "mean_ms": 5.34,
+      "p95_ms": 10.15,
+      "max_ms": 10.15
+    }
+  },
+  "per_query": [
+    {
+      "query_id": "hmz-01",
+      "category": "world_entry",
+      "query": "程璇的宿舍是什么样子的？",
+      "notes": "",
+      "new_count": 5,
+      "old_count": 5,
+      "overlap": 3,
+      "union": 7,
+      "overlap_ratio": 0.4286,
+      "new_covers_old_ratio": 0.6,
+      "old_covers_new_ratio": 0.6,
+      "overlap_reasons": [
+        "id"
+      ],
+      "new_latency_ms": 41.79,
+      "old_latency_ms": 10.15,
+      "new_top": [
+        {
+          "source_id": "4e16b4b0-eaa7-435a-b012-33f17ac4a138",
+          "chunk_id": "8e427772-304e-4401-a73b-49b89efcc6c0",
+          "source_kind": "character",
+          "title": "张峰",
+          "score": 21.3891
+        },
+        {
+          "source_id": "6c3e88e2-077c-4236-9101-0c1e70a99a76",
+          "chunk_id": "ca1c32f8-88ea-4d9a-8003-fe987701e080",
+          "source_kind": "character",
+          "title": "陈浩",
+          "score": 14.4289
+        },
+        {
+          "source_id": "cb86de9b-c140-4f72-96a8-3219b78352be",
+          "chunk_id": "318e5b37-5445-4389-b6bd-ae111b3df143",
+          "source_kind": "character",
+          "title": "李文斌",
+          "score": 12.5876
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "628c796e-7283-48a2-845e-0bc2cacd7b4e",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 10.3725
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "2cc21e90-6d85-471a-a2bf-90aa31352b8d",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 10.1213
+        }
+      ],
+      "old_top": [
+        {
+          "source_type": "character",
+          "source_id": "cb86de9b-c140-4f72-96a8-3219b78352be",
+          "title": "李文斌",
+          "distance": 0.9266441390375236
+        },
+        {
+          "source_type": "character",
+          "source_id": "4e16b4b0-eaa7-435a-b012-33f17ac4a138",
+          "title": "张峰",
+          "distance": 0.9821620608047661
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "40740bf3-1235-4e4f-a796-875574729bb9",
+          "title": "魔法世界",
+          "distance": 1.005018433800792
+        },
+        {
+          "source_type": "character",
+          "source_id": "6c3e88e2-077c-4236-9101-0c1e70a99a76",
+          "title": "陈浩",
+          "distance": 1.0604655571289028
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "898e5349-874d-409a-bc9d-22e8c07aceaf",
+          "title": "《全职法师》小说",
+          "distance": 1.1063047486921975
+        }
+      ]
+    },
+    {
+      "query_id": "hmz-02",
+      "category": "world_entry",
+      "query": "《全职法师》这本小说讲的是什么？",
+      "notes": "",
+      "new_count": 5,
+      "old_count": 5,
+      "overlap": 2,
+      "union": 8,
+      "overlap_ratio": 0.25,
+      "new_covers_old_ratio": 0.4,
+      "old_covers_new_ratio": 0.4,
+      "overlap_reasons": [
+        "containment",
+        "id"
+      ],
+      "new_latency_ms": 40.07,
+      "old_latency_ms": 4.72,
+      "new_top": [
+        {
+          "source_id": "cb86de9b-c140-4f72-96a8-3219b78352be",
+          "chunk_id": "318e5b37-5445-4389-b6bd-ae111b3df143",
+          "source_kind": "character",
+          "title": "李文斌",
+          "score": 20.6538
+        },
+        {
+          "source_id": "898e5349-874d-409a-bc9d-22e8c07aceaf",
+          "chunk_id": "3abbfd54-9222-4739-8c5b-c667d2ed3afc",
+          "source_kind": "world_entry",
+          "title": "《全职法师》小说",
+          "score": 13.6875
+        },
+        {
+          "source_id": "b4b65bb9-65f0-4d13-a851-15a12471661a",
+          "chunk_id": "a0087f4c-3b61-40e8-8085-ca0a25ed5ee3",
+          "source_kind": "character",
+          "title": "程旋",
+          "score": 11.0302
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "7300ee6a-1a65-4981-821e-090e3cd4e277",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 10.4109
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "ed1fd620-e2f5-4deb-aa7f-113ba327ee1d",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 9.1376
+        }
+      ],
+      "old_top": [
+        {
+          "source_type": "world_entry",
+          "source_id": "01953767-f0fb-432b-a387-e3cf52fc3205",
+          "title": "博远楼412宿舍",
+          "distance": 0.6143770169119105
+        },
+        {
+          "source_type": "character",
+          "source_id": "cb86de9b-c140-4f72-96a8-3219b78352be",
+          "title": "李文斌",
+          "distance": 0.893432234828838
+        },
+        {
+          "source_type": "character",
+          "source_id": "b4b65bb9-65f0-4d13-a851-15a12471661a",
+          "title": "程旋",
+          "distance": 0.9007279344139197
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "40740bf3-1235-4e4f-a796-875574729bb9",
+          "title": "魔法世界",
+          "distance": 0.9747036379106588
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "ef7b6495-6d8a-48ab-b676-d669dfd189c5",
+          "title": "穿越过程中的五色光点",
+          "distance": 0.990377523918185
+        }
+      ]
+    },
+    {
+      "query_id": "hmz-03",
+      "category": "world_entry",
+      "query": "魔法世界的基本设定是什么？",
+      "notes": "",
+      "new_count": 5,
+      "old_count": 5,
+      "overlap": 2,
+      "union": 8,
+      "overlap_ratio": 0.25,
+      "new_covers_old_ratio": 0.4,
+      "old_covers_new_ratio": 0.4,
+      "overlap_reasons": [
+        "containment"
+      ],
+      "new_latency_ms": 45.58,
+      "old_latency_ms": 4.93,
+      "new_top": [
+        {
+          "source_id": "40740bf3-1235-4e4f-a796-875574729bb9",
+          "chunk_id": "dfaf17f8-4a44-4657-b136-61c78798b9e4",
+          "source_kind": "world_entry",
+          "title": "魔法世界",
+          "score": 12.1465
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "0a6dca9f-dea9-4c3a-8d47-4628b03f67ef",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 10.3985
+        },
+        {
+          "source_id": "898e5349-874d-409a-bc9d-22e8c07aceaf",
+          "chunk_id": "3abbfd54-9222-4739-8c5b-c667d2ed3afc",
+          "source_kind": "world_entry",
+          "title": "《全职法师》小说",
+          "score": 9.8303
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "3db258fd-86a3-4dae-99f0-0af1711aa1f9",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 8.1563
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "c7f7b9d1-0873-4585-91f2-f463489eff03",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 8.1244
+        }
+      ],
+      "old_top": [
+        {
+          "source_type": "world_entry",
+          "source_id": "898e5349-874d-409a-bc9d-22e8c07aceaf",
+          "title": "《全职法师》小说",
+          "distance": 0.8967080060373165
+        },
+        {
+          "source_type": "character",
+          "source_id": "4e16b4b0-eaa7-435a-b012-33f17ac4a138",
+          "title": "张峰",
+          "distance": 1.0185246627154079
+        },
+        {
+          "source_type": "character",
+          "source_id": "6c3e88e2-077c-4236-9101-0c1e70a99a76",
+          "title": "陈浩",
+          "distance": 1.0267530193602648
+        },
+        {
+          "source_type": "character",
+          "source_id": "cb86de9b-c140-4f72-96a8-3219b78352be",
+          "title": "李文斌",
+          "distance": 1.0681421176874921
+        },
+        {
+          "source_type": "character",
+          "source_id": "b4b65bb9-65f0-4d13-a851-15a12471661a",
+          "title": "程旋",
+          "distance": 1.085953244921265
+        }
+      ]
+    },
+    {
+      "query_id": "hmz-04",
+      "category": "world_entry",
+      "query": "穿越过程中的五色光点是怎么回事？",
+      "notes": "",
+      "new_count": 5,
+      "old_count": 5,
+      "overlap": 1,
+      "union": 9,
+      "overlap_ratio": 0.1111,
+      "new_covers_old_ratio": 0.2,
+      "old_covers_new_ratio": 0.2,
+      "overlap_reasons": [
+        "id"
+      ],
+      "new_latency_ms": 34.29,
+      "old_latency_ms": 5.58,
+      "new_top": [
+        {
+          "source_id": "ef7b6495-6d8a-48ab-b676-d669dfd189c5",
+          "chunk_id": "342eb918-3f09-4db7-b5ee-c7bcf126ac79",
+          "source_kind": "world_entry",
+          "title": "穿越过程中的五色光点",
+          "score": 17.1254
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "2c03a560-8255-48b7-a5cb-693b68c747a8",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 6.3213
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "502ec57f-7e7e-483a-889b-f918c5ae5b61",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 5.6799
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "c732161d-eef3-42d0-8a84-81534f15bb33",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 5.6374
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "923e3b9d-d757-42ba-a9c5-4e3a7a1c799f",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 5.628
+        }
+      ],
+      "old_top": [
+        {
+          "source_type": "world_entry",
+          "source_id": "898e5349-874d-409a-bc9d-22e8c07aceaf",
+          "title": "《全职法师》小说",
+          "distance": 0.7558942026047091
+        },
+        {
+          "source_type": "character",
+          "source_id": "cb86de9b-c140-4f72-96a8-3219b78352be",
+          "title": "李文斌",
+          "distance": 0.7648084106496595
+        },
+        {
+          "source_type": "character",
+          "source_id": "6c3e88e2-077c-4236-9101-0c1e70a99a76",
+          "title": "陈浩",
+          "distance": 0.9314260436284284
+        },
+        {
+          "source_type": "character",
+          "source_id": "b4b65bb9-65f0-4d13-a851-15a12471661a",
+          "title": "程旋",
+          "distance": 0.9466577259515818
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "ef7b6495-6d8a-48ab-b676-d669dfd189c5",
+          "title": "穿越过程中的五色光点",
+          "distance": 1.0243706182247807
+        }
+      ]
+    },
+    {
+      "query_id": "hmz-05",
+      "category": "ability",
+      "query": "唐月是什么等级？",
+      "notes": "",
+      "new_count": 5,
+      "old_count": 5,
+      "overlap": 0,
+      "union": 10,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": 0.0,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 35.07,
+      "old_latency_ms": 4.62,
+      "new_top": [
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "a4cbd0e3-62ce-4fa9-a812-ccb7a0adb2b4",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 10.1561
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "6a9558bf-c8e2-48c4-904c-913d778d5cc7",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 10.0638
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "ac8d20cb-841b-4fb3-8cdd-89073bf1259e",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 9.6757
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "6ba05af6-4809-430c-a7d6-d3e3868c2fda",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 8.6625
+        },
+        {
+          "source_id": "6b0e139e-e0e9-40c5-a027-b576530c3a0a",
+          "chunk_id": "1c4bc671-3b31-4191-94d6-fdeefb13e856",
+          "source_kind": "character_event",
+          "title": "唐月告知历练并展现遁影",
+          "score": 6.6932
+        }
+      ],
+      "old_top": [
+        {
+          "source_type": "world_entry",
+          "source_id": "40740bf3-1235-4e4f-a796-875574729bb9",
+          "title": "魔法世界",
+          "distance": 0.6713093880746526
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "ef7b6495-6d8a-48ab-b676-d669dfd189c5",
+          "title": "穿越过程中的五色光点",
+          "distance": 0.7010218001770903
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "01953767-f0fb-432b-a387-e3cf52fc3205",
+          "title": "博远楼412宿舍",
+          "distance": 0.7594098422854797
+        },
+        {
+          "source_type": "character",
+          "source_id": "4e16b4b0-eaa7-435a-b012-33f17ac4a138",
+          "title": "张峰",
+          "distance": 0.9071159793788546
+        },
+        {
+          "source_type": "character",
+          "source_id": "6c3e88e2-077c-4236-9101-0c1e70a99a76",
+          "title": "陈浩",
+          "distance": 0.9473357008363212
+        }
+      ]
+    },
+    {
+      "query_id": "hmz-06",
+      "category": "ability",
+      "query": "唐月会什么魔法？",
+      "notes": "",
+      "new_count": 5,
+      "old_count": 5,
+      "overlap": 0,
+      "union": 10,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": 0.0,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 31.43,
+      "old_latency_ms": 4.78,
+      "new_top": [
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "c6d1f764-4e51-4a5b-86fb-69605a171701",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 6.9208
+        },
+        {
+          "source_id": "805e2988-c2e9-4c8f-b10b-026e2a5e7ebc",
+          "chunk_id": "cbe75dc3-f509-42fd-931f-140a1891cf6d",
+          "source_kind": "character_event",
+          "title": "唐月代课并演示火滋",
+          "score": 6.9103
+        },
+        {
+          "source_id": "9096411b-7402-4206-8c08-16f2fe223d3c",
+          "chunk_id": "ee96653b-2947-413e-89d9-0829d3c17364",
+          "source_kind": "character",
+          "title": "唐月",
+          "score": 6.8773
+        },
+        {
+          "source_id": "6822994e-6d62-40a3-b818-e23c7b9099be",
+          "chunk_id": "261747a3-1240-41a9-8fc5-9ed1ceb1b9f2",
+          "source_kind": "character_event",
+          "title": "唐月演示火滋·灼烧",
+          "score": 6.8491
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "edd4f6f3-cc9a-48f5-b837-7c1b39abda7f",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 6.8282
+        }
+      ],
+      "old_top": [
+        {
+          "source_type": "world_entry",
+          "source_id": "898e5349-874d-409a-bc9d-22e8c07aceaf",
+          "title": "《全职法师》小说",
+          "distance": 0.8587297289316483
+        },
+        {
+          "source_type": "character",
+          "source_id": "4e16b4b0-eaa7-435a-b012-33f17ac4a138",
+          "title": "张峰",
+          "distance": 0.9215687673753643
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "01953767-f0fb-432b-a387-e3cf52fc3205",
+          "title": "博远楼412宿舍",
+          "distance": 1.0388886731158071
+        },
+        {
+          "source_type": "character",
+          "source_id": "cb86de9b-c140-4f72-96a8-3219b78352be",
+          "title": "李文斌",
+          "distance": 1.0622209100924365
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "ef7b6495-6d8a-48ab-b676-d669dfd189c5",
+          "title": "穿越过程中的五色光点",
+          "distance": 1.1706453167403454
+        }
+      ]
+    },
+    {
+      "query_id": "hmz-07",
+      "category": "ability",
+      "query": "张小侯是什么系？",
+      "notes": "",
+      "new_count": 5,
+      "old_count": 5,
+      "overlap": 0,
+      "union": 10,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": 0.0,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 32.9,
+      "old_latency_ms": 5.3,
+      "new_top": [
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "aaca1293-80fa-4d3e-8b63-f3d253e71672",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 6.9461
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "3e15f0f0-dcad-455b-925a-5af82811137f",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 6.7609
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "fe668793-75d4-41a7-a472-dc1a9a5eb2f3",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 6.6587
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "02e97339-2dcc-4213-9100-79283ea3e480",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 6.6545
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "0e8b7516-6c87-404e-a4d4-48bd841804ef",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 6.5046
+        }
+      ],
+      "old_top": [
+        {
+          "source_type": "world_entry",
+          "source_id": "898e5349-874d-409a-bc9d-22e8c07aceaf",
+          "title": "《全职法师》小说",
+          "distance": 0.8001777456294069
+        },
+        {
+          "source_type": "character",
+          "source_id": "b4b65bb9-65f0-4d13-a851-15a12471661a",
+          "title": "程旋",
+          "distance": 0.9681373687380523
+        },
+        {
+          "source_type": "character",
+          "source_id": "6c3e88e2-077c-4236-9101-0c1e70a99a76",
+          "title": "陈浩",
+          "distance": 1.0000824912062671
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "ef7b6495-6d8a-48ab-b676-d669dfd189c5",
+          "title": "穿越过程中的五色光点",
+          "distance": 1.0208402237340204
+        },
+        {
+          "source_type": "character",
+          "source_id": "4e16b4b0-eaa7-435a-b012-33f17ac4a138",
+          "title": "张峰",
+          "distance": 1.0300071367866532
+        }
+      ]
+    },
+    {
+      "query_id": "hmz-08",
+      "category": "ability",
+      "query": "穆宁雪是什么系？",
+      "notes": "",
+      "new_count": 5,
+      "old_count": 5,
+      "overlap": 0,
+      "union": 10,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": 0.0,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 35.92,
+      "old_latency_ms": 4.62,
+      "new_top": [
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "9f00fc12-dbdc-4ee8-9049-1de5d4b13a4b",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 5.6309
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "f3d9b185-5f5e-4726-8543-425c389dba1b",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 5.4376
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "04a822a7-8899-4015-b9d1-9769da88017e",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 5.3853
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "47b50a9a-5921-4936-b3b2-ce25e76a7a5c",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 5.3004
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "bf745aa7-b037-4b35-9a93-eeba05b84d85",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 5.248
+        }
+      ],
+      "old_top": [
+        {
+          "source_type": "world_entry",
+          "source_id": "898e5349-874d-409a-bc9d-22e8c07aceaf",
+          "title": "《全职法师》小说",
+          "distance": 0.7733706271340359
+        },
+        {
+          "source_type": "character",
+          "source_id": "6c3e88e2-077c-4236-9101-0c1e70a99a76",
+          "title": "陈浩",
+          "distance": 0.8445004630469919
+        },
+        {
+          "source_type": "character",
+          "source_id": "b4b65bb9-65f0-4d13-a851-15a12471661a",
+          "title": "程旋",
+          "distance": 0.886258180052864
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "01953767-f0fb-432b-a387-e3cf52fc3205",
+          "title": "博远楼412宿舍",
+          "distance": 0.9192630413823405
+        },
+        {
+          "source_type": "character",
+          "source_id": "4e16b4b0-eaa7-435a-b012-33f17ac4a138",
+          "title": "张峰",
+          "distance": 0.9760637034361531
+        }
+      ]
+    },
+    {
+      "query_id": "hmz-09",
+      "category": "character",
+      "query": "介绍下程璇",
+      "notes": "",
+      "new_count": 5,
+      "old_count": 5,
+      "overlap": 1,
+      "union": 9,
+      "overlap_ratio": 0.1111,
+      "new_covers_old_ratio": 0.2,
+      "old_covers_new_ratio": 0.2,
+      "overlap_reasons": [
+        "containment"
+      ],
+      "new_latency_ms": 3.6,
+      "old_latency_ms": 4.48,
+      "new_top": [
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "c1a8f33b-9c02-491e-90bb-ea9fbdcd2bcf",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 8.0386
+        },
+        {
+          "source_id": "aa327a88-02f4-4e73-8a59-d60a455ac7f4",
+          "chunk_id": "761a5c4b-dc92-4481-be89-d1a5fc970a6c",
+          "source_kind": "character_event",
+          "title": "穆白介绍星尘魔器级别",
+          "score": 7.9933
+        },
+        {
+          "source_id": "cb86de9b-c140-4f72-96a8-3219b78352be",
+          "chunk_id": "318e5b37-5445-4389-b6bd-ae111b3df143",
+          "source_kind": "character",
+          "title": "李文斌",
+          "score": 7.151
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "d0d81072-9149-482a-8cff-fc0b8ba2a1c0",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 7.0678
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "39329d3a-6c0b-4d53-9380-e5776d2de899",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 6.7965
+        }
+      ],
+      "old_top": [
+        {
+          "source_type": "world_entry",
+          "source_id": "40740bf3-1235-4e4f-a796-875574729bb9",
+          "title": "魔法世界",
+          "distance": 0.8666601060034541
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "01953767-f0fb-432b-a387-e3cf52fc3205",
+          "title": "博远楼412宿舍",
+          "distance": 0.8769285516610977
+        },
+        {
+          "source_type": "character",
+          "source_id": "6c3e88e2-077c-4236-9101-0c1e70a99a76",
+          "title": "陈浩",
+          "distance": 1.0324858897721623
+        },
+        {
+          "source_type": "character",
+          "source_id": "b4b65bb9-65f0-4d13-a851-15a12471661a",
+          "title": "程旋",
+          "distance": 1.0406212551181955
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "898e5349-874d-409a-bc9d-22e8c07aceaf",
+          "title": "《全职法师》小说",
+          "distance": 1.0913776377393383
+        }
+      ]
+    },
+    {
+      "query_id": "hmz-10",
+      "category": "character",
+      "query": "陈浩是什么样的人？",
+      "notes": "",
+      "new_count": 5,
+      "old_count": 5,
+      "overlap": 0,
+      "union": 10,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": 0.0,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 39.5,
+      "old_latency_ms": 4.71,
+      "new_top": [
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "295165b0-ed71-4541-a3c1-c7df35af27ca",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 7.7021
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "2e7ee54b-5653-4507-9aff-7e8c49a2b121",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 7.2462
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "1b3e1754-824f-428a-8fda-1c50a4b0e678",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 6.8878
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "bf9f06ee-25e4-40b1-9b0b-35c0a117cd38",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 6.7107
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "4077e7d8-c1d1-4da7-abd6-a44938cacb57",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 6.7047
+        }
+      ],
+      "old_top": [
+        {
+          "source_type": "character",
+          "source_id": "4e16b4b0-eaa7-435a-b012-33f17ac4a138",
+          "title": "张峰",
+          "distance": 0.7918760318299642
+        },
+        {
+          "source_type": "character",
+          "source_id": "b4b65bb9-65f0-4d13-a851-15a12471661a",
+          "title": "程旋",
+          "distance": 0.8874638950310508
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "01953767-f0fb-432b-a387-e3cf52fc3205",
+          "title": "博远楼412宿舍",
+          "distance": 0.9255676403618703
+        },
+        {
+          "source_type": "character",
+          "source_id": "6c3e88e2-077c-4236-9101-0c1e70a99a76",
+          "title": "陈浩",
+          "distance": 1.0315561425417612
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "ef7b6495-6d8a-48ab-b676-d669dfd189c5",
+          "title": "穿越过程中的五色光点",
+          "distance": 1.037752178346933
+        }
+      ]
+    },
+    {
+      "query_id": "hmz-11",
+      "category": "character",
+      "query": "心夏是谁？",
+      "notes": "",
+      "new_count": 5,
+      "old_count": 5,
+      "overlap": 0,
+      "union": 10,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": 0.0,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 36.83,
+      "old_latency_ms": 5.76,
+      "new_top": [
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "13cac9f1-df49-4885-9de6-9de5bdbeb2ed",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 7.0743
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "00613d98-f186-4d6f-9fed-0bb97f5c28d6",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 6.912
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "3d4b3976-8d3d-4dde-8af6-b4137a5b6bd5",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 6.9112
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "210350df-4740-4238-b3c8-3c2967a25849",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 6.7902
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "4fb3190a-41f0-4644-b704-44f0bad0c222",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 6.7746
+        }
+      ],
+      "old_top": [
+        {
+          "source_type": "world_entry",
+          "source_id": "01953767-f0fb-432b-a387-e3cf52fc3205",
+          "title": "博远楼412宿舍",
+          "distance": 0.8592229888260553
+        },
+        {
+          "source_type": "character",
+          "source_id": "4e16b4b0-eaa7-435a-b012-33f17ac4a138",
+          "title": "张峰",
+          "distance": 0.8867373374513965
+        },
+        {
+          "source_type": "character",
+          "source_id": "b4b65bb9-65f0-4d13-a851-15a12471661a",
+          "title": "程旋",
+          "distance": 0.8922958116426994
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "40740bf3-1235-4e4f-a796-875574729bb9",
+          "title": "魔法世界",
+          "distance": 0.9509549955462888
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "ef7b6495-6d8a-48ab-b676-d669dfd189c5",
+          "title": "穿越过程中的五色光点",
+          "distance": 0.9581138983596205
+        }
+      ]
+    },
+    {
+      "query_id": "hmz-12",
+      "category": "character",
+      "query": "赵大牛是什么人？",
+      "notes": "",
+      "new_count": 5,
+      "old_count": 5,
+      "overlap": 0,
+      "union": 10,
+      "overlap_ratio": 0.0,
+      "new_covers_old_ratio": 0.0,
+      "old_covers_new_ratio": 0.0,
+      "overlap_reasons": [],
+      "new_latency_ms": 40.42,
+      "old_latency_ms": 4.44,
+      "new_top": [
+        {
+          "source_id": "e19554b2-e96e-4c6e-8027-7578faa47711",
+          "chunk_id": "bad74487-4ff4-43bf-806f-f424688bbcf5",
+          "source_kind": "character",
+          "title": "赵大牛",
+          "score": 15.589
+        },
+        {
+          "source_id": "b276686f-8081-4932-8562-58e83e2a412c",
+          "chunk_id": "e062e7e5-4929-4b2e-ab50-2a8933ac3435",
+          "source_kind": "character_event",
+          "title": "登记火系学生",
+          "score": 15.346
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "9cb8da5c-5f9a-4dd3-8c49-132cbe8f2878",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 10.099
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "18ed1708-c2c0-4733-8a9d-6f2244f56428",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 0.0
+        },
+        {
+          "source_id": "c5f3e586-0111-48d1-aa25-ea51114ab01c",
+          "chunk_id": "e901dc12-2fbb-42e4-a4e0-5e4776f2b3f6",
+          "source_kind": "project_source_chunk",
+          "title": "全职法师笔趣阁txt",
+          "score": 0.0
+        }
+      ],
+      "old_top": [
+        {
+          "source_type": "character",
+          "source_id": "b4b65bb9-65f0-4d13-a851-15a12471661a",
+          "title": "程旋",
+          "distance": 0.7684195887386486
+        },
+        {
+          "source_type": "character",
+          "source_id": "6c3e88e2-077c-4236-9101-0c1e70a99a76",
+          "title": "陈浩",
+          "distance": 0.8221809797802114
+        },
+        {
+          "source_type": "character",
+          "source_id": "cb86de9b-c140-4f72-96a8-3219b78352be",
+          "title": "李文斌",
+          "distance": 0.8376829967234407
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "40740bf3-1235-4e4f-a796-875574729bb9",
+          "title": "魔法世界",
+          "distance": 0.8823487518575531
+        },
+        {
+          "source_type": "world_entry",
+          "source_id": "898e5349-874d-409a-bc9d-22e8c07aceaf",
+          "title": "《全职法师》小说",
+          "distance": 1.0453517451158003
+        }
+      ]
+    }
+  ]
+}

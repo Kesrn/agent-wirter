@@ -21,6 +21,26 @@ if TYPE_CHECKING:
     from services.workflow_definitions import WorkflowDefinition
 
 
+def sanitize_model_config_snapshot(
+    config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """只保存可审计的模型元数据，绝不保存明文或密文 API Key。"""
+    if not config:
+        return None
+    safe_keys = ("config_id", "config_name", "provider", "model", "base_url")
+    snapshot = {
+        key: config.get(key)
+        for key in safe_keys
+        if config.get(key) is not None
+    }
+    snapshot["api_key_configured"] = bool(
+        config.get("api_key")
+        or config.get("encrypted_api_key")
+        or config.get("api_key_configured")
+    )
+    return snapshot
+
+
 async def create_run(
     db: AsyncSession,
     *,
@@ -54,7 +74,7 @@ async def create_run(
         mode=mode,
         status=RunStatus.CREATED,
         user_goal=user_goal,
-        model_config_snapshot=model_config_snapshot,
+        model_config_snapshot=sanitize_model_config_snapshot(model_config_snapshot),
         thread_id=thread_id,
         workflow_key=workflow_key,
         workflow_version=workflow_version,

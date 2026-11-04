@@ -5,12 +5,18 @@ Schema 用于校验 LLM 返回的 JSON：
 - 每条必须有 evidence
 - confidence ∈ [0,1]，importance ∈ [1,5]
 - ability_type / status / priority 枚举校验
+
+容错：LLM 常输出 ``null``（如能力没提等级时 level=null），pydantic 对
+``Optional`` 之外的 str 字段拒绝 None。ChapterExtraction 挂了一个
+before 校验器递归删除 JSON 中的 None 键——可选字段回落默认值
+（level/status/identity 等变回 ""），必填字段（name/evidence 等）若为
+null 则报 missing 而非 type 错误，语义更准确。
 """
 
 from __future__ import annotations
 
 from enum import Enum
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class AbilityType(str, Enum):
@@ -89,6 +95,24 @@ class ChapterExtraction(BaseModel):
     abilities: list[AbilityItem] = Field(default_factory=list)
     events: list[EventItem] = Field(default_factory=list)
     world_rules: list[WorldRuleItem] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_null_fields(cls, data):
+        """递归删除 JSON 中的 None 键（LLM 输出容错）。
+
+        可选 str/数字字段（level/status/identity 等）回落默认值；
+        必填字段若为 null 会报 missing 而非 type 错误。
+        """
+        if isinstance(data, dict):
+            return {
+                k: cls._drop_null_fields(v)
+                for k, v in data.items()
+                if v is not None
+            }
+        if isinstance(data, list):
+            return [cls._drop_null_fields(v) for v in data]
+        return data
 
 
 # ── Prompt（文档 §9） ────────────────────────────────────

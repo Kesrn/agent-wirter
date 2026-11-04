@@ -15,6 +15,7 @@ from api.llm_settings import (
 )
 from models.llm_config import LLMConfig
 from schemas.api import AuthUser, LLMConfigCreate
+from utils.crypto import decrypt_api_key
 
 
 @pytest.mark.asyncio
@@ -74,7 +75,10 @@ async def test_user_can_save_multiple_profiles_and_switch_active_provider():
             assert resolved["config_id"] == second["id"]
             assert resolved["provider"] == "deepseek"
             assert resolved["model"] == "deepseek-test"
-            assert resolved["api_key"] == "sk-deepseek-2222"
+            # 运行配置只携带数据库密文；真正调用 Provider 时才在内存中解密，
+            # 避免明文密钥进入 LangGraph checkpoint / AiRun 快照。
+            assert "api_key" not in resolved
+            assert decrypt_api_key(resolved["encrypted_api_key"]) == "sk-deepseek-2222"
             assert resolved["config_id"] != first["id"]
     finally:
         await engine.dispose()

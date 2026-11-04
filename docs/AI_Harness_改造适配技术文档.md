@@ -451,6 +451,17 @@ CREATE INDEX ix_chapter_versions_run_id ON chapter_versions(run_id);
 - Harness 要求可追踪、可回滚，不建议默认删除历史版本。
 - 改造时应取消自动裁剪，或改为配置项且默认关闭。
 
+章节恢复（restore/rollback）语义（P1 明确）：
+
+- 接口：`POST /projects/{project_id}/chapters/{sequence_number}/versions/{version_id}/restore`。
+- 恢复 ≠ 定稿。恢复只把历史版本内容写回 `chapter.content` 并创建一条
+  `source=rollback` 的新版本（`rollback_from_version_id` 记录回滚来源），
+  同时把 `chapter.status` 重置为 `draft`，等待用户重新确认后再定稿。
+- 恢复不触碰 `chapter.final_version_id`：该字段指向的不可变定稿快照仍是检索索引
+  （可信上文）的依据，恢复操作保留原定稿快照，也不触发任何检索索引操作。
+- 只有再次定稿（finalize，更新 `final_version_id` 并触发索引同步）后，
+  检索索引才指向新的可信快照；未再次定稿前，检索索引继续指向原定稿版本。
+
 ### 4.6 新增 human_interrupts
 
 模型文件建议：
@@ -1269,7 +1280,7 @@ AI 输出和章节版本强关联。
 2. `create_version` 支持 run_id / parent_version_id。
 3. approve 创建版本后写 `generation_records.accepted_version_id`。
 4. 取消或配置化 `MAX_VERSIONS_PER_CHAPTER` 自动删除。
-5. 新增章节版本 restore/rollback 规则：创建 `rollback` 版本，而不是覆盖历史。
+5. 新增章节版本 restore/rollback 规则：创建 `rollback` 版本，而不是覆盖历史；恢复后章节状态重置为 draft，`final_version_id` 保留原定稿快照（恢复 ≠ 定稿，见 4.5）。
 
 验收：
 

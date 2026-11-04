@@ -42,7 +42,7 @@ const CONFIDENCE_LABELS: Record<string, string> = {
 const pickerTitle = computed(() => isNovel.value ? '选择创作素材' : '选择内容素材')
 const pickerSubtitle = computed(() =>
   isNovel.value
-    ? '选择本次生成要用的大纲、角色和世界观设定'
+    ? '以下勾选项就是任务卡和正文实际使用的创作素材；取消勾选后不会隐式加载'
     : '选择本次生成要用的内容结构、受众画像和品牌资料'
 )
 const confirmLabel = computed(() => isNovel.value ? '确认生成' : '确认生成内容')
@@ -60,7 +60,11 @@ function currentChapterOutlineIds() {
 // Default: novel 模式只选本章大纲，article 模式全选
 const selectedOutlines = ref<string[]>(currentChapterOutlineIds())
 const selectedCharacters = ref<string[]>(props.characters.map(c => c.id))
-const selectedWorldEntries = ref<string[]>(props.worldEntries.map(w => w.id))
+const selectedWorldEntries = ref<string[]>(props.worldEntries
+  .filter(w => !isNovel.value
+    || w.scope_type === 'global'
+    || w.chapter_sequence_number === props.currentChapterNum)
+  .map(w => w.id))
 // Hidden threads: default-check those matching current chapter
 const selectedHiddenThreads = ref<string[]>(
   props.currentChapterNum
@@ -79,9 +83,11 @@ function toggleSection(key: 'outlines' | 'characters' | 'worldEntries' | 'hidden
 }
 
 function toggleAllOutlines() {
-  // 小说模式下“全选”只在本章范围内切换，避免带入其他章节大纲
+  // 小说生成的本章大纲是系统必需项，不能取消；文章模式仍允许全选/全不选。
   const ids = isNovel.value ? currentChapterOutlineIds() : props.outlines.map(o => o.id)
-  selectedOutlines.value = selectedOutlines.value.length === ids.length ? [] : ids
+  selectedOutlines.value = isNovel.value
+    ? ids
+    : (selectedOutlines.value.length === ids.length ? [] : ids)
 }
 
 // 大纲“全选”复选框：小说模式下仅作用于本章大纲
@@ -104,6 +110,7 @@ function toggleHiddenThread(id: string) {
 }
 
 function toggleOutline(id: string) {
+  if (isNovel.value && currentChapterOutlineIds().includes(id)) return
   const idx = selectedOutlines.value.indexOf(id)
   if (idx >= 0) selectedOutlines.value.splice(idx, 1)
   else selectedOutlines.value.push(id)
@@ -156,14 +163,14 @@ function handleConfirm() {
             <span class="section-chevron" :class="{ open: openSections.outlines }">▾</span>
             <span class="section-title">{{ sectionLabels.outlines }}</span>
             <label class="select-all" @click.stop>
-              <input type="checkbox" :checked="outlineSelectAllChecked" @change="toggleAllOutlines" />
-              <span>{{ outlineSelectAllLabel }}</span>
+              <input type="checkbox" :checked="outlineSelectAllChecked" :disabled="isNovel" @change="toggleAllOutlines" />
+              <span>{{ isNovel ? '本章必需' : outlineSelectAllLabel }}</span>
             </label>
           </div>
           <div v-if="openSections.outlines" class="section-list">
             <div v-if="!outlines.length" class="empty-hint">暂无{{ sectionLabels.outlines }}</div>
             <div v-for="o in outlines" :key="o.id" class="item" @click="toggleOutline(o.id)">
-              <input type="checkbox" :checked="selectedOutlines.includes(o.id)" class="item-checkbox" />
+              <input type="checkbox" :checked="selectedOutlines.includes(o.id)" :disabled="isNovel && currentChapterOutlineIds().includes(o.id)" class="item-checkbox" />
               <span class="item-main">
                 <span class="item-title">{{ isNovel ? `第${o.chapter_num}章 ${o.title}` : o.title }}</span>
                 <span v-if="o.summary" class="item-desc">{{ truncate(o.summary, 80) }}</span>
@@ -209,7 +216,12 @@ function handleConfirm() {
             <div v-for="w in worldEntries" :key="w.id" class="item" @click="toggleWorldEntry(w.id)">
               <input type="checkbox" :checked="selectedWorldEntries.includes(w.id)" class="item-checkbox" />
               <span class="item-main">
-                <span class="item-title">{{ w.title }} <span v-if="w.category" class="badge cat-badge">[{{ w.category }}]</span> <span class="badge conf-badge" :class="w.confidence">{{ CONFIDENCE_LABELS[w.confidence] ?? w.confidence }}</span></span>
+                <span class="item-title">
+                  {{ w.title }}
+                  <span v-if="w.category" class="badge cat-badge">[{{ w.category }}]</span>
+                  <span class="badge auto-badge">{{ w.scope_type === 'global' ? '全局' : (w.chapter_sequence_number ? `第${w.chapter_sequence_number}章` : '章节未归属') }}</span>
+                  <span class="badge conf-badge" :class="w.confidence">{{ CONFIDENCE_LABELS[w.confidence] ?? w.confidence }}</span>
+                </span>
                 <span v-if="w.content" class="item-desc">{{ truncate(w.content, 60) }}</span>
               </span>
             </div>

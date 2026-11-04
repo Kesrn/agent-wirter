@@ -12,6 +12,10 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID, ARRAY
 from sqlalchemy.dialects.sqlite.base import SQLiteTypeCompiler
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+# 普通测试跨多个 TestClient 事件循环运行，使用 MemorySaver 避免把持久化
+# checkpointer 的连接生命周期混入业务断言；重启恢复由专门测试覆盖。
+os.environ.setdefault("CHECKPOINTER_BACKEND", "memory")
+
 # Monkey-patch SQLite type compiler for PostgreSQL-specific types
 # (must happen before importing models / main, which trigger type registration)
 SQLiteTypeCompiler.visit_JSONB = lambda self, type_, **kw: "JSON"

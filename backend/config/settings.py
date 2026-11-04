@@ -67,6 +67,22 @@ class Settings:
     EMBEDDING_API_KEY: str = os.getenv("EMBEDDING_API_KEY", "")
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "1536"))
+    # embedding 端点独立于 LLM 对话端点（如 SiliconFlow 与对话 base_url 不同）；
+    # 为空时回退 LLM_BASE_URL，再回退 OpenAI 官方。
+    EMBEDDING_BASE_URL: str = os.getenv("EMBEDDING_BASE_URL", "")
+
+    # --- 检索模式 ---
+    # 知识问答检索链路（services/knowledge_source.search_project_knowledge）的检索器选择，
+    # 由阶段一词法检索（LexicalRetriever，评测 recall@5 0.132 → 0.816）启用。
+    # 可选值：
+    #   ilike   （默认）原 ILIKE 关键词检索，行为完全不变；
+    #   lexical 词法检索（LexicalRetriever），要求项目已构建检索索引（retrieval_chunks）；
+    #   hybrid  lexical + ILIKE 合并去重（lexical 优先，按 chunk_id 去重）。
+    # lexical/hybrid 下自动降级为 ILIKE 的场景：项目无检索索引、检索抛异常、
+    # 或 lexical 无命中且检索策略 on_no_result == "fallback"（均记日志，不阻断问答）。
+    # 策略参数（source_kinds/entity_first）按 services.retrieval_policy.get_retrieval_policy(intent)
+    # 集中映射（D5）；其他未识别值按 ilike 处理。
+    RETRIEVAL_MODE: str = os.getenv("RETRIEVAL_MODE", "ilike")
 
     # --- 日志 ---
     # DEBUG=true 时默认 DEBUG 日志，便于本地追踪 SSE、LLM 和抽取状态机；
@@ -86,10 +102,12 @@ class Settings:
     AUTH_RATE_LIMIT_PER_MINUTE: int = 10
     PROTECTED_WORKFLOW_POSITIONS: tuple = ("consistency_checker", "human_review")
 
-    # --- LangGraph ---
-    # 目前主要使用内存 checkpointer；该开关预留给后续数据库 checkpoint。
-    # 使用内存 checkpoint 时，服务重启后等待人工审核的 thread 状态会丢失。
-    LANGGRAPH_CHECKPOINT_DB: bool = os.getenv("LANGGRAPH_CHECKPOINT_DB", "false").lower() == "true"
+    # --- LangGraph checkpointer ---
+    # 默认 sqlite 持久化，保证重启后 WAITING_HUMAN 状态可被 resume 找回。
+    # 可选值：sqlite | postgres | memory。memory 仅用于无文件 IO 的极端场景，
+    # 重启即丢失等待中的 thread 状态。生产环境 setup 失败应 fail-fast。
+    CHECKPOINTER_BACKEND: str = os.getenv("CHECKPOINTER_BACKEND", "sqlite")
+    CHECKPOINTER_PATH: str = os.getenv("CHECKPOINTER_PATH", "")
 
     # --- Langfuse / Observability ---
     # Langfuse 是可选观测能力。代码里所有 Langfuse 调用都做了降级处理，

@@ -19,5 +19,6 @@ interface Window {
     getInfo: () => Promise<DesktopInfo>
     checkBackend: () => Promise<BackendStatus>
     onRefreshBackendStatus: (callback: () => void) => () => void
+    onSaveRequested: (callback: () => void) => () => void
   }
 }

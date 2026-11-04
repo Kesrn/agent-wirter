@@ -1,0 +1,1432 @@
+{
+  "meta": {
+    "dataset_name": "natural_queries",
+    "dataset_version": "1.0",
+    "generator": "generate_natural_more.py (28 → 70 扩充)",
+    "description": "人工编写的自然查询集 + 困难样本，全部基于 dev-web.sqlite3 真实内容（先 SELECT 核对数据再写查询）；28 条为人工精修，42 条由 generate_natural_more.py 在真实数据上构造并只读核对",
+    "created_at": "2026-08-03T03:32:39+00:00",
+    "db_path": "/Users/zcx/ai-creative-platform/backend/dev-web.sqlite3",
+    "added_by_generator": {
+      "new_samples": 0,
+      "prev_total": 70
+    },
+    "difficulty_distribution": {
+      "alias": 10,
+      "conflict": 7,
+      "cross_chapter": 7,
+      "homophone": 8,
+      "no_inject": 5,
+      "no_result": 7,
+      "normal": 11,
+      "same_name": 6,
+      "typo": 9
+    },
+    "total_samples": 70,
+    "verification_notes": [
+      "别名来自正文提取：猴子=张小侯（第19章 莫凡喊'猴子，来一个吧'）、大魔头=莫凡（第413章 艾图图）、冲榜狂魔=莫凡（第515章 外号）、绿茶=穆白（第44章 '绿茶……当然就是副班长穆白'，第570章标题'绿茶男'）",
+      "错别字样例：'张小候'——原文第20章附近（chunk 4cd65daf）即如此误写，错别字来源于语料自身",
+      "no_result 样本经全库检索确认 0 命中：'林小雨'/'血型'/'莫凡的妈妈'；注意 '秦羽'、'莫凡生日' 在语料中有命中，未用作 no_result",
+      "same_name/conflict 样本涉及两个项目：d62d4447（全职法师全文）与 49aee26a（E2E小说），两项目存在同名角色 莫凡/张小侯/赵满延 且设定不同",
+      "张小侯风系 first_seen_chapter：主项目=16、E2E 项目=1、正文第19章才首次展示风轨，三处时间不一致（conflict 样本依据）",
+      "no_inject 样本语义：期望行为是检索/注入层拦截相关证据，不将其写入正文；若 run_baseline 判定命中，代表系统错误地召回了不该注入的内容，需人工按反向指标解读",
+      "nat-029 起为 generate_natural_more.py 生成的扩充样本：normal 6/alias 6/typo 6/homophone 6/same_name 4/conflict 4/cross_chapter 4/no_result 4/no_inject 2，引用词与 no_result 探测短语均在生成时对 dev-web.sqlite3 做只读 SELECT 核对",
+      "新增别名：泥猴子=张小侯(第2章)、凡哥/莫凡哥=莫凡(第2章起)、黑白无常妇=撒朗/伊之纱(第1232章)、冷面判官=杰西(第1102章)、移动电灯泡=光系初阶技能外号(第47章)",
+      "新增 no_result 均经全库检索确认 0 命中：苏小小/莫凡的奶奶/生辰八字/陈明",
+      "新增 no_inject：雷印(第10章)、穆宁雪(第21章) 在对应章节前不应注入正文"
+    ]
+  },
+  "samples": [
+    {
+      "query_id": "nat-001",
+      "category": "ability_query",
+      "query": "莫凡的火系魔法是什么等级？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "火系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "8ce03ee6-7e7d-41b2-8d40-0a30893b6225"
+        ]
+      },
+      "difficulty": "normal",
+      "notes": "ability_profile：莫凡 火系 初阶，first_seen_chapter=1，status=new"
+    },
+    {
+      "query_id": "nat-002",
+      "category": "source_chunk",
+      "query": "张小侯的风系初阶技能叫什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 19,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "03ba3287-667c-4521-a3db-3c0f9d6ff6a0"
+        ],
+        "entities": [
+          "张小侯",
+          "风轨"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "normal",
+      "notes": "第19章『风之力，风轨！』：陆小斌让张小侯把风系初阶技能-风轨释放出来"
+    },
+    {
+      "query_id": "nat-003",
+      "category": "timeline_event",
+      "query": "第16章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "02f5f532-3ce5-4ae2-ad16-f060d82dfe70"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯",
+          "唐月"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "2519d144-a0bd-4d39-9f9d-d83033039dbd"
+        ]
+      },
+      "difficulty": "normal",
+      "notes": "event_timeline 第16章出场角色=莫凡+张小侯；正文第16章为『新女老师，唐月』，张小侯首次在正文出场"
+    },
+    {
+      "query_id": "nat-004",
+      "category": "world_rule",
+      "query": "这个世界里魔法体系的规则是什么？",
+      "expected": {
+        "evidence_type": "world_rule",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "魔法体系",
+          "法师"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "63fa8b18-52ed-4b16-958d-c52071b2d680"
+        ]
+      },
+      "difficulty": "normal",
+      "notes": "world_rule：法师可觉醒多种魔法系别；正文第1章补充：魔法觉醒在高中开学典礼上开启"
+    },
+    {
+      "query_id": "nat-005",
+      "category": "ability_query",
+      "query": "猴子是什么系的法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 19,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "03ba3287-667c-4521-a3db-3c0f9d6ff6a0"
+        ],
+        "entities": [
+          "猴子",
+          "张小侯",
+          "风系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：第19章 莫凡喊张小侯『猴子，来一个吧』；答案=风系"
+    },
+    {
+      "query_id": "nat-006",
+      "category": "source_chunk",
+      "query": "大魔头是谁？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 413,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "06b0b6ba-25ee-4ea9-a770-d9db3ebbf580"
+        ],
+        "entities": [
+          "大魔头",
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：第413章『真心相爱』艾图图称莫凡为『大魔头』"
+    },
+    {
+      "query_id": "nat-007",
+      "category": "source_chunk",
+      "query": "绿茶男是哪个角色？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 44,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36ebe45a-fa1d-48d1-8662-df104e306f5d"
+        ],
+        "entities": [
+          "绿茶男",
+          "绿茶",
+          "穆白"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：第44章『惊现妖魔！』『一组领队的人当然就是绿茶……当然就是副班长穆白！』；第570章标题即为『绿茶男』"
+    },
+    {
+      "query_id": "nat-008",
+      "category": "source_chunk",
+      "query": "冲榜狂魔是谁的外号？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 515,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "f11c6be5-f172-4c14-9f16-1e8cbf97d978"
+        ],
+        "entities": [
+          "冲榜狂魔",
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：第515章『顷刻间人们便又给莫凡取了一个外号，冲榜狂魔！』"
+    },
+    {
+      "query_id": "nat-009",
+      "category": "ability_query",
+      "query": "张小候的魔法是什么系的？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 19,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "4cd65daf-b7a3-49db-8f30-30a60061f62b",
+          "03ba3287-667c-4521-a3db-3c0f9d6ff6a0"
+        ],
+        "entities": [
+          "张小侯",
+          "张小候",
+          "风系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 侯→候：原文第20章附近 chunk 4cd65daf 即写作『张小候』（语料自身含错别字），检索需能命中『张小侯』"
+    },
+    {
+      "query_id": "nat-010",
+      "category": "character_first_appearance",
+      "query": "莫凡的雷息是什么时候觉醒的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "雷系",
+          "雷息"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "aedbd685-9bd5-49fd-905a-47a0cec042d1"
+        ]
+      },
+      "difficulty": "typo",
+      "notes": "错别字 系→息（同音）：莫凡 雷系 初阶 first_seen_chapter=1"
+    },
+    {
+      "query_id": "nat-011",
+      "category": "source_chunk",
+      "query": "风鬼是谁释放的？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 19,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "03ba3287-667c-4521-a3db-3c0f9d6ff6a0"
+        ],
+        "entities": [
+          "风轨",
+          "风鬼",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 轨→鬼（同音）：正确技能名『风轨』，第19章张小侯释放风轨"
+    },
+    {
+      "query_id": "nat-012",
+      "category": "character_first_appearance",
+      "query": "莫烦的火系是什么时候觉醒的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "莫烦",
+          "火系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "8ce03ee6-7e7d-41b2-8d40-0a30893b6225"
+        ]
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 凡→烦：莫凡 火系 first_seen_chapter=1"
+    },
+    {
+      "query_id": "nat-013",
+      "category": "ability_query",
+      "query": "张小猴掌握风系吗？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "03ba3287-667c-4521-a3db-3c0f9d6ff6a0"
+        ],
+        "entities": [
+          "张小侯",
+          "张小猴",
+          "风系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "46707d57-5ee9-4c6d-85f6-a711239b6f81"
+        ]
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 侯→猴，且『猴子』恰是张小侯的真实别名（第19章），容易误导检索误配"
+    },
+    {
+      "query_id": "nat-014",
+      "category": "ability_query",
+      "query": "莫凡觉醒了什么系？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡",
+          "火系",
+          "雷系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "8ce03ee6-7e7d-41b2-8d40-0a30893b6225",
+          "aedbd685-9bd5-49fd-905a-47a0cec042d1",
+          "516d3dd9-b660-4386-9524-e2d212831877"
+        ]
+      },
+      "difficulty": "same_name",
+      "notes": "同名不同人：主项目(全职法师)莫凡=火系+雷系，E2E 项目莫凡=仅火系；无项目上下文时答案不唯一，需消歧"
+    },
+    {
+      "query_id": "nat-015",
+      "category": "source_chunk",
+      "query": "赵满延是水系还是光系法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5",
+          "9bf533d9-101e-4199-9027-34db8041366d"
+        ],
+        "entities": [
+          "赵满延",
+          "水系",
+          "光系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "same_name",
+      "notes": "同名不同人+设定冲突：全职法师中赵满延=水系/光系/土系法师（facts），E2E 小说中『赵满延的光系魔法保护了张小侯』；答案取决于项目"
+    },
+    {
+      "query_id": "nat-016",
+      "category": "no_result",
+      "query": "林小雨是什么系的法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "林小雨"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_result",
+      "notes": "经全库检索确认『林小雨』0 命中，期望检索不召回任何证据（hit=False 为正确行为）；注意『秦羽』在语料中有 75 处命中，不能用作 no_result"
+    },
+    {
+      "query_id": "nat-017",
+      "category": "no_result",
+      "query": "莫凡的血型是什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "莫凡",
+          "血型"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_result",
+      "notes": "经全库检索确认『血型』0 命中，期望检索不召回证据"
+    },
+    {
+      "query_id": "nat-018",
+      "category": "no_result",
+      "query": "莫凡的妈妈叫什么名字？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "莫凡",
+          "妈妈"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_result",
+      "notes": "经全库检索确认『莫凡的妈妈/母亲』0 命中（正文只提过莫家兴，无母亲信息），期望检索不召回证据"
+    },
+    {
+      "query_id": "nat-019",
+      "category": "character_first_appearance",
+      "query": "张小侯是什么时候掌握风系的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "张小侯",
+          "风系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "46707d57-5ee9-4c6d-85f6-a711239b6f81",
+          "07e8bde0-f06a-487e-8ac5-6869469eb0a1"
+        ]
+      },
+      "difficulty": "conflict",
+      "notes": "多来源冲突：主项目 ability_profile=第16章、E2E 项目=第1章、正文第19章才首次展示风轨；无单一正确答案，需按 source_priority/canon_level 仲裁"
+    },
+    {
+      "query_id": "nat-020",
+      "category": "ability_query",
+      "query": "赵满延是不是水系法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "赵满延",
+          "水系",
+          "光系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "conflict",
+      "notes": "事实冲突：facts 有『张小侯和赵满延都是水系法师』『赵满延的水系不太管用』，也有『赵满延的光系魔法对青黄小妖有致命效果』『土系魂种』，E2E 小说又写其光系；多来源说法不一"
+    },
+    {
+      "query_id": "nat-021",
+      "category": "ability_query",
+      "query": "张小侯掌握哪些魔法系？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "风系",
+          "水系",
+          "土系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "46707d57-5ee9-4c6d-85f6-a711239b6f81"
+        ]
+      },
+      "difficulty": "conflict",
+      "notes": "结构化表与自由文本不一致：ability_profile 仅登记风系，但 knowledge_facts 含『张小侯和赵满延都是水系法师』『张小侯拥有的土系灵种-流沼』『张小侯不是冰系法师』"
+    },
+    {
+      "query_id": "nat-022",
+      "category": "character_first_appearance",
+      "query": "莫凡第1章觉醒了哪些系？后来又觉醒了哪些系？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "火系",
+          "雷系",
+          "召唤系",
+          "暗影系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "8ce03ee6-7e7d-41b2-8d40-0a30893b6225",
+          "aedbd685-9bd5-49fd-905a-47a0cec042d1",
+          "427b1da9-1190-4096-b200-65c8f971e83e",
+          "a341a56c-c05b-44de-b419-36bd614fd532"
+        ]
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节聚合：第1章=火系+雷系（ability_profile），后期=召唤系（唐月对莫凡觉醒召唤系诧异）、暗影系（唐月和莫凡都是暗影系法师）；需聚合多个章节的证据"
+    },
+    {
+      "query_id": "nat-023",
+      "category": "timeline_event",
+      "query": "张小侯第一次在正文出现是第几章？他后来在第19章做了什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "02f5f532-3ce5-4ae2-ad16-f060d82dfe70",
+          "03ba3287-667c-4521-a3db-3c0f9d6ff6a0"
+        ],
+        "entities": [
+          "张小侯",
+          "风轨"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节事件：张小侯首次出场=第16章（新女老师，唐月），第19章『风之力，风轨！』在宿舍走廊释放风轨"
+    },
+    {
+      "query_id": "nat-024",
+      "category": "timeline_event",
+      "query": "从莫凡觉醒魔法到唐月成为他的新老师，隔了多少章？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "02f5f532-3ce5-4ae2-ad16-f060d82dfe70"
+        ],
+        "entities": [
+          "莫凡",
+          "唐月",
+          "觉醒"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节推理：莫凡觉醒=第1章（ability_profile first_seen_chapter=1），唐月新老师=第16章（正文标题『新女老师，唐月』），间隔约15章"
+    },
+    {
+      "query_id": "nat-025",
+      "category": "meta",
+      "query": "我写到第15章，张小侯的风系设定先不要写进正文",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "风系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "46707d57-5ee9-4c6d-85f6-a711239b6f81"
+        ]
+      },
+      "difficulty": "no_inject",
+      "notes": "no_inject：张小侯风系 first_seen_chapter=16，写第15章及之前时不应注入该设定；检索若命中该证据=注入违规"
+    },
+    {
+      "query_id": "nat-026",
+      "category": "meta",
+      "query": "正文里不要出现'证据''置信度''来源'这类词",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "证据",
+          "置信度",
+          "来源"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_inject",
+      "notes": "no_inject（元查询）：检索结果的元数据字段（证据/置信度/来源）只用于引用追溯，不应被注入到正文文本中"
+    },
+    {
+      "query_id": "nat-027",
+      "category": "meta",
+      "query": "写第1章觉醒仪式场景时，先别提前透露莫凡后面的召唤系设定",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "召唤系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_inject",
+      "notes": "no_inject：召唤系是莫凡后期觉醒的系（knowledge_facts：唐月对莫凡觉醒了召唤系更加诧异），写第1章觉醒仪式时不应注入该后期设定"
+    },
+    {
+      "query_id": "nat-028",
+      "category": "source_chunk",
+      "query": "张小侯和赵满延都是什么系的法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "赵满延",
+          "水系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "normal",
+      "notes": "knowledge_facts 原文：『张小侯和赵满延都是水系法师，他们在海里活动非常自如』"
+    },
+    {
+      "query_id": "nat-029",
+      "category": "character_first_appearance",
+      "query": "莫凡的雷系星尘是什么时候出现的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "雷系",
+          "雷系星尘"
+        ],
+        "chapter_no": 1,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "normal",
+      "notes": "莫凡 雷系 first_seen_chapter=1；正文『这是莫凡的雷霆系星尘，前不久觉醒的力量』"
+    },
+    {
+      "query_id": "nat-030",
+      "category": "ability_query",
+      "query": "唐月老师是不是火系魔法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "唐月",
+          "火系"
+        ],
+        "chapter_no": 16,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "normal",
+      "notes": "facts『看上去温柔贤良的唐月老师竟然是一位火魔法师』；第16章『新女老师，唐月』"
+    },
+    {
+      "query_id": "nat-031",
+      "category": "timeline_event",
+      "query": "穆白在第25章释放了什么技能？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "穆白",
+          "冰系",
+          "冰蔓"
+        ],
+        "chapter_no": 25,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "normal",
+      "notes": "第25章『冰系，冰蔓！』：穆白把控七颗星子后释放冰系技能-冰蔓"
+    },
+    {
+      "query_id": "nat-032",
+      "category": "source_chunk",
+      "query": "张小侯的土系灵种叫什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "土系",
+          "流沼"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "normal",
+      "notes": "facts『张小侯拥有的土系灵种-流沼』『流沼便是土系灵种中的极品』"
+    },
+    {
+      "query_id": "nat-033",
+      "category": "timeline_event",
+      "query": "第3章开学大典发生了什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "开学大典"
+        ],
+        "chapter_no": 3,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "normal",
+      "notes": "第3章标题『开学大典』：九月一号开学，对所有魔法学生都是无比重大的日子"
+    },
+    {
+      "query_id": "nat-034",
+      "category": "source_chunk",
+      "query": "莫凡完成火滋释放是在第几章？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "火滋",
+          "火系"
+        ],
+        "chapter_no": 25,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "normal",
+      "notes": "第25章『莫凡完成火滋的释放后所有人的反应比穆白的冰蔓更加强烈十倍』"
+    },
+    {
+      "query_id": "nat-035",
+      "category": "character_profile",
+      "query": "泥猴子为什么叫泥猴子？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "泥猴子"
+        ],
+        "chapter_no": 2,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：第2章『一个跟泥猴子一样的少年就跳了出来…这泥猴子叫张候』（张小侯）"
+    },
+    {
+      "query_id": "nat-036",
+      "category": "source_chunk",
+      "query": "大魔头莫凡的称号从哪一章开始有的？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "大魔头"
+        ],
+        "chapter_no": 171,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：第171章『大魔头莫凡真就将大家的东西给抢空了』起正式出现"
+    },
+    {
+      "query_id": "nat-037",
+      "category": "source_chunk",
+      "query": "全校公敌是谁给莫凡起的外号？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "全校公敌"
+        ],
+        "chapter_no": 188,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：第188章『莫凡这个名字早就成为了全校公敌，谁让莫凡把全校新生的资源全部占为己有了』"
+    },
+    {
+      "query_id": "nat-038",
+      "category": "character_profile",
+      "query": "绿茶男指的是穆白吗？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "穆白",
+          "绿茶男"
+        ],
+        "chapter_no": 7,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：第7章标题『绿茶男』；第574章『绿茶男，好久不见』莫凡打量着穆白"
+    },
+    {
+      "query_id": "nat-039",
+      "category": "source_chunk",
+      "query": "冲榜狂魔这个外号是什么时候出现的？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "冲榜狂魔"
+        ],
+        "chapter_no": 519,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：第519章『顷刻间人们便又给莫凡取了一个外号，冲榜狂魔！』"
+    },
+    {
+      "query_id": "nat-040",
+      "category": "character_profile",
+      "query": "凡哥和莫凡哥是同一个人吗？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "凡哥",
+          "莫凡哥"
+        ],
+        "chapter_no": 2,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名核对：凡哥（236 处）与莫凡哥（94 处）都是正文对莫凡的称呼，同一人"
+    },
+    {
+      "query_id": "nat-041",
+      "category": "source_chunk",
+      "query": "张小候的风系初阶技能叫什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "张小候",
+          "风轨"
+        ],
+        "chapter_no": 19,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 侯→候（语料自身误写）：正确技能名风轨，第19章『风之力，风轨！』"
+    },
+    {
+      "query_id": "nat-042",
+      "category": "source_chunk",
+      "query": "张候在哪一章释放了风系技能？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "张候",
+          "风轨"
+        ],
+        "chapter_no": 19,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 侯→候（语料自身误写『张候』7 处）：张小侯第19章释放风轨"
+    },
+    {
+      "query_id": "nat-043",
+      "category": "character_profile",
+      "query": "慕白和穆白是同一个角色吗？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "穆白",
+          "慕白"
+        ],
+        "chapter_no": 10,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 穆→慕（语料自身误写 23 处）：同一角色，正确写法穆白"
+    },
+    {
+      "query_id": "nat-044",
+      "category": "ability_query",
+      "query": "雷息是什么系的魔法？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "雷系",
+          "雷息"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 系→息（同音，语料含『雷息』6 处）：正确词雷系，莫凡的雷系星尘"
+    },
+    {
+      "query_id": "nat-045",
+      "category": "source_chunk",
+      "query": "风鬼是张小侯释放的技能吗？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "风轨",
+          "风鬼"
+        ],
+        "chapter_no": 19,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 轨→鬼（同音）：正确技能名风轨，第19章张小侯释放风轨"
+    },
+    {
+      "query_id": "nat-046",
+      "category": "ability_query",
+      "query": "赵满廷的光系魔法厉害吗？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "赵满延",
+          "赵满廷",
+          "光系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 延→廷（近形）：赵满延是光系魔法师，facts『赵满延的光系魔法对青黄小妖有致命效果』"
+    },
+    {
+      "query_id": "nat-047",
+      "category": "ability_query",
+      "query": "莫烦觉醒了什么系？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "莫烦",
+          "火系",
+          "雷系"
+        ],
+        "chapter_no": 1,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 凡→烦：莫凡第1章觉醒火系+雷系（ability_profile）"
+    },
+    {
+      "query_id": "nat-048",
+      "category": "ability_query",
+      "query": "张小猴是风系法师吗？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "张小猴",
+          "风系"
+        ],
+        "chapter_no": 16,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 侯→猴：张小侯主项目 ability_profile=风系（第16章），『猴子』恰是真实别名，易误导"
+    },
+    {
+      "query_id": "nat-049",
+      "category": "source_chunk",
+      "query": "赵曼延的光系魔法有什么效果？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "赵满延",
+          "赵曼延",
+          "光系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 满→曼：赵满延光系魔法对青黄小妖有致命效果（facts）"
+    },
+    {
+      "query_id": "nat-050",
+      "category": "ability_query",
+      "query": "木白的冰系技能是什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "穆白",
+          "木白",
+          "冰系",
+          "冰蔓"
+        ],
+        "chapter_no": 25,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 穆→木：穆白第25章释放冰系技能-冰蔓"
+    },
+    {
+      "query_id": "nat-051",
+      "category": "source_chunk",
+      "query": "汤月老师的暗影系技能厉害吗？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "唐月",
+          "汤月",
+          "暗影系"
+        ],
+        "chapter_no": 16,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 唐→汤：facts『莫凡是见识过唐月老师施展暗影系技能』"
+    },
+    {
+      "query_id": "nat-052",
+      "category": "source_chunk",
+      "query": "星晨魔器是谁的？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "星尘魔器",
+          "星晨魔器"
+        ],
+        "chapter_no": 20,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 尘→晨：第20章标题『星尘魔器』，正文中的魔器（唐月老师处理过星尘魔器事件）"
+    },
+    {
+      "query_id": "nat-053",
+      "category": "ability_query",
+      "query": "莫凡的雷系是哪个项目的设定？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5",
+          "06f34d62-2c85-4dac-958b-41a0254da46b"
+        ],
+        "entities": [
+          "莫凡",
+          "雷系"
+        ],
+        "chapter_no": 1,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "same_name",
+      "notes": "同名不同人：雷系仅主项目 d62d4447 的莫凡有，E2E 项目与测试小说的莫凡都没有雷系"
+    },
+    {
+      "query_id": "nat-054",
+      "category": "source_chunk",
+      "query": "张小侯在测试小说里出现吗？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "06f34d62-2c85-4dac-958b-41a0254da46b"
+        ],
+        "entities": [
+          "张小侯",
+          "风轨"
+        ],
+        "chapter_no": 1,
+        "project_id": "de04afc8-306e-41b6-97c9-904b4a0da9bd"
+      },
+      "difficulty": "same_name",
+      "notes": "测试小说（de04afc8）第一章：『第二章 初战 张小侯释放风轨』，与主项目同名角色"
+    },
+    {
+      "query_id": "nat-055",
+      "category": "source_chunk",
+      "query": "两个项目里的赵满延光系设定一样吗？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "赵满延",
+          "光系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "same_name",
+      "notes": "同名不同人：主项目赵满延=主修光系（另有水系/雷系说法），E2E 项目=光系魔法保护张小侯"
+    },
+    {
+      "query_id": "nat-056",
+      "category": "character_profile",
+      "query": "莫凡和E2E莫凡是同一个人吗？",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "same_name",
+      "notes": "同名不同人：两个项目都有莫凡（character_profile 各 1 行），能力设定不同（火+雷 vs 火），需项目上下文消歧"
+    },
+    {
+      "query_id": "nat-057",
+      "category": "character_first_appearance",
+      "query": "张小侯的风系到底第几章掌握的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "张小侯",
+          "风系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "conflict",
+      "notes": "多来源冲突：主项目=16、E2E=1、正文第19章才首次展示风轨，无单一正确答案"
+    },
+    {
+      "query_id": "nat-058",
+      "category": "source_chunk",
+      "query": "鳞皮母妖是莫凡杀的吗？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "赵满延",
+          "鳞皮母妖"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "conflict",
+      "notes": "事实冲突：校方公布赵满延杀死鳞皮母妖，学生流传『真正杀死鳞皮母妖的一定是那个莫凡』"
+    },
+    {
+      "query_id": "nat-059",
+      "category": "ability_query",
+      "query": "张小侯有没有水系？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "水系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "conflict",
+      "notes": "结构化表 vs facts 冲突：ability_profile 仅风系，facts『张小侯和赵满延都是水系法师』"
+    },
+    {
+      "query_id": "nat-060",
+      "category": "ability_query",
+      "query": "莫凡到底是什么系？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5",
+          "06f34d62-2c85-4dac-958b-41a0254da46b"
+        ],
+        "entities": [
+          "莫凡",
+          "火系",
+          "雷系"
+        ],
+        "chapter_no": 1,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "conflict",
+      "notes": "多来源矛盾：主项目=火+雷（天生双系），E2E=火，测试小说=火；答案取决于项目上下文"
+    },
+    {
+      "query_id": "nat-061",
+      "category": "timeline_event",
+      "query": "从张小侯首现到释放风轨隔了几章？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "风轨"
+        ],
+        "chapter_no": 16,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节：张小侯第16章首现（新女老师，唐月），第19章释放风轨（风之力，风轨！），间隔3章"
+    },
+    {
+      "query_id": "nat-062",
+      "category": "timeline_event",
+      "query": "穆白从绿茶男到冰系高手用了多少章？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "穆白",
+          "绿茶男",
+          "冰系"
+        ],
+        "chapter_no": 25,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节：第7章『绿茶男』，第25章『冰系，冰蔓！』穆白把控七颗星子释放冰蔓"
+    },
+    {
+      "query_id": "nat-063",
+      "category": "timeline_event",
+      "query": "莫凡觉醒仪式和释放雷印之间发生了什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "雷印",
+          "雷系"
+        ],
+        "chapter_no": 10,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节：第4章觉醒仪式（火系+雷系）→ 第5/6章揭示天生双系 → 第10章释放雷印（5个月）"
+    },
+    {
+      "query_id": "nat-064",
+      "category": "source_chunk",
+      "query": "莫凡外号从大魔头到冲榜狂魔经历了什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "大魔头",
+          "冲榜狂魔",
+          "全校公敌"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节聚合：大魔头（第171章）→ 全校公敌（第188章）→ 冲榜狂魔（第519章），需聚合多章节外号证据"
+    },
+    {
+      "query_id": "nat-065",
+      "category": "no_result",
+      "query": "苏小小是谁？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "苏小小"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_result",
+      "notes": "查无结果：『苏小小』全库 0 命中，期望检索不召回证据"
+    },
+    {
+      "query_id": "nat-066",
+      "category": "no_result",
+      "query": "莫凡的奶奶叫什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "莫凡",
+          "奶奶"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_result",
+      "notes": "查无结果：短语『莫凡的奶奶』全库 0 命中（正文只提莫家兴，无奶奶信息）"
+    },
+    {
+      "query_id": "nat-067",
+      "category": "no_result",
+      "query": "莫凡的生辰八字是什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "莫凡",
+          "生辰八字"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_result",
+      "notes": "查无结果：『生辰八字』全库 0 命中，期望检索不召回证据"
+    },
+    {
+      "query_id": "nat-068",
+      "category": "no_result",
+      "query": "陈明是哪个角色？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "陈明"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_result",
+      "notes": "查无结果：『陈明』全库 0 命中，期望检索不召回证据"
+    },
+    {
+      "query_id": "nat-069",
+      "category": "meta",
+      "query": "写第10章之前不要透露莫凡的雷印",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "雷印"
+        ],
+        "chapter_no": 10,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_inject",
+      "notes": "no_inject：雷印在第10章才首次释放，写第10章之前不应注入该设定；检索若命中=注入违规"
+    },
+    {
+      "query_id": "nat-070",
+      "category": "meta",
+      "query": "写到第20章前，别提前写穆宁雪降临学校",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "穆宁雪"
+        ],
+        "chapter_no": 21,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_inject",
+      "notes": "no_inject：穆宁雪第21章（降临学校，穆宁雪）才出现，写第20章及之前不应注入该剧情"
+    }
+  ]
+}

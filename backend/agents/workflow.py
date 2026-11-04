@@ -18,8 +18,8 @@ import uuid
 from typing import TypedDict, Annotated, Sequence
 
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
 
+from agents.checkpointer import get_checkpointer
 from agents.llm_provider import get_llm_provider, LLMProvider
 from harness.llm_call_logger import LoggedLLMProvider
 from rag.context_loader import ContextLoader
@@ -29,13 +29,10 @@ from services.skill_pack_planner import SkillPackPlan, plan_workflow_skill_pack
 logger = logging.getLogger(__name__)
 
 
-# In-memory checkpoint storage must be shared across requests. The generate
-# endpoint pauses at human_review and returns a thread_id; the resume endpoint
-# uses that thread_id in a separate HTTP request.
-#
-# 这里不能在 get_creative_app 里每次 new MemorySaver，否则 generate 请求暂停后，
-# resume 请求拿到的是另一个空 checkpointer，会找不到 thread_id 对应状态。
-_CHECKPOINTER = MemorySaver()
+# Checkpointer 必须跨请求共享：generate 在 human_review 暂停后返回 thread_id，
+# resume 在另一个 HTTP 请求用同一 thread_id 找回状态。get_checkpointer 按配置
+# 返回持久化（sqlite/postgres）或内存 checkpointer；详见 agents/checkpointer.py。
+_CHECKPOINTER = get_checkpointer()
 
 
 # --- 工作流状态 ---
@@ -330,11 +327,12 @@ async def context_loader_node(state: CreativeState) -> dict:
                         ) if part
                     ) or None,
                     selected_outline_ids=selected_outlines or None,
-                    selected_character_ids=selected_characters or None,
-                    selected_world_entry_ids=selected_world_entries or None,
-                    selected_hidden_thread_ids=selected_hidden_threads or None,
+                    selected_character_ids=selected_characters,
+                    selected_world_entry_ids=selected_world_entries,
+                    selected_hidden_thread_ids=selected_hidden_threads,
                     include_knowledge_sources=bool(state.get("include_knowledge_sources", False)),
                     include_previous_summary=bool(state.get("include_previous_summary", False)),
+                    strict_material_selection=state.get("mode") == "full_pipeline",
                 )
                 context_summary = ctx.context_summary(
                     selected_outline_ids=selected_outlines,

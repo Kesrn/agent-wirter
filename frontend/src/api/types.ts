@@ -188,6 +188,7 @@ export interface WorldEntry {
   title: string
   category: string
   scope_type: 'global' | 'chapter'
+  chapter_sequence_number: number | null
   content: string
   rules: Record<string, unknown> | null
   confidence: 'low' | 'medium' | 'high'
@@ -376,6 +377,7 @@ export interface ApiWorldEntry {
   title: string
   category: string
   scope_type: 'global' | 'chapter'
+  chapter_sequence_number: number | null
   content: string
   rules: Record<string, unknown> | null
   confidence: string
@@ -611,6 +613,7 @@ export interface WorldEntryCreatePayload {
   title: string
   category?: string
   scope_type?: 'global' | 'chapter'
+  chapter_sequence_number?: number | null
   content: string
   rules?: Record<string, unknown> | null
   confidence?: 'low' | 'medium' | 'high'
@@ -620,6 +623,7 @@ export interface WorldEntryUpdatePayload {
   title?: string
   category?: string
   scope_type?: 'global' | 'chapter'
+  chapter_sequence_number?: number | null
   content?: string
   rules?: Record<string, unknown> | null
   confidence?: 'low' | 'medium' | 'high'
@@ -870,7 +874,7 @@ export interface ArticleGenerateParams {
 // ─── SSE types ───
 
 /** SSE event types emitted by the backend generate/test endpoints */
-export type SSEEventType = 'progress' | 'agent_start' | 'agent_output' | 'agent_done' | 'writer_output' | 'content_output' | 'editor_output' | 'architect_output' | 'critic_output' | 'consistency_check' | 'enhance_directions' | 'turn_suggestions' | 'content_suggestions' | 'article_review' | 'revision_suggestions' | 'skill_pack' | 'generation_record' | 'clarification_required' | 'task_card_review_required' | 'done' | 'error' | 'run_created' | 'run_status' | 'run_step'
+export type SSEEventType = 'progress' | 'agent_start' | 'agent_output' | 'agent_done' | 'writer_output' | 'content_output' | 'editor_output' | 'architect_output' | 'critic_output' | 'consistency_check' | 'enhance_directions' | 'turn_suggestions' | 'content_suggestions' | 'article_review' | 'revision_suggestions' | 'skill_pack' | 'generation_record' | 'clarification_required' | 'task_card_review_required' | 'quality_check' | 'done' | 'error' | 'run_created' | 'run_status' | 'run_step'
 
 /** SSE envelope parsed from the backend stream */
 export interface SSEEnvelope {
@@ -1010,6 +1014,32 @@ export interface GenerationRecordPayload {
   id: string
   status: GenerationRecordStatus
   langfuse_trace_id?: string | null
+}
+
+// ─── Quality Check ───
+
+/** Individual quality issue from backend QualityIssue */
+export interface QualityIssuePayload {
+  code: string
+  severity: 'ERROR' | 'WARNING'
+  message: string
+  evidence?: string | null
+}
+
+/** QualityReport from backend chapter_quality.py */
+export interface QualityReportPayload {
+  stage: string
+  status: 'running' | 'passed' | 'warning' | 'retrying' | 'failed'
+  target_chars: number
+  actual_chars: number
+  min_chars: number
+  max_chars: number
+  retry_count: number
+  max_retries: number
+  similarity?: number | null
+  changed_chars?: number | null
+  requires_revision?: boolean | null
+  issues: QualityIssuePayload[]
 }
 
 // ─── Clarification Loop (生成前澄清) ───
@@ -1207,7 +1237,7 @@ export type DocumentVersionDiffResponse = ChapterVersionDiffResponse
 
 // ─── AI Generation History ───
 
-export type GenerationRecordStatus = 'candidate' | 'applied' | 'discarded'
+export type GenerationRecordStatus = 'candidate' | 'applied' | 'discarded' | 'superseded'
 
 export interface ApiGenerationRecordListItem {
   id: string

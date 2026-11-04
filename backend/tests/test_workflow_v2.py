@@ -21,6 +21,7 @@ import re
 import uuid
 
 import pytest
+from sqlalchemy import delete, select
 
 from test_smoke import client, test_session_factory, setup_db, _auth_headers  # noqa: F401
 
@@ -159,6 +160,61 @@ class TestArchitectNode:
         assert "chapter_task_card" in result
         assert "## 用户本轮写作要求" in captured["user_prompt"]
         assert "多写心理变化，少用旁白" in captured["user_prompt"]
+
+    def test_architect_normalizes_string_task_card_fields(self, monkeypatch):
+        """模型把对象/数组字段返回成字符串时，审核和 Writer 仍收到稳定结构。"""
+        from agents import workflow_v2
+
+        class VariantProvider:
+            async def generate(self, system_prompt, user_prompt, temperature=0.7, max_tokens=4096):
+                return json.dumps({
+                    "chapter_title": "异常结构任务卡",
+                    "core_task": "承接上一章并推进冲突",
+                    "scenes": ["主角进入现场", "发现关键证据"],
+                    "information_rules": "不要提前揭示幕后主使",
+                    "forbidden": "新增角色, 改写既定结局",
+                    "word_budget": "约 2200 字",
+                }, ensure_ascii=False)
+
+        monkeypatch.setattr(workflow_v2, "get_llm_provider", lambda _config: VariantProvider())
+        monkeypatch.setattr(
+            workflow_v2,
+            "_maybe_wrap_llm",
+            lambda llm, _state, agent_name, include_context=False: llm,
+        )
+
+        result = asyncio.new_event_loop().run_until_complete(
+            workflow_v2.chapter_architect_node(_make_base_state())
+        )
+        card = result["chapter_task_card"]
+
+        assert card["scenes"] == [
+            {"title": "场景1", "scene_goal": "主角进入现场"},
+            {"title": "场景2", "scene_goal": "发现关键证据"},
+        ]
+        assert card["information_rules"] == {
+            "may_reveal": [],
+            "hint_only": [],
+            "forbidden": ["不要提前揭示幕后主使"],
+        }
+        assert card["forbidden"] == ["新增角色", "改写既定结局"]
+        assert card["word_budget"] == 2200
+
+    def test_task_card_formatter_accepts_legacy_string_information_rules(self):
+        """旧 checkpoint 即使保留字符串规则，也不能在恢复创作时触发 .get 崩溃。"""
+        from agents.workflow_v2 import _format_task_card
+
+        formatted = _format_task_card({
+            "core_task": "推进本章冲突",
+            "scenes": "进入现场；发现证据",
+            "information_rules": "不得揭示凶手身份",
+            "forbidden": "新增设定",
+        })
+
+        assert "核心任务：推进本章冲突" in formatted
+        assert "场景1" in formatted
+        assert "禁止揭示：不得揭示凶手身份" in formatted
+        assert "禁止事项：新增设定" in formatted
 
     def test_architect_repairs_unescaped_newline_in_task_card_json(self, monkeypatch):
         """模型把多行任务直接写进 JSON 字符串时，仍能生成可审核任务卡。"""
@@ -418,6 +474,253 @@ class TestHITLApprove:
         assert resp_after.json()["content"]
 
 
+class TestTaskCardApprovalFinalReview:
+    def test_task_card_approval_returns_candidate_content_for_final_review(self):
+        """任务卡确认后，最终审核 SSE 必须直接携带候选正文。"""
+        headers = _auth_headers("i4_task_card_final", "i4pass")
+        resp = client.post("/api/projects", json={"title": "任务卡最终审核测试"}, headers=headers)
+        project_id = resp.json()["id"]
+        client.post(f"/api/projects/{project_id}/chapters", json={
+            "title": "第一章", "sequence_number": 1,
+        }, headers=headers)
+
+        resp_gen = client.post(f"/api/projects/{project_id}/chapters/generate", json={
+            "chapter_num": 1,
+            "mode": "full_pipeline",
+            "planning_review": True,
+            "pre_generation_mode": "FAST",
+        }, headers=headers)
+        review_payloads = re.findall(
+            r"event: task_card_review_required\ndata: (.+?)\n\n",
+            resp_gen.text,
+        )
+        assert review_payloads, resp_gen.text
+        review_payload = json.loads(review_payloads[-1])
+        thread_id = review_payload["thread_id"]
+        task_card = review_payload["task_card"]
+
+        resp_resume = client.post(
+            f"/api/projects/{project_id}/chapters/resume",
+            params={"thread_id": thread_id, "action": "approve_task_card"},
+            json={"task_card": task_card},
+            headers=headers,
+        )
+        assert resp_resume.status_code == 200
+
+        quality_payloads = [
+            json.loads(raw)
+            for raw in re.findall(r"event: quality_check\ndata: (.+?)\n\n", resp_resume.text)
+        ]
+        assert {payload.get("stage") for payload in quality_payloads} >= {"draft", "edited", "final"}
+        assert any(payload.get("stage") == "final" and payload.get("status") == "passed" for payload in quality_payloads)
+
+        final_payloads = []
+        for event_name in ("progress", "done"):
+            for raw in re.findall(rf"event: {event_name}\ndata: (.+?)\n\n", resp_resume.text):
+                payload = json.loads(raw)
+                if payload.get("message") in {"等待人工审核", "任务卡确认，生成完成"}:
+                    final_payloads.append(payload)
+
+        assert final_payloads, resp_resume.text
+        assert any((payload.get("content") or "").strip() for payload in final_payloads), final_payloads
+
+    def test_final_approval_does_not_reuse_task_card_interrupt(self):
+        """旧任务缺少终审记录时，也不能把任务卡 APPROVE 当成正文已批准。"""
+        from models.human_interrupt import HumanInterrupt
+        from models.harness_enums import InterruptDecision
+
+        headers = _auth_headers("i4_task_card_interrupt_scope", "i4pass")
+        resp = client.post("/api/projects", json={"title": "审核阶段隔离测试"}, headers=headers)
+        project_id = resp.json()["id"]
+        client.post(f"/api/projects/{project_id}/chapters", json={
+            "title": "第一章", "sequence_number": 1,
+        }, headers=headers)
+
+        resp_gen = client.post(f"/api/projects/{project_id}/chapters/generate", json={
+            "chapter_num": 1,
+            "mode": "full_pipeline",
+            "planning_review": True,
+            "pre_generation_mode": "FAST",
+        }, headers=headers)
+        review_payloads = re.findall(
+            r"event: task_card_review_required\ndata: (.+?)\n\n",
+            resp_gen.text,
+        )
+        assert review_payloads, resp_gen.text
+        review_payload = json.loads(review_payloads[-1])
+        thread_id = review_payload["thread_id"]
+
+        resp_resume = client.post(
+            f"/api/projects/{project_id}/chapters/resume",
+            params={"thread_id": thread_id, "action": "approve_task_card"},
+            json={"task_card": review_payload["task_card"]},
+            headers=headers,
+        )
+        assert resp_resume.status_code == 200
+        assert "等待人工审核" in resp_resume.text
+
+        async def simulate_legacy_missing_final_review_interrupt():
+            async with test_session_factory() as session:
+                task_card_result = await session.execute(
+                    select(HumanInterrupt).where(
+                        HumanInterrupt.thread_id == thread_id,
+                        HumanInterrupt.step_name == "task_card_review",
+                    )
+                )
+                task_card_interrupt = task_card_result.scalar_one()
+                assert task_card_interrupt.resolved is True
+                assert task_card_interrupt.decision == InterruptDecision.APPROVE
+
+                # 模拟线上旧数据：任务卡已确认，但生成完成时没有写 human_review。
+                await session.execute(
+                    delete(HumanInterrupt).where(
+                        HumanInterrupt.thread_id == thread_id,
+                        HumanInterrupt.step_name == "human_review",
+                    )
+                )
+                await session.commit()
+
+        asyncio.run(simulate_legacy_missing_final_review_interrupt())
+
+        final_approve = client.post(
+            f"/api/projects/{project_id}/chapters/resume",
+            params={"thread_id": thread_id, "action": "approve"},
+            headers=headers,
+        )
+        assert final_approve.status_code == 200
+        assert "event: done" in final_approve.text
+        assert "不可重复操作" not in final_approve.text
+
+        async def assert_backfilled_final_review_interrupt():
+            async with test_session_factory() as session:
+                result = await session.execute(
+                    select(HumanInterrupt).where(
+                        HumanInterrupt.thread_id == thread_id,
+                        HumanInterrupt.step_name == "human_review",
+                    )
+                )
+                human_review_interrupt = result.scalar_one()
+                assert human_review_interrupt.resolved is True
+                assert human_review_interrupt.decision == InterruptDecision.APPROVE
+
+        asyncio.run(assert_backfilled_final_review_interrupt())
+
+    def test_task_card_resume_length_warning_preserves_candidate(self, monkeypatch):
+        """篇幅超限不能浪费一次重写，必须保留候选稿并进入人工审核。"""
+        import agents.workflow_v2 as workflow_v2
+
+        writer_calls: list[int] = []
+
+        async def always_invalid_writer(state):
+            writer_calls.append(len(writer_calls) + 1)
+            return {"draft": "超" * 4000 + "。"}
+
+        # 直接替换 graph 节点，避免测试依赖具体 provider/prompt 分支。
+        monkeypatch.setattr(workflow_v2, "chapter_writer_node", always_invalid_writer)
+
+        headers = _auth_headers("i4_task_card_quality_fail", "i4pass")
+        resp = client.post("/api/projects", json={"title": "任务卡质量失败测试"}, headers=headers)
+        project_id = resp.json()["id"]
+        client.post(f"/api/projects/{project_id}/chapters", json={
+            "title": "第一章", "sequence_number": 1,
+        }, headers=headers)
+
+        resp_gen = client.post(f"/api/projects/{project_id}/chapters/generate", json={
+            "chapter_num": 1,
+            "mode": "full_pipeline",
+            "planning_review": True,
+            "pre_generation_mode": "FAST",
+            "target_words": 2000,
+        }, headers=headers)
+        review_payloads = re.findall(
+            r"event: task_card_review_required\ndata: (.+?)\n\n",
+            resp_gen.text,
+        )
+        assert review_payloads, resp_gen.text
+        review_payload = json.loads(review_payloads[-1])
+
+        resp_resume = client.post(
+            f"/api/projects/{project_id}/chapters/resume",
+            params={"thread_id": review_payload["thread_id"], "action": "approve_task_card"},
+            json={"task_card": review_payload["task_card"]},
+            headers=headers,
+        )
+        assert resp_resume.status_code == 200
+        assert len(writer_calls) == 1
+        assert "event: quality_check" in resp_resume.text
+        quality_payloads = [
+            json.loads(raw)
+            for raw in re.findall(r"event: quality_check\ndata: (.+?)\n\n", resp_resume.text)
+        ]
+        assert any(
+            payload.get("stage") == "draft"
+            and payload.get("status") == "warning"
+            and any(issue.get("code") == "CONTENT_TOO_LONG" for issue in payload.get("issues", []))
+            for payload in quality_payloads
+        )
+        assert '"status": "retrying"' not in resp_resume.text
+        assert "event: error" not in resp_resume.text
+        assert "event: generation_record" in resp_resume.text
+        assert '"status": "COMPLETED"' not in resp_resume.text
+        assert "等待人工审核" in resp_resume.text
+
+        generations = client.get(
+            f"/api/projects/{project_id}/chapters/1/generations",
+            headers=headers,
+        )
+        assert generations.status_code == 200
+        assert len(generations.json()) == 1
+        assert generations.json()[0]["status"] == "candidate"
+
+
+
+class TestFinalClarificationRound:
+    def test_last_round_answers_replan_task_card_instead_of_error(self):
+        """max_rounds=1 时，第 1/1 轮答案应被整理并返回可提交任务卡。"""
+        headers = _auth_headers("i4_last_clarification", "i4pass")
+        resp = client.post("/api/projects", json={"title": "最后一轮澄清测试"}, headers=headers)
+        project_id = resp.json()["id"]
+        client.post(f"/api/projects/{project_id}/chapters", json={
+            "title": "第一章", "sequence_number": 1,
+        }, headers=headers)
+
+        resp_gen = client.post(f"/api/projects/{project_id}/chapters/generate", json={
+            "chapter_num": 1,
+            "mode": "full_pipeline",
+            "planning_review": True,
+            "pre_generation_mode": "PLANNING",
+            "max_clarification_rounds": 1,
+        }, headers=headers)
+        review_payloads = re.findall(
+            r"event: task_card_review_required\ndata: (.+?)\n\n",
+            resp_gen.text,
+        )
+        assert review_payloads, resp_gen.text
+        first_review = json.loads(review_payloads[-1])
+        assert first_review["clarification_status"] == "pending"
+        assert first_review["clarification"]["round"] == 1
+        assert first_review["clarification"]["max_rounds"] == 1
+
+        resp_refresh = client.post(
+            f"/api/projects/{project_id}/chapters/resume",
+            params={"thread_id": first_review["thread_id"], "action": "refresh_task_card"},
+            json={"clarification_answers": {"chapter_goal": "conflict"}},
+            headers=headers,
+        )
+        assert resp_refresh.status_code == 200
+        assert "event: error" not in resp_refresh.text
+
+        refreshed_payloads = re.findall(
+            r"event: task_card_review_required\ndata: (.+?)\n\n",
+            resp_refresh.text,
+        )
+        assert refreshed_payloads, resp_refresh.text
+        refreshed = json.loads(refreshed_payloads[-1])
+        assert refreshed["clarification_status"] == "answered"
+        assert refreshed["clarification"] is None
+        assert refreshed["task_card"]
+
+
 class TestHITLRevise:
     def test_review_then_revise(self):
         """generate → review → revise → 重新暂停"""
@@ -453,7 +756,52 @@ class TestHITLRevise:
         assert "event: editor_output" in resp_revise.text
         editor_payloads = re.findall(r"event: editor_output\ndata: (.+?)\n\n", resp_revise.text)
         assert any((json.loads(payload).get("content") or "").strip() for payload in editor_payloads)
+        assert "event: quality_check" in resp_revise.text
         assert "等待人工审核" in resp_revise.text
+        assert "event: done" not in resp_revise.text
+
+    def test_review_empty_model_array_returns_fallback_directions(self, monkeypatch):
+        """模型返回 [] 时不能让前端把空数组当成永久加载状态。"""
+        import api.routes as routes
+
+        headers = _auth_headers("i4_empty_review", "i4pass")
+        resp = client.post("/api/projects", json={"title": "空修改建议测试"}, headers=headers)
+        project_id = resp.json()["id"]
+        client.post(f"/api/projects/{project_id}/chapters", json={
+            "title": "第一章", "sequence_number": 1,
+        }, headers=headers)
+
+        resp_gen = client.post(f"/api/projects/{project_id}/chapters/generate", json={
+            "chapter_num": 1, "mode": "full_pipeline",
+        }, headers=headers)
+        match = re.search(r'"thread_id":\s*"([^"]+)"', resp_gen.text)
+        assert match
+
+        class EmptyReviewProvider:
+            async def generate(self, *args, **kwargs):
+                return "[]"
+
+        monkeypatch.setattr(
+            routes,
+            "get_llm_provider",
+            lambda _config=None: EmptyReviewProvider(),
+        )
+        resp_review = client.post(
+            f"/api/projects/{project_id}/chapters/resume",
+            params={"thread_id": match.group(1), "action": "review"},
+            headers=headers,
+        )
+
+        assert resp_review.status_code == 200
+        assert "AI 正在分析候选稿并整理修改方向" in resp_review.text
+        payload_match = re.search(
+            r"event: revision_suggestions\ndata: (.+?)\n\n",
+            resp_review.text,
+        )
+        assert payload_match
+        payload = json.loads(payload_match.group(1))
+        assert len(payload["directions"]) == 3
+        assert all(direction.strip() for direction in payload["directions"])
 
 
 class TestSkillPackMetadata:
@@ -620,3 +968,352 @@ class TestSummarizeAiRun:
         assert run is not None
         assert run.workflow_key == "summarize"
         assert run.workflow_snapshot is not None
+
+
+# ── 质量验收门测试 ──────────────────────────────────────
+
+
+def test_draft_validator_passes_clean_content():
+    """Writer 输出合格正文 → draft_validator 通过"""
+    from agents.workflow_v2 import draft_validator_node
+
+    # 构造约 2255 字符的合格正文（1600~2400 range for target 2000）
+    segment = "这是一个合格的小说正文段落，包含了完整的故事内容和标点符号结尾。明天他就要出发了。"
+    result = asyncio.new_event_loop().run_until_complete(
+        draft_validator_node({
+            "draft": segment * 55,
+            "target_words": 2000,
+            "writer_retry_count": 0,
+            "writer_max_retries": 1,
+            "harness_run_id": "test",
+        })
+    )
+    assert result["draft_quality_report"]["passed"] is True
+    assert "writer_validation_errors" in result
+    assert len(result["writer_validation_errors"]) == 0
+
+
+def test_draft_validator_persists_heading_cleanup_as_writer_baseline():
+    from agents.workflow_v2 import draft_validator_node
+
+    body = ("这是通过质量门的正文内容，包含完整句号。" * 50)
+    result = asyncio.run(draft_validator_node({
+        "draft": "# 第一章 重复标题\n" + body,
+        "target_words": 1000,
+        "writer_retry_count": 0,
+        "writer_max_retries": 1,
+    }))
+    assert result["draft_quality_report"]["passed"] is True
+    assert result["draft"].startswith("这是通过质量门")
+    assert result["writer_draft"] == result["draft"]
+
+
+def test_draft_validator_keeps_oversized_candidate_for_human_review():
+    """Writer 输出超长 → 不重写，保留候选稿继续审校"""
+    from agents.workflow_v2 import draft_validator_node, route_after_draft_validator
+
+    result = asyncio.new_event_loop().run_until_complete(
+        draft_validator_node({
+            "draft": "超" * 3999 + "。",  # 4000 chars > 2400 max for target 2000
+            "target_words": 2000,
+            "writer_retry_count": 0,
+            "writer_max_retries": 1,
+            "harness_run_id": "test",
+        })
+    )
+    assert result["draft_quality_report"]["passed"] is True
+    assert result["writer_retry_count"] == 0
+    assert result["writer_validation_errors"] == []
+    assert any(
+        issue["code"] == "CONTENT_TOO_LONG" and issue["severity"] == "WARNING"
+        for issue in result["draft_quality_report"]["issues"]
+    )
+    assert route_after_draft_validator(result) == "structural_critic"
+
+
+def test_final_quality_length_warning_routes_to_human_review():
+    from agents.workflow_v2 import final_quality_gate_node, route_after_final_quality_gate
+
+    result = asyncio.run(final_quality_gate_node({
+        "draft": "长" * 3999 + "。",
+        "target_words": 2000,
+        "edit_effectiveness_report": {},
+        "harness_run_id": "test",
+    }))
+
+    assert result["quality_gate_failed"] is False
+    assert result["final_quality_report"]["passed"] is True
+    assert route_after_final_quality_gate(result) == "human_review"
+    assert any(
+        issue["code"] == "CONTENT_TOO_LONG" and issue["severity"] == "WARNING"
+        for issue in result["final_quality_report"]["issues"]
+    )
+
+
+def test_quality_sse_marks_non_blocking_issue_as_warning():
+    from api.routes import _quality_node_completion_status, _quality_sse_payload
+
+    report = {
+        "passed": True,
+        "stage": "final",
+        "issues": [
+            {"code": "CONTENT_TOO_LONG", "severity": "WARNING", "message": "篇幅偏长"},
+        ],
+    }
+    payload = _quality_sse_payload(report, stage="final")
+
+    assert payload["status"] == "warning"
+    assert _quality_node_completion_status(
+        "final_quality_gate",
+        {"final_quality_report": report},
+    ) == "success"
+
+
+def test_draft_validator_rejects_metadata():
+    """Writer 输出含内部标记 → draft_validator 拒绝"""
+    from agents.workflow_v2 import draft_validator_node
+
+    result = asyncio.new_event_loop().run_until_complete(
+        draft_validator_node({
+            "draft": "正文内容。" * 100 + "\n【增强开始】",
+            "target_words": 2000,
+            "writer_retry_count": 0,
+            "writer_max_retries": 1,
+            "harness_run_id": "test",
+        })
+    )
+    assert result["draft_quality_report"]["passed"] is False
+    assert any("METADATA" in e["code"] for e in result["writer_validation_errors"])
+
+
+def test_draft_validator_increments_retry_count():
+    """失败时递增 writer_retry_count"""
+    from agents.workflow_v2 import draft_validator_node
+
+    result = asyncio.new_event_loop().run_until_complete(
+        draft_validator_node({
+            "draft": "超" * 4000,
+            "target_words": 2000,
+            "writer_retry_count": 0,
+            "writer_max_retries": 1,
+            "harness_run_id": "test",
+        })
+    )
+    assert result["writer_retry_count"] == 1
+
+
+def test_route_after_draft_validator_retry():
+    """draft 失败，未耗尽 → 路由到 chapter_writer"""
+    from agents.workflow_v2 import route_after_draft_validator
+
+    result = route_after_draft_validator({
+        "draft_quality_report": {"passed": False},
+        "writer_retry_count": 0,
+        "writer_max_retries": 1,
+    })
+    assert result == "chapter_writer"
+
+
+def test_route_after_draft_validator_exhausted():
+    """draft 失败，重试耗尽 → END"""
+    from agents.workflow_v2 import route_after_draft_validator
+
+    result = route_after_draft_validator({
+        "draft_quality_report": {"passed": False},
+        "writer_retry_count": 2,
+        "writer_max_retries": 1,
+    })
+    assert result == "__end__"
+
+
+def test_draft_validator_max_one_executes_one_actual_retry():
+    """max_retries=1 表示首次失败后额外调用 Writer 1 次，而不是 0 次。"""
+    from langgraph.graph import END, StateGraph
+    from agents.workflow_v2 import CreativeStateV2, draft_validator_node, route_after_draft_validator
+
+    attempts: list[int] = []
+
+    async def invalid_writer(state):
+        attempts.append(len(attempts) + 1)
+        return {"draft": "超" * 4000}
+
+    graph = StateGraph(CreativeStateV2)
+    graph.add_node("writer", invalid_writer)
+    graph.add_node("validator", draft_validator_node)
+    graph.set_entry_point("writer")
+    graph.add_edge("writer", "validator")
+    graph.add_conditional_edges("validator", route_after_draft_validator, {
+        "chapter_writer": "writer",
+        "structural_critic": END,
+        END: END,
+    })
+    app = graph.compile()
+
+    result = asyncio.run(app.ainvoke({
+        "target_words": 2000,
+        "writer_retry_count": 0,
+        "writer_max_retries": 1,
+    }))
+
+    assert len(attempts) == 2
+    assert result["writer_retry_count"] == 2
+    assert result["quality_gate_failed"] is True
+    assert result["quality_failure_stage"] == "draft"
+
+
+def test_editor_validator_max_two_executes_two_actual_retries():
+    """max_retries=2 表示 Editor 总共执行 3 次（首次 + 2 次重试）。"""
+    from langgraph.graph import END, StateGraph
+    from agents.workflow_v2 import CreativeStateV2, edited_draft_validator_node, route_after_edited_draft_validator
+
+    attempts: list[int] = []
+    accepted_writer_draft = "甲乙丙丁" * 50 + "。"
+
+    async def ineffective_editor(state):
+        attempts.append(len(attempts) + 1)
+        return {"draft": accepted_writer_draft}
+
+    graph = StateGraph(CreativeStateV2)
+    graph.add_node("editor", ineffective_editor)
+    graph.add_node("validator", edited_draft_validator_node)
+    graph.set_entry_point("editor")
+    graph.add_edge("editor", "validator")
+    graph.add_conditional_edges("validator", route_after_edited_draft_validator, {
+        "narrative_editor": "editor",
+        "continuity_checker": END,
+        END: END,
+    })
+    app = graph.compile()
+
+    result = asyncio.run(app.ainvoke({
+        "writer_draft": accepted_writer_draft,
+        "draft": accepted_writer_draft,
+        "target_words": 200,
+        "structural_critique": {"p1": ["需要调整节奏"]},
+        "editor_retry_count": 0,
+        "editor_max_retries": 2,
+    }))
+
+    assert len(attempts) == 3
+    assert result["editor_retry_count"] == 3
+    assert result["quality_gate_failed"] is True
+    assert result["quality_failure_stage"] == "edited"
+
+
+def test_quality_failure_helper_detects_exhausted_draft_and_editor():
+    from api.routes import _quality_failure_from_state, _quality_sse_payload
+
+    draft_failure = _quality_failure_from_state({
+        "draft_quality_report": {
+            "passed": False,
+            "issues": [{"code": "CONTENT_TOO_LONG", "severity": "ERROR", "message": "超长"}],
+        },
+        "writer_retry_count": 2,
+        "writer_max_retries": 1,
+    })
+    assert draft_failure is not None
+    assert draft_failure[0] == "draft"
+    assert "CONTENT_TOO_LONG" in draft_failure[2]
+    assert _quality_sse_payload(draft_failure[1], stage="draft", retry=2, max_retries=1)["status"] == "failed"
+
+    editor_failure = _quality_failure_from_state({
+        "quality_gate_failed": True,
+        "quality_failure_stage": "edited",
+        "quality_failure_reason": "编辑稿质量验收未通过",
+        "edited_quality_report": {"passed": False, "issues": []},
+    })
+    assert editor_failure == (
+        "edited",
+        {"passed": False, "issues": []},
+        "编辑稿质量验收未通过",
+    )
+
+
+def test_editor_effectiveness_rejects_no_change():
+    """Critic 要求修改，但 editor 输出完全相同 → edited_draft_validator 拒绝"""
+    from services.chapter_quality import validate_edited_draft_quality
+
+    report = validate_edited_draft_quality(
+        "初稿正文的内容完全相同。",
+        "初稿正文的内容完全相同。",
+        20,
+        {"requires_revision": True},
+    )
+    assert not report.passed
+    assert any(i.code == "EDITOR_NOT_EFFECTIVE" for i in report.issues)
+
+
+def test_final_quality_gate_blocks_empty():
+    """最终质量门：空正文不能通过"""
+    from agents.workflow_v2 import final_quality_gate_node
+
+    result = asyncio.new_event_loop().run_until_complete(
+        final_quality_gate_node({
+            "draft": "",
+            "target_words": 2000,
+            "harness_run_id": "test",
+            "edit_effectiveness_report": {},
+        })
+    )
+    assert result["quality_gate_failed"] is True
+    assert result["final_quality_report"]["passed"] is False
+
+
+def test_final_quality_gate_passes_valid():
+    """最终质量门：合格正文通过"""
+    from agents.workflow_v2 import final_quality_gate_node
+
+    segment = "完整的小说正文内容带有标点符号。明天继续上路前行。"
+    result = asyncio.new_event_loop().run_until_complete(
+        final_quality_gate_node({
+            "draft": segment * 90,  # 2250 chars, in range
+            "target_words": 2000,
+            "harness_run_id": "test",
+            "edit_effectiveness_report": {"requires_revision": False, "passed": True},
+        })
+    )
+    assert result["quality_gate_failed"] is False
+    assert result["final_quality_report"]["passed"] is True
+
+
+def test_quality_sse_payload_structure():
+    """SSE quality_check payload 结构正确"""
+    from api.routes import _quality_sse_payload
+
+    qr = {
+        "passed": True,
+        "stage": "draft",
+        "target_chars": 2000,
+        "actual_chars": 2100,
+        "min_chars": 1600,
+        "max_chars": 2400,
+        "issues": [],
+        "similarity": None,
+        "changed_chars": None,
+        "requires_revision": None,
+    }
+    payload = _quality_sse_payload(qr, stage="draft", retry=0, max_retries=1)
+    assert payload["stage"] == "draft"
+    assert payload["status"] == "passed"
+    assert payload["target_chars"] == 2000
+    assert payload["actual_chars"] == 2100
+
+
+def test_quality_sse_payload_retrying():
+    """失败且 retry > 0 → status=retrying"""
+    from api.routes import _quality_sse_payload
+
+    qr = {"passed": False, "issues": [{"code": "TEST", "message": "err"}], "target_chars": 2000, "actual_chars": 3999, "min_chars": 1600, "max_chars": 2400, "similarity": None, "changed_chars": None, "requires_revision": None, "stage": "draft"}
+    payload = _quality_sse_payload(qr, stage="draft", retry=1, max_retries=2)
+    assert payload["status"] == "retrying"
+    assert payload["retry_count"] == 1
+    assert payload["max_retries"] == 2
+
+
+def test_quality_sse_payload_final_failed():
+    """final 阶段失败 → status=failed"""
+    from api.routes import _quality_sse_payload
+
+    qr = {"passed": False, "issues": [{"code": "E1", "message": "final fail"}], "target_chars": 0, "actual_chars": 0, "min_chars": 0, "max_chars": 0, "similarity": None, "changed_chars": None, "requires_revision": None, "stage": "final"}
+    payload = _quality_sse_payload(qr, stage="final", retry=0, max_retries=0)
+    assert payload["status"] == "failed"
