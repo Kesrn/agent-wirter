@@ -132,6 +132,16 @@ export const useLLMSettingsStore = defineStore('llmSettings', () => {
     }
   }
 
+  function reset() {
+    config.value = null
+    configs.value = []
+    selectedConfigId.value = null
+    availableModels.value = []
+    loading.value = false
+    fetchingModels.value = false
+    error.value = ''
+  }
+
   return {
     config,
     configs,
@@ -146,5 +156,6 @@ export const useLLMSettingsStore = defineStore('llmSettings', () => {
     activateConfig,
     deleteConfig,
     fetchAvailableModels,
+    reset,
   }
 })

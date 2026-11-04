@@ -28,7 +28,7 @@ vi.mock('vue-router', () => ({
 
 describe('Register.vue error handling', () => {
   beforeEach(() => {
-    vi.restoreAllMocks()
+    vi.clearAllMocks()
   })
 
   it('displays backend detail on 403 when registration is closed', async () => {
@@ -70,6 +70,50 @@ describe('Register.vue error handling', () => {
     await nextTick()
 
     expect(wrapper.find('.register-error').text()).toBe('用户名已被占用')
+    wrapper.unmount()
+  })
+
+  it('intercepts passwords exceeding 72 bytes and shows error without sending API request', async () => {
+    const wrapper = mount(Register, {
+      global: {
+        stubs: { 'router-link': true },
+      },
+    })
+
+    await wrapper.find('#register-username').setValue('validuser')
+    // 73 ASCII characters = 73 bytes
+    await wrapper.find('#register-password').setValue('a'.repeat(73))
+    await wrapper.find('form').trigger('submit.prevent')
+    await nextTick()
+
+    expect(api.register).not.toHaveBeenCalled()
+    const errorEl = wrapper.find('.register-error')
+    expect(errorEl.exists()).toBe(true)
+    expect(errorEl.text()).toBe('密码过长：最多 72 字节（约 24 个汉字或 72 个英文字符）')
+
+    wrapper.unmount()
+  })
+
+  it('allows passwords of exactly 72 bytes (e.g. 24 Chinese characters) to proceed with registration', async () => {
+    vi.mocked(api.register).mockResolvedValueOnce({} as any)
+    vi.mocked(api.login).mockResolvedValueOnce({ access_token: 'tok', user: { username: 'validuser' } } as any)
+
+    const wrapper = mount(Register, {
+      global: {
+        stubs: { 'router-link': true },
+      },
+    })
+
+    await wrapper.find('#register-username').setValue('validuser')
+    // 24 Chinese characters = 72 bytes in UTF-8
+    const pass72Bytes = '中'.repeat(24)
+    await wrapper.find('#register-password').setValue(pass72Bytes)
+    await wrapper.find('form').trigger('submit.prevent')
+    await nextTick()
+
+    expect(api.register).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.register-error').exists()).toBe(false)
+
     wrapper.unmount()
   })
 })

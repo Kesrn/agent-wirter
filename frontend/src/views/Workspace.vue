@@ -12,7 +12,7 @@ import ConfirmModal from '../components/ConfirmModal.vue'
 import StructureExtractPreview from '../components/StructureExtractPreview.vue'
 import BaseSelect from '../components/BaseSelect.vue'
 import { displayChapterNumber, stripChapterNumber } from '../utils/chapterTitle'
-import { clearAuthSession, getAuthToken, handleUnauthorized } from '../utils/authSession'
+import { performLogout, getAuthToken, handleUnauthorized } from '../utils/authSession'
 
 const route = useRoute()
 const router = useRouter()
@@ -466,9 +466,8 @@ function handleSwitchProject() {
 
 // Navigation
 function handleLogout() {
-  confirmLeaveIfGenerating(() => {
-    clearAuthSession()
-    router.push('/login')
+  confirmLeaveIfGenerating(async () => {
+    await performLogout()
   })
 }
 

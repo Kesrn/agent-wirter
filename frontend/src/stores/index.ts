@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia'
+import { defineStore, getActivePinia } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Project, Chapter, DocumentUnit, Expert, WorkflowStep, ReviewComment, ChapterReviewNote, ChapterReviewNoteCreatePayload, CharacterRelation, CharacterEvent, ProjectMode, ExpertCreatePayload, WorldEntry, Character, OutlineItem, HiddenThread, StoryArc, ChapterVersion, DocumentRevision, DiffHunk, GenerationRecord, SkillPackPayload } from '../api/types'
 import type { ApiProject, ApiChapter, ApiDocument, ApiExpert, ApiWorldEntry, ApiCharacter, ApiCharacterRelation, ApiOutline, ApiHiddenThread, ApiStoryArc, ApiChapterVersion, ApiDocumentVersion, ApiGenerationRecordListItem, ApiGenerationRecord } from '../api/types'
@@ -161,9 +161,16 @@ export const useProjectStore = defineStore('project', () => {
     return updated
   }
 
+  function reset() {
+    projects.value = [...MOCK_PROJECTS]
+    currentProjectId.value = null
+    loadError.value = ''
+  }
+
   return {
     projects, currentProjectId, currentProject, loadError,
     setCurrent, addProject, createProject, loadProjects, createProjectRemote, updateProjectRemote, deleteProjectRemote,
+    reset,
   }
 })
 
@@ -369,12 +376,22 @@ export const useChapterStore = defineStore('chapter', () => {
     }
   }
 
+  function reset() {
+    chapters.value = [...MOCK_CHAPTERS]
+    reviewComments.value = [...MOCK_REVIEW_COMMENTS]
+    reviewNotes.value = []
+    currentChapterNum.value = 1
+    loadError.value = ''
+    saving.value = false
+  }
+
   return {
     chapters, reviewComments, reviewNotes, currentChapterNum, loadError, saving,
     chaptersForProject, currentChapterForProject, reviewCommentsForChapter, reviewCommentsForProjectChapter,
     setCurrentChapter, updateDraft, nextChapterNum,
     loadChapters, createChapterRemote, saveCurrentChapter, finalizeCurrentChapter, updateChapterTitle, deleteChapterRemote,
     loadReviewNotes, createReviewNote, markReviewCommentResolved, deleteReviewNote,
+    reset,
   }
 })
 
@@ -483,11 +500,19 @@ export const useDocumentStore = defineStore('document', () => {
     }
   }
 
+  function reset() {
+    documents.value = []
+    currentDocumentPosition.value = 1
+    loadError.value = ''
+    saving.value = false
+  }
+
   return {
     documents, currentDocumentPosition, loadError, saving,
     documentsForProject, currentDocumentForProject, setCurrentDocument, updateDraft,
     nextDocumentPosition, loadDocuments, createDocumentRemote, saveCurrentDocument,
     updateDocumentTitle, deleteDocumentRemote,
+    reset,
   }
 })
 
@@ -683,6 +708,14 @@ export const useExpertStore = defineStore('expert', () => {
     }
   }
 
+  function reset() {
+    experts.value = []
+    activeExpertId.value = null
+    states.value = {}
+    loading.value = false
+    loadError.value = ''
+  }
+
   return {
     experts, activeExpertId, activeExpert, states, loading, loadError,
     getExpertName, setActive,
@@ -691,6 +724,7 @@ export const useExpertStore = defineStore('expert', () => {
     setWorkflowSteps, updateStepStatus, clearProjectState,
       setExpertSkill, setExpertSkillPack, setRevisionInfo,
     loadExperts, addExpert, addCustomExpert, toggleExpert,
+    reset,
   }
 })
 
@@ -773,7 +807,13 @@ export const useRelationStore = defineStore('relation', () => {
     }
   }
 
-  return { relations, loading, loadError, getRelationsForProject, getRelationsForCharacter, loadRelations, addRelation, removeRelation, updateRelation }
+  function reset() {
+    relations.value = [...MOCK_CHARACTER_RELATIONS]
+    loading.value = false
+    loadError.value = ''
+  }
+
+  return { relations, loading, loadError, getRelationsForProject, getRelationsForCharacter, loadRelations, addRelation, removeRelation, updateRelation, reset }
 })
 
 // ─── WorldEntry store ───
@@ -859,7 +899,13 @@ export const useWorldEntryStore = defineStore('worldEntry', () => {
     }
   }
 
-  return { worldEntries, loading, loadError, entriesForProject, loadWorldEntries, addWorldEntry, updateWorldEntry, removeWorldEntry }
+  function reset() {
+    worldEntries.value = [...MOCK_WORLD_ENTRIES]
+    loading.value = false
+    loadError.value = ''
+  }
+
+  return { worldEntries, loading, loadError, entriesForProject, loadWorldEntries, addWorldEntry, updateWorldEntry, removeWorldEntry, reset }
 })
 
 // ─── Character store ───
@@ -970,7 +1016,13 @@ export const useCharacterStore = defineStore('character', () => {
     }
   }
 
-  return { characters, loading, loadError, charactersForProject, loadCharacters, addCharacter, updateCharacter, mergeCharacter, removeCharacter }
+  function reset() {
+    characters.value = [...MOCK_CHARACTERS]
+    loading.value = false
+    loadError.value = ''
+  }
+
+  return { characters, loading, loadError, charactersForProject, loadCharacters, addCharacter, updateCharacter, mergeCharacter, removeCharacter, reset }
 })
 
 // ─── Character event store ───
@@ -1019,7 +1071,13 @@ export const useCharacterEventStore = defineStore('characterEvent', () => {
     })
   }
 
-  return { events, loading, loadError, eventsForProject, eventsForCharacter, loadCharacterEvents, upsertCharacterEvent, removeCharacterEvent }
+  function reset() {
+    events.value = []
+    loading.value = false
+    loadError.value = ''
+  }
+
+  return { events, loading, loadError, eventsForProject, eventsForCharacter, loadCharacterEvents, upsertCharacterEvent, removeCharacterEvent, reset }
 })
 
 // ─── Outline store ───
@@ -1111,7 +1169,13 @@ export const useOutlineStore = defineStore('outline', () => {
     }
   }
 
-  return { outlines, loading, loadError, entriesForProject, loadOutlines, createOutlineItem, updateOutlineItem, syncTitleForChapter, deleteOutlineItem }
+  function reset() {
+    outlines.value = [...MOCK_OUTLINE]
+    loading.value = false
+    loadError.value = ''
+  }
+
+  return { outlines, loading, loadError, entriesForProject, loadOutlines, createOutlineItem, updateOutlineItem, syncTitleForChapter, deleteOutlineItem, reset }
 })
 
 // ─── HiddenThread store ───
@@ -1198,7 +1262,13 @@ export const useHiddenThreadStore = defineStore('hiddenThread', () => {
     }
   }
 
-  return { hiddenThreads, loading, loadError, threadsForProject, loadHiddenThreads, createHiddenThreadItem, updateHiddenThreadItem, deleteHiddenThreadItem }
+  function reset() {
+    hiddenThreads.value = [...MOCK_HIDDEN_THREADS]
+    loading.value = false
+    loadError.value = ''
+  }
+
+  return { hiddenThreads, loading, loadError, threadsForProject, loadHiddenThreads, createHiddenThreadItem, updateHiddenThreadItem, deleteHiddenThreadItem, reset }
 })
 
 // ─── StoryArc store ───
@@ -1284,7 +1354,13 @@ export const useStoryArcStore = defineStore('storyArc', () => {
     }
   }
 
-  return { arcs, loading, loadError, arcsForProject, loadStoryArcs, createStoryArcItem, updateStoryArcItem, deleteStoryArcItem }
+  function reset() {
+    arcs.value = [...MOCK_STORY_ARCS]
+    loading.value = false
+    loadError.value = ''
+  }
+
+  return { arcs, loading, loadError, arcsForProject, loadStoryArcs, createStoryArcItem, updateStoryArcItem, deleteStoryArcItem, reset }
 })
 
 // ─── Chapter Version History store ───
@@ -1384,7 +1460,11 @@ export const useChapterVersionStore = defineStore('chapterVersion', () => {
     diffResult.value = null
   }
 
-  return { versions, loading, loadError, diffResult, loadVersions, getVersionContent, loadDiff, loadDiffWithCurrent, clearState }
+  function reset() {
+    clearState()
+  }
+
+  return { versions, loading, loadError, diffResult, loadVersions, getVersionContent, loadDiff, loadDiffWithCurrent, clearState, reset }
 })
 
 // ─── Document Revision History store ───
@@ -1495,7 +1575,11 @@ export const useDocumentRevisionStore = defineStore('documentRevision', () => {
     diffResult.value = null
   }
 
-  return { revisions, loading, loadError, diffResult, loadRevisions, getRevisionContent, restoreRevision, loadDiff, loadDiffWithCurrent, clearState }
+  function reset() {
+    clearState()
+  }
+
+  return { revisions, loading, loadError, diffResult, loadRevisions, getRevisionContent, restoreRevision, loadDiff, loadDiffWithCurrent, clearState, reset }
 })
 
 // ─── AI Generation History store ───
@@ -1641,10 +1725,15 @@ export const useGenerationHistoryStore = defineStore('generationHistory', () => 
     diffResult.value = null
   }
 
+  function reset() {
+    clearState()
+  }
+
   return {
     records, loading, loadError, diffResult,
     loadChapterRecords, loadDocumentRecords, getRecordContent,
     updateRecordStatus, markLatestRecord, loadDiffWithCurrent, upsertCandidate, clearState,
+    reset,
   }
 })
 
@@ -1670,7 +1759,11 @@ export const useUiStore = defineStore('ui', () => {
     toasts.value = toasts.value.filter(t => t.id !== id)
   }
 
-  return { toasts, showToast, dismissToast }
+  function reset() {
+    toasts.value = []
+  }
+
+  return { toasts, showToast, dismissToast, reset }
 })
 
 /** Helper: extract friendly message from ApiError or generic Error */
@@ -1684,5 +1777,30 @@ export function friendlyError(e: unknown, fallback: string): string {
   return fallback
 }
 
+import { useLLMSettingsStore } from './llmSettings'
+import { useConversationStore } from './useConversationStore'
+
 export { useLLMSettingsStore } from './llmSettings'
 export { useConversationStore } from './useConversationStore'
+
+export function resetAllStores(): void {
+  const pinia = getActivePinia()
+  if (!pinia) return
+  useProjectStore(pinia).reset()
+  useChapterStore(pinia).reset()
+  useDocumentStore(pinia).reset()
+  useExpertStore(pinia).reset()
+  useRelationStore(pinia).reset()
+  useWorldEntryStore(pinia).reset()
+  useCharacterStore(pinia).reset()
+  useCharacterEventStore(pinia).reset()
+  useOutlineStore(pinia).reset()
+  useHiddenThreadStore(pinia).reset()
+  useStoryArcStore(pinia).reset()
+  useChapterVersionStore(pinia).reset()
+  useDocumentRevisionStore(pinia).reset()
+  useGenerationHistoryStore(pinia).reset()
+  useUiStore(pinia).reset()
+  useLLMSettingsStore(pinia).reset()
+  useConversationStore(pinia).reset()
+}

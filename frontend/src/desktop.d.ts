@@ -20,5 +20,7 @@ interface Window {
     checkBackend: () => Promise<BackendStatus>
     onRefreshBackendStatus: (callback: () => void) => () => void
     onSaveRequested: (callback: () => void) => () => void
+    setMediaAuthToken?: (token: string) => Promise<boolean> | Promise<void> | void
+    clearMediaAuthToken?: () => Promise<boolean> | Promise<void> | void
   }
 }

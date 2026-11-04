@@ -1,3 +1,68 @@
+/**
+ * Markdown 渲染与安全消毒模块。
+ * 本模块导出的渲染结果已通过 DOMPurify 进行严格的白名单标签与属性消毒，防御 XSS 攻击。
+ * 项目中新增任何使用 v-html 的场景，必须统一通过本模块的 renderMarkdown 函数输出，切勿绕过消毒机制。
+ */
+import DOMPurify, { type Config, type DOMPurify as DOMPurifyInstance } from 'dompurify'
+
+const SANITIZE_CONFIG: Config = {
+  ALLOWED_TAGS: [
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'p', 'br', 'hr', 'blockquote',
+    'ul', 'ol', 'li',
+    'pre', 'code',
+    'strong', 'em', 'del',
+    'a', 'img',
+    'table', 'thead', 'tbody', 'tr', 'th', 'td',
+  ],
+  FORBID_TAGS: [
+    'script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'svg', 'math',
+  ],
+  ALLOWED_ATTR: [
+    'href', 'src', 'alt', 'title', 'class', 'referrerpolicy', 'target', 'rel', 'align',
+  ],
+  ADD_URI_SAFE_ATTR: [
+    'target', 'rel', 'referrerpolicy', 'align',
+  ],
+  FORBID_ATTR: [
+    'style',
+  ],
+  ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|\/(?![\\\/])|#|\.\.?\/)/i,
+}
+
+let purifierInstance: DOMPurifyInstance | null = null
+let isSanitizerDisabledForTesting = false
+
+export function _setPurifierDisabledForTesting(disabled: boolean): void {
+  isSanitizerDisabledForTesting = disabled
+}
+
+function getPurifier(): DOMPurifyInstance | null {
+  if (isSanitizerDisabledForTesting) {
+    return null
+  }
+  if (!purifierInstance) {
+    if (typeof window !== 'undefined') {
+      const instance = typeof DOMPurify === 'function'
+        ? (DOMPurify as (root?: unknown) => DOMPurifyInstance)(window)
+        : DOMPurify
+      if (instance && typeof instance.addHook === 'function') {
+        instance.addHook('afterSanitizeAttributes', (node: Element) => {
+          const tag = node.tagName?.toLowerCase()
+          if (tag === 'a' && node.hasAttribute('target')) {
+            node.setAttribute('rel', 'noopener noreferrer')
+          }
+          if (tag === 'img') {
+            node.setAttribute('referrerpolicy', 'no-referrer')
+          }
+        })
+      }
+      purifierInstance = instance
+    }
+  }
+  return purifierInstance
+}
+
 export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -28,15 +93,41 @@ export function sanitizeMarkdownUrl(rawUrl: string): string {
   const decoded = decodeForProtocolCheck(value).trim()
   if (/[\u0000-\u001F\u007F\s]/.test(decoded)) return ''
   if (/^(?:javascript|vbscript|data):/i.test(decoded)) return ''
+  if (decoded.startsWith('//') || decoded.startsWith('/\\') || decoded.startsWith('\\/')) return ''
 
   const allowed =
     /^(?:https?:|mailto:|tel:)/i.test(value) ||
-    value.startsWith('/') ||
+    (value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/\\')) ||
     value.startsWith('#') ||
     value.startsWith('./') ||
     value.startsWith('../')
 
   return allowed ? escapeHtml(value) : ''
+}
+
+export function getBackendOrigin(): string {
+  const baseUrl = (import.meta.env.VITE_API_BASE_URL as string) || ''
+  if (!baseUrl) return ''
+  try {
+    const parsed = new URL(baseUrl)
+    return parsed.origin
+  } catch {
+    return baseUrl.replace(/\/api\/?$/, '')
+  }
+}
+
+export function resolveMediaUrl(url: string): string {
+  if (import.meta.env.VITE_DESKTOP !== 'true') {
+    return url
+  }
+  if (!url.startsWith('/media/') || url.startsWith('//media/') || url.startsWith('/\\media/')) {
+    return url
+  }
+  const origin = getBackendOrigin()
+  if (!origin) {
+    return url
+  }
+  return `${origin}${url}`
 }
 
 export function renderInlineMarkdown(raw: string): string {
@@ -51,7 +142,8 @@ export function renderInlineMarkdown(raw: string): string {
   let text = raw
     .replace(/`([^`\n]+)`/g, (_match, code: string) => stash(`<code>${escapeHtml(code)}</code>`))
     .replace(new RegExp(`!\\[([^\\]]*)\\]\\(${urlPattern}\\)`, 'g'), (_match, alt: string, url: string) => {
-      const safeUrl = sanitizeMarkdownUrl(url)
+      const resolvedUrl = resolveMediaUrl(url)
+      const safeUrl = sanitizeMarkdownUrl(resolvedUrl)
       return safeUrl ? stash(`<img src="${safeUrl}" alt="${escapeHtml(alt)}" referrerpolicy="no-referrer">`) : escapeHtml(alt)
     })
     .replace(new RegExp(`\\[([^\\]]+)\\]\\(${urlPattern}\\)`, 'g'), (_match, label: string, url: string) => {
@@ -110,7 +202,7 @@ function renderMarkdownTable(lines: string[], start: number): { html: string; ne
         : cell.startsWith(':')
           ? 'left'
           : ''
-    return align ? ` style="text-align:${align}"` : ''
+    return align ? ` align="${align}"` : ''
   }
   const head = header
     .map((cell, index) => `<th${alignAttr(separator[index] ?? '')}>${renderInlineMarkdown(cell)}</th>`)
@@ -137,14 +229,15 @@ function renderMarkdownList(lines: string[], start: number, ordered: boolean): {
     const match = lines[i].match(regex)
     if (!match) break
     let content = match[1]
-    let checkbox = ''
     const task = content.match(/^\[([ xX])\]\s+(.+)$/)
     if (task) {
       hasTask = true
-      content = task[2]
-      checkbox = `<input type="checkbox" disabled${task[1].toLowerCase() === 'x' ? ' checked' : ''}> `
+      const isChecked = task[1].toLowerCase() === 'x'
+      const icon = isChecked ? '☑ ' : '☐ '
+      items.push(`<li class="task-list-item">${icon}${renderInlineMarkdown(task[2])}</li>`)
+    } else {
+      items.push(`<li>${renderInlineMarkdown(content)}</li>`)
     }
-    items.push(`<li${checkbox ? ' class="task-list-item"' : ''}>${checkbox}${renderInlineMarkdown(content)}</li>`)
     i += 1
   }
   const tag = ordered ? 'ol' : 'ul'
@@ -234,5 +327,11 @@ export function renderMarkdown(markdown: string): string {
     }
   }
 
-  return blocks.join('\n')
+  const rawHtml = blocks.join('\n')
+  const purifier = getPurifier()
+  if (purifier && typeof purifier.sanitize === 'function') {
+    return purifier.sanitize(rawHtml, SANITIZE_CONFIG)
+  }
+  console.warn('[markdown] DOMPurify sanitizer is unavailable; falling back to safe escaped plain text.')
+  return `<p>${escapeHtml(markdown)}</p>`
 }

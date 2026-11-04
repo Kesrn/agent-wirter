@@ -1,3 +1,6 @@
+import { API_BASE_URL } from '../api/types'
+import { resetAllStores } from '../stores'
+
 const TOKEN_KEY = 'ai_write_token'
 const LOGGED_IN_KEY = 'ai_write_logged_in'
 const USERNAME_KEY = 'ai_write_username'
@@ -72,6 +75,28 @@ export function hasAuthSession(): boolean {
   return Boolean(getAuthToken() && (sessionLoggedIn || localLoggedIn))
 }
 
+export function syncDesktopMediaToken(token: string | null): void {
+  if (typeof window === 'undefined') return
+  try {
+    if (token) {
+      window.desktopApp?.setMediaAuthToken?.(token)
+    } else {
+      window.desktopApp?.clearMediaAuthToken?.()
+    }
+  } catch {
+    // Non-desktop or IPC error: ignore safely
+  }
+}
+
+export function initAuthSession(): void {
+  if (hasAuthSession()) {
+    const token = getAuthToken()
+    if (token) {
+      syncDesktopMediaToken(token)
+    }
+  }
+}
+
 let isRedirectingToLogin = false
 
 export function resetUnauthorizedFlag(): void {
@@ -89,8 +114,41 @@ export function redirectToLogin(): void {
 
 export function handleUnauthorized(): void {
   clearAuthSession()
+  syncDesktopMediaToken(null)
+  resetAllStores()
   if (isRedirectingToLogin) return
   isRedirectingToLogin = true
+  redirectToLogin()
+}
+
+export async function performLogout(): Promise<void> {
+  const token = getAuthToken()
+
+  // a. Best-effort call to POST /auth/logout with 2-second timeout
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 2000)
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+    await fetch(`${API_BASE_URL}/auth/logout`, {
+      method: 'POST',
+      headers,
+      signal: controller.signal,
+    }).catch(() => {})
+    clearTimeout(timer)
+  } catch {
+    // Failures and timeouts must never block local logout
+  }
+
+  // b. Clear local session (which also cleans up desktop media token)
+  clearAuthSession()
+
+  // d. Reset all Pinia store in-memory states
+  resetAllStores()
+
+  // e. Redirect to login
   redirectToLogin()
 }
 
@@ -110,6 +168,8 @@ export function saveAuthSession({ token, username, remember }: SaveAuthSessionOp
   } else {
     remove('local', LAST_USERNAME_KEY)
   }
+
+  syncDesktopMediaToken(token)
 }
 
 export function clearAuthSession(options: { keepRememberedUser?: boolean } = {}): void {
@@ -126,4 +186,6 @@ export function clearAuthSession(options: { keepRememberedUser?: boolean } = {})
     remove('local', LAST_USERNAME_KEY)
     remove('local', REMEMBER_LOGIN_KEY)
   }
+
+  syncDesktopMediaToken(null)
 }
