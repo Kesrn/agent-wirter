@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pytest
 from cryptography.fernet import Fernet
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -76,6 +76,11 @@ def _request(ip: str = "127.0.0.1") -> Request:
             "query_string": b"",
         }
     )
+
+
+def _response() -> Response:
+    """直接调用路由函数时用的空 Response（login 会往上写 Set-Cookie）。"""
+    return Response()
 
 
 @pytest.fixture(autouse=True)
@@ -235,6 +240,7 @@ async def test_production_login_on_empty_table_returns_401_and_creates_nothing()
                     await login(
                         LoginRequest(username="intruder", password="whatever"),
                         _request(),
+                        _response(),
                         db=db,
                     )
             assert excinfo.value.status_code == 401
@@ -281,6 +287,7 @@ async def test_development_defaults_keep_bootstrap_and_registration():
                 boot = await login(
                     LoginRequest(username="devboot", password="devpass1"),
                     _request(),
+                    _response(),
                     db=db,
                 )
                 assert boot.access_token
@@ -334,6 +341,7 @@ async def test_create_admin_script_creates_loginable_user(tmp_path):
                     await login(
                         LoginRequest(username="opsadmin", password="wrong-pw"),
                         _request(),
+                        _response(),
                         db=db,
                     )
                 except HTTPException as exc:  # noqa: PERF203 - 明确断言密码校验生效
@@ -343,6 +351,7 @@ async def test_create_admin_script_creates_loginable_user(tmp_path):
                 ok = await login(
                     LoginRequest(username="opsadmin", password="strong-admin-pw"),
                     _request(),
+                    _response(),
                     db=db,
                 )
                 assert ok.access_token

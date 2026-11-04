@@ -16,7 +16,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from config.settings import settings
 from config.logging_config import setup_logging
@@ -25,6 +24,7 @@ from db.session import get_engine, init_db
 from harness.run_manager import discard_incomplete_runs
 from api.routes import router
 from api.auth import router as auth_router
+from api.media import router as media_router
 from api.llm_settings import router as llm_settings_router
 from observability.langfuse import log_langfuse_startup_status
 from agents.checkpointer import setup_checkpointer, teardown_checkpointer
@@ -99,13 +99,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 上传的图片、资料等文件统一放到 UPLOAD_DIR，通过 /media 静态路径对前端暴露。
+# 上传的图片等文件统一放到 UPLOAD_DIR。这里不再用 StaticFiles 直接挂载目录：
+# /media 下的文件是项目私有资源，改由 api/media.py 提供，需要登录 + 校验项目所有者。
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-app.mount("/media", StaticFiles(directory=settings.UPLOAD_DIR), name="media")
 
 # 主业务路由、认证路由、用户级 LLM 设置路由分开注册，降低单个 router 的职责。
 app.include_router(router)
 app.include_router(auth_router)
+app.include_router(media_router)
 app.include_router(llm_settings_router)
 
 
