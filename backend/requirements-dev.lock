@@ -59,7 +59,7 @@ fastapi==0.136.1
     # via -r requirements.in
 fonttools==4.63.0
     # via fpdf2
-fpdf2==2.8.7
+fpdf2==2.8.8
     # via -r requirements-dev.in
 googleapis-common-protos==1.76.0
     # via opentelemetry-exporter-otlp-proto-http
@@ -183,8 +183,14 @@ packaging==26.2
     #   langfuse
     #   langsmith
     #   pytest
-pillow==12.2.0
-    # via fpdf2
+pillow==12.3.0 ; python_full_version < '3.11'
+    # via
+    #   -r requirements-dev.in
+    #   fpdf2
+pillow==13.0.0 ; python_full_version >= '3.11'
+    # via
+    #   -r requirements-dev.in
+    #   fpdf2
 pluggy==1.6.0
     # via pytest
 protobuf==7.36.2
