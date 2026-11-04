@@ -11,6 +11,9 @@ TestClient 请求都来自同一个客户端地址，不重置的话同一个文
 
 import os
 
+os.environ.setdefault("PYTHON_DOTENV_DISABLED", "1")
+os.environ.setdefault("CHECKPOINTER_BACKEND", "memory")
+
 import pytest
 
 os.environ["LLM_PROVIDER"] = "mock"
