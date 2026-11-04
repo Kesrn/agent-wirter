@@ -1,0 +1,6 @@
+# 开发 / 测试依赖（在运行依赖之上追加）
+-r requirements.in
+
+pytest
+pytest-asyncio
+fpdf2                     # tests/ 里生成 PDF 夹具用（import 名 fpdf → 发行版 fpdf2）
