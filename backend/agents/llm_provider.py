@@ -18,6 +18,8 @@ from typing import AsyncIterator
 import json
 import re
 
+import httpx
+
 from config.settings import settings
 from observability.langfuse import current_langfuse_metadata, get_langfuse_async_openai_class
 from utils.crypto import decrypt_api_key
@@ -607,8 +609,16 @@ class OpenAIProvider(LLMProvider):
         AsyncOpenAI = langfuse_async_openai
         if AsyncOpenAI is None:
             from openai import AsyncOpenAI
-        # 设置120秒超时：章节生成可能较慢，但不应无限等待
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url or None, timeout=120.0)
+        # 设置120秒超时：章节生成可能较慢，但不应无限等待。
+        # 显式传 http_client 关掉自动跟随重定向：模型地址即使保存时校验通过，
+        # 也可能 302 到内网地址。不传 trust_env，保持“遵循系统代理”的默认行为；
+        # 单请求超时仍由 SDK 用 timeout 参数设置在 request 上。
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url or None,
+            timeout=120.0,
+            http_client=httpx.AsyncClient(follow_redirects=False, timeout=120.0),
+        )
         self.model = model
 
     async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> str:

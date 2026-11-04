@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 import httpx
 
 from config.settings import settings
+from utils.url_guard import UnsafeURLError, guarded_get, validate_url
 
 logger = logging.getLogger(__name__)
 
@@ -254,12 +255,26 @@ def _extract_readable_page(html_text: str, query: str) -> tuple[str, str]:
     return title, _merge_passages(passages)
 
 
-async def _fetch_page_snippet(client: httpx.AsyncClient, item: dict, query: str) -> dict:
+async def _fetch_page_snippet(item: dict, query: str) -> dict:
+    """抓取搜索结果页正文。
+
+    这些 URL 完全不可信，所以固定 allow_private=False（不受 ALLOW_PRIVATE_LLM_ENDPOINTS
+    影响）、只允许 80/443、限制响应体大小与类型、每一跳重定向都重新校验。
+    被拒绝的地址只跳过该页并记一条 warning，不影响整体搜索结果。
+    """
     url = item.get("url", "")
     if not url.startswith(("http://", "https://")):
         return item
     try:
-        response = await client.get(url)
+        response = await guarded_get(
+            url,
+            allow_private=False,
+            max_bytes=settings.WEB_FETCH_MAX_BYTES,
+            max_redirects=settings.WEB_FETCH_MAX_REDIRECTS,
+            allowed_content_types={"text/html", "text/plain", "application/xhtml+xml"},
+            allowed_ports={80, 443},
+            timeout=settings.WEB_SEARCH_TIMEOUT_SECONDS,
+        )
         content_type = response.headers.get("content-type", "")
         if response.status_code >= 400 or "text/html" not in content_type:
             return item
@@ -269,6 +284,9 @@ async def _fetch_page_snippet(client: httpx.AsyncClient, item: dict, query: str)
             item["title"] = title or item.get("title", "")
             item["snippet"] = body
             item["fetched"] = True
+    except UnsafeURLError as exc:
+        # 只记主机名，不记完整地址（可能带查询串）
+        logger.warning("web page skipped reason=%s host=%s", exc, url.split("/")[2] if "//" in url else "?")
     except Exception as exc:
         logger.debug("web page fetch failed url=%s error=%s", url, exc)
     return item
@@ -325,9 +343,9 @@ async def _search_serper(client: httpx.AsyncClient, query: str, max_results: int
     return _dedupe_results(_parse_serper_results(response.json()), max_results)
 
 
-async def _fetch_result_pages(client: httpx.AsyncClient, rows: list[dict], query: str, max_results: int) -> list[dict]:
+async def _fetch_result_pages(rows: list[dict], query: str, max_results: int) -> list[dict]:
     fetched_results = await asyncio.gather(
-        *[_fetch_page_snippet(client, item, query) for item in rows[:max_results]],
+        *[_fetch_page_snippet(item, query) for item in rows[:max_results]],
         return_exceptions=True,
     )
     return [item for item in fetched_results if not isinstance(item, Exception)]
@@ -371,7 +389,17 @@ async def search_web(
     search_base_url = (base_url if base_url is not None else settings.WEB_SEARCH_BASE_URL).strip() or None
 
     try:
-        async with httpx.AsyncClient(timeout=settings.WEB_SEARCH_TIMEOUT_SECONDS, follow_redirects=True) as client:
+        if search_base_url:
+            # 用户可填的搜索服务地址：按环境开关决定是否允许内网，不限制端口
+            await validate_url(
+                search_base_url,
+                allow_private=settings.ALLOW_PRIVATE_LLM_ENDPOINTS,
+            )
+        # 自定义地址时不自动跟随重定向（避免被跳到别处）；官方默认地址保持不变
+        async with httpx.AsyncClient(
+            timeout=settings.WEB_SEARCH_TIMEOUT_SECONDS,
+            follow_redirects=search_base_url is None,
+        ) as client:
             if search_provider == "brave":
                 if not search_key:
                     logger.warning("Brave web search selected but API key is missing")
@@ -390,7 +418,7 @@ async def search_web(
             else:
                 raw_results = await _search_duckduckgo(client, normalized, max_results)
 
-            fetched = await _fetch_result_pages(client, raw_results, normalized, max_results)
+            fetched = await _fetch_result_pages(raw_results, normalized, max_results)
             return _to_citations(fetched, normalized)
     except Exception as exc:
         logger.warning("web search failed provider=%s error=%s", search_provider, exc)

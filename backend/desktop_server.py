@@ -81,6 +81,9 @@ def configure_desktop_environment() -> Path:
     # 桌面端是单用户本地使用，第一次启动必须先能建出账号，否则用户连界面都进不去。
     # 仅桌面入口放开该开关，不影响服务端部署（默认仍是 development 的保守值由 APP_ENV 决定）。
     os.environ.setdefault("ALLOW_FIRST_USER_BOOTSTRAP", "true")
+    # 桌面端常把大模型地址指向本机 Ollama / LM Studio（127.0.0.1:11434），
+    # 所以这里放开“允许私网/回环的模型地址”；云元数据地址仍然拒绝。
+    os.environ.setdefault("ALLOW_PRIVATE_LLM_ENDPOINTS", "true")
     # 检索索引 embedding 配置（真实 embedding 端点）：数据目录下存在
     # embedding.env 时逐行注入环境变量（EMBEDDING_PROVIDER / EMBEDDING_API_KEY /
     # EMBEDDING_BASE_URL / EMBEDDING_MODEL / EMBEDDING_DIMENSION / RETRIEVAL_MODE）。

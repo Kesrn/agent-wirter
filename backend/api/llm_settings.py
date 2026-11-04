@@ -7,6 +7,8 @@
 import logging
 import uuid
 
+import httpx
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +26,7 @@ from schemas.api import (
     ModelListRequest,
 )
 from utils.crypto import decrypt_api_key, encrypt_api_key
+from utils.url_guard import UnsafeURLError, validate_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
@@ -135,6 +138,22 @@ async def _deactivate_all(db: AsyncSession, user_id: uuid.UUID) -> None:
     await db.flush()
 
 
+async def _guard_base_url(base_url: str | None) -> None:
+    """校验用户填写的模型服务地址；不允许时返回 400。
+
+    错误信息只写结果，不回显解析出的内网地址或原始 URL。
+    """
+    if not base_url or not base_url.strip():
+        return
+    try:
+        await validate_url(
+            base_url.strip(),
+            allow_private=settings.ALLOW_PRIVATE_LLM_ENDPOINTS,
+        )
+    except UnsafeURLError as exc:
+        raise HTTPException(status_code=400, detail="模型服务地址不被允许") from exc
+
+
 def _apply_update(config: LLMConfig, req: LLMConfigUpdate) -> None:
     if req.name is not None:
         config.name = req.name.strip()
@@ -182,6 +201,7 @@ async def create_llm_config(
 ):
     """新增配置档案；默认保存后立即切换为当前配置。"""
     auth_limiter.check(f"llm_settings:{user.id}")
+    await _guard_base_url(req.base_url)
     uid = _user_uuid(user)
     if req.is_active:
         await _deactivate_all(db, uid)
@@ -208,6 +228,8 @@ async def update_llm_config(
     user: AuthUser = Depends(get_current_user),
 ):
     auth_limiter.check(f"llm_settings:{user.id}")
+    if "base_url" in req.model_fields_set:
+        await _guard_base_url(req.base_url)
     uid = _user_uuid(user)
     config = await _owned_config(db, uid, config_id)
     if req.is_active is True and not config.is_active:
@@ -268,6 +290,8 @@ async def upsert_llm_settings(
 ):
     """兼容旧客户端：更新当前启用配置；不存在时创建一条。"""
     auth_limiter.check(f"llm_settings:{user.id}")
+    if "base_url" in req.model_fields_set:
+        await _guard_base_url(req.base_url)
     uid = _user_uuid(user)
     config = await _active_config(db, uid)
     if config is None:
@@ -310,12 +334,20 @@ async def list_models(
     base_url = req.base_url or (saved_config.base_url if saved_config else None) or PROVIDER_BASE_URLS.get(provider, "")
     if not base_url:
         raise HTTPException(status_code=400, detail="无法确定 API base URL")
+    await _guard_base_url(base_url)
 
     try:
         from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=5.0)
-        resp = await client.models.list()
-        return [ModelInfo(id=model.id, owned_by=getattr(model, "owned_by", None)) for model in resp.data]
+        # openai SDK 默认会跟随重定向，这里换成显式的 http_client 关掉它，
+        # 避免被跳到内网地址；超时仍是 5 秒。
+        # trust_env=True：恢复“遵循系统代理”的行为——用户经常需要经代理访问境外接口。
+        http_client = httpx.AsyncClient(follow_redirects=False, timeout=5.0, trust_env=True)
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=5.0, http_client=http_client)
+        try:
+            resp = await client.models.list()
+            return [ModelInfo(id=model.id, owned_by=getattr(model, "owned_by", None)) for model in resp.data]
+        finally:
+            await client.close()
     except Exception as exc:
         logger.exception("获取模型列表失败")
         raise HTTPException(status_code=502, detail=f"获取模型列表失败: {str(exc)}")

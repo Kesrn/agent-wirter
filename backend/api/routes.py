@@ -127,6 +127,7 @@ from harness.human_interrupt_service import (
 )
 from skills.runner import ExpertSkillResult, build_expert_skill_pack, build_expert_system_prompt
 from api.auth import get_current_user
+from utils.url_guard import UnsafeURLError, validate_url
 from api.llm_deps import get_user_llm_config
 from api.rate_limiter import agent_limiter
 from rag.embedding_service import generate_embedding, _update_embedding_bg
@@ -9057,6 +9058,17 @@ async def ask_knowledge(
     """
     uid = _to_uuid(project_id)
     await _verify_project_owner(uid, user.id, db)
+
+    # 用户可填的搜索服务地址：先校验再往下传，避免服务端被当成内网探针。
+    # 是否允许内网由 ALLOW_PRIVATE_LLM_ENDPOINTS 决定（生产默认禁止）。
+    if req.web_base_url and req.web_base_url.strip():
+        try:
+            await validate_url(
+                req.web_base_url.strip(),
+                allow_private=settings.ALLOW_PRIVATE_LLM_ENDPOINTS,
+            )
+        except UnsafeURLError as exc:
+            raise HTTPException(status_code=400, detail="搜索服务地址不被允许") from exc
 
     from services.knowledge_source import ask_knowledge_question
 
