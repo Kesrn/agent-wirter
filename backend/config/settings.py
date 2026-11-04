@@ -16,6 +16,39 @@ from dotenv import load_dotenv
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
 
+# --- 运行环境 ---
+# APP_ENV 决定“安全相关默认值”的松紧程度：
+#   development（默认）：本地/桌面端，允许首次登录建号、允许注册、允许自动生成密钥；
+#   production：服务端部署，密钥缺失即启动失败，注册与首次登录建号默认关闭。
+# 只认这两个值（dev/prod 视为别名），拼错不会静默按开发环境放开安全开关。
+_APP_ENV_ALIASES = {
+    "development": "development",
+    "dev": "development",
+    "production": "production",
+    "prod": "production",
+}
+
+
+def _resolve_app_env() -> str:
+    """解析 APP_ENV，非法取值直接报错而不是猜测。空值按未配置处理。"""
+    raw = os.getenv("APP_ENV", "").strip().lower()
+    if not raw:
+        return "development"
+    resolved = _APP_ENV_ALIASES.get(raw)
+    if resolved is None:
+        raise RuntimeError(
+            f"APP_ENV 取值非法：{raw!r}，只支持 development 或 production"
+        )
+    return resolved
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    """读取布尔型环境变量；未配置时用按环境推导的默认值。"""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() == "true"
+
 
 def _load_env_files() -> None:
     """加载本地 .env 文件。
@@ -29,7 +62,12 @@ def _load_env_files() -> None:
             load_dotenv(env_file, override=False)
 
 
+# 必须先加载 .env，再读 APP_ENV：否则 .env 里写的 APP_ENV=production 会被忽略，
+# 进程静默按开发环境运行（安全开关全开），属于 fail-open。顺序不能调换。
 _load_env_files()
+
+_APP_ENV = _resolve_app_env()
+_IS_PRODUCTION = _APP_ENV == "production"
 
 
 @dataclass(frozen=True)
@@ -54,11 +92,27 @@ class Settings:
     # 生产默认禁用 Mock；自动化测试可显式开启，避免真实网络和 token 消耗。
     ALLOW_MOCK_PROVIDER: bool = os.getenv("ALLOW_MOCK_PROVIDER", "false").lower() == "true"
 
+    # --- 运行环境与安全开关 ---
+    # APP_ENV 见文件头部说明。生产环境默认拒绝自助注册、拒绝首次登录自动建号，
+    # 账号只能由 `python scripts/create_admin.py` 创建。
+    APP_ENV: str = _APP_ENV
+    IS_PRODUCTION: bool = _IS_PRODUCTION
+    ALLOW_REGISTRATION: bool = _env_flag("ALLOW_REGISTRATION", not _IS_PRODUCTION)
+    ALLOW_FIRST_USER_BOOTSTRAP: bool = _env_flag("ALLOW_FIRST_USER_BOOTSTRAP", not _IS_PRODUCTION)
+
     # --- JWT ---
-    # JWT_SECRET 同时用于签发登录 token，以及派生 Fernet key 加密用户 API Key。
-    # 生产环境必须固定配置，否则重启会导致 token 失效，API Key 也可能无法解密。
+    # JWT_SECRET 只用于签发/校验登录 token。
+    # 生产环境必须显式配置且长度 >= 32（启动时校验）；开发环境未配置时会自动生成，
+    # 但重启后登录态失效。
     JWT_SECRET: str = os.getenv("JWT_SECRET", "")
     JWT_EXPIRE_HOURS: int = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
+
+    # --- 数据加密 ---
+    # ENCRYPTION_KEY 专门用于加密用户 API Key（标准 Fernet 密钥，Fernet.generate_key()
+    # 的输出）。与 JWT_SECRET 分离：轮换登录密钥不会连带使历史密文不可读。
+    # 生产环境必须显式配置（启动时校验）；开发环境未配置时回退到“由 JWT_SECRET 派生”
+    # 并打 warning，见 utils/crypto.py。
+    ENCRYPTION_KEY: str = os.getenv("ENCRYPTION_KEY", "")
 
     # --- RAG / Embedding ---
     # Embedding 用于素材/知识库相似检索。维度需和模型输出维度一致；
@@ -85,9 +139,10 @@ class Settings:
     RETRIEVAL_MODE: str = os.getenv("RETRIEVAL_MODE", "ilike")
 
     # --- 日志 ---
-    # DEBUG=true 时默认 DEBUG 日志，便于本地追踪 SSE、LLM 和抽取状态机；
-    # 生产环境建议 DEBUG=false，并配置 LOG_FILE 做滚动日志。
-    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "DEBUG" if os.getenv("DEBUG", "true").lower() == "true" else "INFO")
+    # DEBUG 默认关闭：会打开 DEBUG 级日志，生产环境不该默认开。
+    # 本地需要追踪 SSE/LLM/抽取状态机时显式设置 DEBUG=true。
+    DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "DEBUG" if os.getenv("DEBUG", "false").lower() == "true" else "INFO")
     LOG_FILE: str = os.getenv("LOG_FILE", "")  # 可选文件日志路径，为空则仅控制台输出
     LOG_MAX_BYTES: int = int(os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024)))  # 单个日志文件最大字节，默认 10MB
     LOG_BACKUP_COUNT: int = int(os.getenv("LOG_BACKUP_COUNT", "5"))  # 日志文件备份数量
@@ -121,7 +176,6 @@ class Settings:
 
     # --- 应用 ---
     # CORS_ORIGINS 包含 null 是为了兼容 Electron/file origin；纯 Web 部署时可收紧。
-    DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
     SQL_ECHO: bool = os.getenv("SQL_ECHO", "false").lower() == "true"
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:3000,null")
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
@@ -137,3 +191,42 @@ class Settings:
 
 
 settings = Settings()
+
+
+def validate_security_config(cfg: Settings | None = None) -> None:
+    """校验与密钥相关的启动配置，不合格直接抛错让进程退出。
+
+    生产环境“缺密钥就自动生成”会把一次配置遗漏变成一次静默的数据不可解密事故，
+    因此这里选择 fail-fast：JWT_SECRET 和 ENCRYPTION_KEY 都必须显式配置。
+    开发/桌面端保留自动生成路径，只是打 warning，避免第一次启动就打不开。
+    """
+    cfg = cfg or settings
+
+    # 配置了 ENCRYPTION_KEY 就必须是合法的 Fernet 密钥，否则加密写入会带病运行。
+    configured_key = (cfg.ENCRYPTION_KEY or "").strip()
+    if configured_key:
+        from cryptography.fernet import Fernet
+
+        try:
+            Fernet(configured_key.encode())
+        except Exception as exc:  # noqa: BLE001 - 统一转成可读的配置错误
+            raise RuntimeError(
+                "ENCRYPTION_KEY 不是合法的 Fernet 密钥（应为 Fernet.generate_key() 的输出）"
+            ) from exc
+
+    if not cfg.IS_PRODUCTION:
+        return
+
+    problems: list[str] = []
+    if not cfg.JWT_SECRET or len(cfg.JWT_SECRET.strip()) < 32:
+        problems.append("JWT_SECRET 未配置或长度小于 32")
+    if not configured_key:
+        problems.append("ENCRYPTION_KEY 未配置")
+    if problems:
+        raise RuntimeError(
+            "生产环境安全配置不完整：" + "；".join(problems)
+            + "。生产环境不再自动生成密钥，请显式配置环境变量后重启。"
+        )
+
+
+validate_security_config()

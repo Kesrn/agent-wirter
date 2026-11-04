@@ -4,6 +4,8 @@
 |---|---|
 | `verify_fts5.py` | **打包后 SQLite FTS5 能力自动化验收**（零第三方依赖，开发环境直接用；打包产物走 `desktop_server.py --verify-fts5` 内联等价断言） |
 | `run_index_worker.py` | PG 服务端部署的检索索引 Worker 进程入口 |
+| `create_admin.py` | 创建账号（生产环境关闭自助注册后唯一的建号入口）；密码交互输入或不回显地传入，不写日志 |
+| `reencrypt_api_keys.py` | 把 `llm_configs.encrypted_api_key` 从旧密钥（JWT_SECRET 派生）重新加密到主密钥 `ENCRYPTION_KEY`；默认 dry-run，加 `--apply` 才写库 |
 
 ## verify_fts5.py —— 打包后 FTS5 自动化验收
 
