@@ -1,14 +1,16 @@
 """把已存的 API Key 密文从“JWT_SECRET 派生密钥”迁移到主密钥 ENCRYPTION_KEY。
 
-背景：升级前 Fernet 密钥由 JWT_SECRET 派生；升级后加密改用 ENCRYPTION_KEY，
-旧密文靠 MultiFernet 的旧密钥兜底仍可读。本脚本把 llm_configs.encrypted_api_key
-逐行解密后用主密钥重新加密，做到“以后可以只带 ENCRYPTION_KEY”。
+背景：升级前 Fernet 密钥由 JWT_SECRET 派生（JWT_SECRET 为空时改由代码里的固定字符串
+派生）；升级后加密改用 ENCRYPTION_KEY，旧密文靠 MultiFernet 的旧密钥兜底仍可读。
+本脚本把 llm_configs.encrypted_api_key 逐行解密后用主密钥重新加密，做到“以后可以
+只带 ENCRYPTION_KEY”。
 
 默认是 dry-run：只统计数量，不修改任何数据。加 --apply 才真正写入。
 
 重要（旧密钥保留期）：LangGraph checkpoint 状态里的 encrypted_api_key 不在本脚本
-范围内，仍由旧密钥（JWT_SECRET 派生的那一个）解密。因此 **在相关 checkpoint 过期
-或对应任务被清理之前，不要更换/删除 JWT_SECRET**，否则这些历史密文将无法解密。
+范围内，仍由旧密钥（JWT_SECRET 派生的那一个，以及 JWT_SECRET 为空时的固定字符串）
+解密。因此 **在相关 checkpoint 过期或对应任务被清理之前，不要更换/删除 JWT_SECRET**，
+否则这些历史密文将无法解密。
 
 安全约定：全程不打印任何明文 Key 或密文，只输出行号和数量。
 

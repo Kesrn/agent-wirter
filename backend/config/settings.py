@@ -42,10 +42,6 @@ def _resolve_app_env() -> str:
     return resolved
 
 
-_APP_ENV = _resolve_app_env()
-_IS_PRODUCTION = _APP_ENV == "production"
-
-
 def _env_flag(name: str, default: bool) -> bool:
     """读取布尔型环境变量；未配置时用按环境推导的默认值。"""
     raw = os.getenv(name)
@@ -66,7 +62,12 @@ def _load_env_files() -> None:
             load_dotenv(env_file, override=False)
 
 
+# 必须先加载 .env，再读 APP_ENV：否则 .env 里写的 APP_ENV=production 会被忽略，
+# 进程静默按开发环境运行（安全开关全开），属于 fail-open。顺序不能调换。
 _load_env_files()
+
+_APP_ENV = _resolve_app_env()
+_IS_PRODUCTION = _APP_ENV == "production"
 
 
 @dataclass(frozen=True)

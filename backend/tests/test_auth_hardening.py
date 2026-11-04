@@ -10,13 +10,20 @@
 7. 开发环境默认行为不变（空库首次登录建号、注册可用）；
 9. 桌面端无需手工配环境变量即可启动，且重启复用同一密钥。
 
+追加（0.2 验收后修复）：
+- .env 里的 APP_ENV=production 必须生效（加载顺序，不能 fail-open）；
+- 历史 fallback 密钥加密的密文在新代码下仍可解密，迁移后只凭主密钥可解。
+
 全部使用临时 SQLite 库，不触碰本地真实数据库，也不会打印任何密钥。
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -492,3 +499,162 @@ def test_desktop_server_tightens_existing_secret_permissions(monkeypatch, tmp_pa
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+# ---------------------------------------------------------------- .env 加载顺序
+
+
+def _run_settings_with_dotenv(tmp_path: Path, dotenv_body: str) -> subprocess.CompletedProcess:
+    """在临时目录树里用指定 .env 启动一个只导入 settings 的子进程。
+
+    settings 只从「仓库根/.env」和「backend/.env」加载，所以这里复制出同样的结构
+    （tmp/backend/config/settings.py + tmp/.env），既测到真实代码，又完全不碰仓库里
+    真实的 .env。环境里直接 unset APP_ENV 而不是置空：python-dotenv 的 override=False
+    对“已存在的空值”同样不覆盖，置空会让 .env 失效、测不出问题。
+    """
+    tree = tmp_path / "dotenv-tree"
+    config_dir = tree / "backend" / "config"
+    config_dir.mkdir(parents=True)
+    shutil.copyfile(BACKEND_DIR / "config" / "settings.py", config_dir / "settings.py")
+    (tree / ".env").write_text(dotenv_body, encoding="utf-8")
+
+    env = {key: value for key, value in os.environ.items() if key not in SECRET_ENV_KEYS}
+    env["PYTHONPATH"] = str(tree / "backend")
+    env["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import config.settings as s;"
+            "p = s.settings;"
+            "print('APP_ENV=', p.APP_ENV,"
+            " 'IS_PRODUCTION=', p.IS_PRODUCTION,"
+            " 'ALLOW_REGISTRATION=', p.ALLOW_REGISTRATION,"
+            " 'ALLOW_FIRST_USER_BOOTSTRAP=', p.ALLOW_FIRST_USER_BOOTSTRAP)",
+        ],
+        cwd=str(tree / "backend"),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+def test_dotenv_app_env_production_takes_effect(tmp_path):
+    """.env 里写 APP_ENV=production 必须生效，不能静默退回 development（fail-open）。"""
+    result = _run_settings_with_dotenv(tmp_path, "APP_ENV=production\n")
+
+    assert result.returncode != 0, result.stdout
+    assert "生产环境安全配置不完整" in result.stderr
+    assert "JWT_SECRET" in result.stderr
+    assert "ENCRYPTION_KEY" in result.stderr
+
+
+def test_dotenv_app_env_production_turns_off_self_service_switches(tmp_path):
+    """.env 同时给出生产密钥时，注册与首次建号默认关闭。"""
+    body = (
+        "APP_ENV=production\n"
+        f"JWT_SECRET={'a' * 48}\n"
+        f"ENCRYPTION_KEY={Fernet.generate_key().decode()}\n"
+    )
+
+    result = _run_settings_with_dotenv(tmp_path, body)
+
+    assert result.returncode == 0, result.stderr
+    assert "APP_ENV= production" in result.stdout
+    assert "IS_PRODUCTION= True" in result.stdout
+    assert "ALLOW_REGISTRATION= False" in result.stdout
+    assert "ALLOW_FIRST_USER_BOOTSTRAP= False" in result.stdout
+
+
+def test_dotenv_without_app_env_stays_development(tmp_path):
+    """没写 APP_ENV 时仍然是开发默认值，确认上一条不是“总是 False”。"""
+    result = _run_settings_with_dotenv(tmp_path, "LLM_MODEL=whatever\n")
+
+    assert result.returncode == 0, result.stderr
+    assert "APP_ENV= development" in result.stdout
+    assert "ALLOW_REGISTRATION= True" in result.stdout
+    assert "ALLOW_FIRST_USER_BOOTSTRAP= True" in result.stdout
+
+
+# ---------------------------------------------------------------- 历史 fallback 密钥
+
+# 升级前 JWT_SECRET 为空时使用的固定派生字符串（独立写一份，避免测试跟着实现一起改）
+_OLD_FALLBACK_SECRET = "ai-creative-platform-default-key-not-for-production"
+
+
+def _old_style_fernet(secret: str) -> Fernet:
+    """复刻升级前 utils/crypto.py 的派生方式（SHA-256 → urlsafe base64）。"""
+    key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
+    return Fernet(key)
+
+
+def test_dev_ciphertext_survives_adding_encryption_key():
+    """开发环境（无 ENCRYPTION_KEY、JWT_SECRET 为空）写出的密文，配上新密钥后仍可解。"""
+    plaintext = "sk-dev-" + uuid.uuid4().hex
+    with settings_override(ENCRYPTION_KEY="", JWT_SECRET=""):
+        ciphertext = encrypt_api_key(plaintext)
+        # 用的就是历史 fallback 密钥，不是 sha256("") 这种新密钥
+        assert _old_style_fernet(_OLD_FALLBACK_SECRET).decrypt(ciphertext.encode()).decode() == plaintext
+
+    with settings_override(ENCRYPTION_KEY=Fernet.generate_key().decode(), JWT_SECRET=""):
+        assert decrypt_api_key(ciphertext) == plaintext
+
+
+def test_old_code_fallback_ciphertext_is_decryptable():
+    """用旧版 crypto.py 逻辑生成的密文，在新代码下必须能解开。"""
+    plaintext = "sk-old-" + uuid.uuid4().hex
+    legacy_ciphertext = _old_style_fernet(_OLD_FALLBACK_SECRET).encrypt(plaintext.encode()).decode()
+
+    with settings_override(ENCRYPTION_KEY="", JWT_SECRET=""):
+        assert decrypt_api_key(legacy_ciphertext) == plaintext
+
+    with settings_override(ENCRYPTION_KEY=Fernet.generate_key().decode(), JWT_SECRET=""):
+        assert decrypt_api_key(legacy_ciphertext) == plaintext
+
+
+@pytest.mark.asyncio
+async def test_reencrypt_apply_migrates_fallback_ciphertext_to_primary(tmp_path):
+    """fallback 密文经 --apply 迁移后，只带主密钥也能解开。"""
+    plaintext = "sk-fallback-" + uuid.uuid4().hex
+    legacy_ciphertext = _old_style_fernet(_OLD_FALLBACK_SECRET).encrypt(plaintext.encode()).decode()
+    db_path = tmp_path / "fallback.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{db_path}"
+
+    engine = create_async_engine(database_url)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        await _create_tables(engine, LLMConfig.__table__)
+        async with factory() as db:
+            row = LLMConfig(
+                user_id=str(uuid.uuid4()),
+                name="历史 fallback 密文",
+                provider="openai",
+                encrypted_api_key=legacy_ciphertext,
+                is_active=True,
+            )
+            db.add(row)
+            await db.commit()
+            row_id = row.id
+
+        new_key = Fernet.generate_key().decode()
+        applied = _run_script(
+            "reencrypt_api_keys.py",
+            ["--apply"],
+            DATABASE_URL=database_url,
+            JWT_SECRET="",
+            ENCRYPTION_KEY=new_key,
+        )
+        assert applied.returncode == 0, applied.stdout + applied.stderr
+        assert "已写入：1 条" in applied.stdout
+        # 不打印明文、也不打印密钥
+        assert plaintext not in applied.stdout + applied.stderr
+        assert _OLD_FALLBACK_SECRET not in applied.stdout + applied.stderr
+
+        async with factory() as db:
+            migrated = await db.get(LLMConfig, row_id)
+            assert migrated.encrypted_api_key != legacy_ciphertext
+            with settings_override(ENCRYPTION_KEY=new_key, JWT_SECRET=""):
+                assert decrypt_api_key_with_primary_key(migrated.encrypted_api_key) == plaintext
+    finally:
+        await engine.dispose()
