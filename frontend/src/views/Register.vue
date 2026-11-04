@@ -1,15 +1,22 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, ApiError } from '../api/client'
 import { saveAuthSession } from '../utils/authSession'
 import { passwordByteLength, MAX_PASSWORD_BYTES } from '../utils/password'
+import { loadAuthConfig, getCachedAuthConfig } from '../utils/authConfig'
 
 const router = useRouter()
 const username = ref('')
 const password = ref('')
 const email = ref('')
 const registerError = ref('')
+const registrationEnabled = ref(getCachedAuthConfig()?.registration_enabled ?? true)
+
+onMounted(async () => {
+  const config = await loadAuthConfig()
+  registrationEnabled.value = config.registration_enabled
+})
 
 async function handleRegister() {
   registerError.value = ''
@@ -76,7 +83,7 @@ const setupSteps = [
             <h1 id="register-title">创建账号</h1>
           </div>
 
-          <form @submit.prevent="handleRegister" class="register-form">
+          <form v-if="registrationEnabled" @submit.prevent="handleRegister" class="register-form">
             <div class="form-group">
               <label for="register-username">用户名 <span class="required">*</span></label>
               <input id="register-username" v-model="username" type="text" autocomplete="username" placeholder="至少 3 个字符" />
@@ -93,7 +100,12 @@ const setupSteps = [
             <button type="submit" class="btn-register">注册并进入</button>
           </form>
 
-          <div class="card-footer">
+          <div v-else class="register-disabled" role="status">
+            <p class="register-disabled-text">当前未开放注册，请联系管理员创建账号</p>
+            <router-link to="/login" class="btn-return-login">返回登录</router-link>
+          </div>
+
+          <div v-if="registrationEnabled" class="card-footer">
             <span>注册后自动登录</span>
             <router-link to="/login" class="switch-link">返回登录</router-link>
           </div>
@@ -272,6 +284,43 @@ const setupSteps = [
   background: var(--accent-hover);
   transform: translateY(-1px);
   box-shadow: 0 16px 34px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.register-disabled {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+  padding: var(--sp-6) var(--sp-4);
+  text-align: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-input) 50%, var(--bg));
+  border: 1px dashed color-mix(in srgb, var(--border) 80%, transparent);
+}
+.register-disabled-text {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0;
+}
+.btn-return-login {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: var(--sp-2) var(--sp-5);
+  background: var(--accent);
+  color: var(--text-inverse);
+  border-radius: 8px;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--transition), transform var(--transition);
+}
+.btn-return-login:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
 }
 .card-footer {
   display: flex;

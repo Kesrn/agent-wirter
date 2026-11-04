@@ -189,3 +189,11 @@ export function clearAuthSession(options: { keepRememberedUser?: boolean } = {})
 
   syncDesktopMediaToken(null)
 }
+
+export {
+  loadAuthConfig,
+  getCachedAuthConfig,
+  resetAuthConfigCache,
+  type AuthConfig,
+} from './authConfig'
+

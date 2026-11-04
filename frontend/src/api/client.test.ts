@@ -283,4 +283,64 @@ describe('api generation routes', () => {
     expect(String(lastCall[0])).toContain('/auth/logout')
     expect(lastCall[1]?.method).toBe('POST')
   })
+
+  it('calls GET /auth/config and returns registration status', async () => {
+    vi.mocked(fetch).mockImplementation(async () =>
+      new Response(JSON.stringify({ registration_enabled: false }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+
+    const res = await api.getAuthConfig()
+    expect(res).toEqual({ registration_enabled: false })
+
+    const fetchMock = vi.mocked(fetch)
+    const lastCall = fetchMock.mock.calls[fetchMock.mock.calls.length - 1]
+    expect(String(lastCall[0])).toContain('/auth/config')
+    expect(lastCall[1]?.method).toBe('GET')
+  })
+
+  it('does NOT trigger unauthorized redirect on getAuthConfig 401', async () => {
+    resetUnauthorizedFlag()
+    const redirectMock = vi.fn()
+    vi.stubGlobal('window', {
+      location: {
+        set href(val: string) { redirectMock(val) },
+      },
+    })
+
+    vi.mocked(fetch).mockImplementation(async () =>
+      new Response(JSON.stringify({ detail: 'unauthorized' }), { status: 401 }),
+    )
+
+    await expect(api.getAuthConfig()).rejects.toMatchObject({
+      status: 401,
+    })
+
+    expect(redirectMock).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+    resetUnauthorizedFlag()
+  })
+
+  it('aborts getAuthConfig when timeout is exceeded', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(fetch).mockImplementation(async (_url, init) => {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted', 'AbortError'))
+          })
+        })
+      })
+
+      const callPromise = api.getAuthConfig({ timeoutMs: 100 })
+      const rejectionPromise = expect(callPromise).rejects.toThrow()
+
+      await vi.advanceTimersByTimeAsync(150)
+      await rejectionPromise
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

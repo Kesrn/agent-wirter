@@ -15,7 +15,7 @@ import {
   type LLMConfigCreatePayload, type LLMConfigUpdatePayload, type ModelListRequest,
   type LLMConfigResponse, type LLMStatusResponse, type ModelInfo,
   type LoginRequest, type LoginResponse, type MeResponse,
-  type RegisterRequest, type RegisterResponse,
+  type RegisterRequest, type RegisterResponse, type AuthConfigResponse,
   type ProjectImageUploadResponse,
   type TxtImportResponse, type ChapterStructureExtractRequest, type ChapterStructureExtractResponse,
   type ApiChapterVersion, type ChapterVersionDiffRequest, type ChapterVersionDiffResponse,
@@ -235,6 +235,32 @@ export const api = {
       body: JSON.stringify(data),
       skipAuthRedirect: true,
     }),
+  getAuthConfig: async (options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<AuthConfigResponse> => {
+    const timeoutMs = options?.timeoutMs ?? 3000
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    const externalSignal = options?.signal
+    const onAbort = () => controller.abort()
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        controller.abort()
+      } else {
+        externalSignal.addEventListener('abort', onAbort, { once: true })
+      }
+    }
+    try {
+      return await request<AuthConfigResponse>('/auth/config', {
+        method: 'GET',
+        skipAuthRedirect: true,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+      if (externalSignal) {
+        externalSignal.removeEventListener('abort', onAbort)
+      }
+    }
+  },
   me: () => request<MeResponse>('/auth/me'),
   logout: async () => {
     const controller = new AbortController()
