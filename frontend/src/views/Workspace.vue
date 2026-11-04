@@ -12,7 +12,7 @@ import ConfirmModal from '../components/ConfirmModal.vue'
 import StructureExtractPreview from '../components/StructureExtractPreview.vue'
 import BaseSelect from '../components/BaseSelect.vue'
 import { displayChapterNumber, stripChapterNumber } from '../utils/chapterTitle'
-import { clearAuthSession, getAuthToken } from '../utils/authSession'
+import { clearAuthSession, getAuthToken, handleUnauthorized } from '../utils/authSession'
 
 const route = useRoute()
 const router = useRouter()
@@ -495,6 +495,9 @@ async function exportFromBackend(format: 'txt' | 'md') {
       { headers: getAuthHeaders() },
     )
     if (!res.ok) {
+      if (res.status === 401) {
+        handleUnauthorized()
+      }
       const text = await res.text().catch(() => '')
       let msg = `导出失败 (${res.status})`
       try {

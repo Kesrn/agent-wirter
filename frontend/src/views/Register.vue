@@ -36,7 +36,7 @@ async function handleRegister() {
     router.push('/projects')
   } catch (e: unknown) {
     if (e instanceof ApiError) {
-      if (e.status === 409 || e.status === 400) {
+      if (e.status === 409) {
         registerError.value = e.message || '该用户名已被注册'
       } else if (e.status === 422) {
         registerError.value = '请输入账号和密码'

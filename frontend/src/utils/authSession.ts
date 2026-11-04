@@ -72,7 +72,30 @@ export function hasAuthSession(): boolean {
   return Boolean(getAuthToken() && (sessionLoggedIn || localLoggedIn))
 }
 
+let isRedirectingToLogin = false
+
+export function resetUnauthorizedFlag(): void {
+  isRedirectingToLogin = false
+}
+
+export function redirectToLogin(): void {
+  if (typeof window === 'undefined') return
+  if (import.meta.env.VITE_DESKTOP === 'true') {
+    window.location.hash = '#/login'
+    return
+  }
+  window.location.href = '/login'
+}
+
+export function handleUnauthorized(): void {
+  clearAuthSession()
+  if (isRedirectingToLogin) return
+  isRedirectingToLogin = true
+  redirectToLogin()
+}
+
 export function saveAuthSession({ token, username, remember }: SaveAuthSessionOptions): void {
+  isRedirectingToLogin = false
   clearStorageSession('local')
   clearStorageSession('session')
 

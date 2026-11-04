@@ -19,7 +19,7 @@
  */
 import { API_BASE_URL } from './types'
 import { ApiError } from './client'
-import { getAuthToken } from '../utils/authSession'
+import { getAuthToken, handleUnauthorized } from '../utils/authSession'
 
 // ─── §12 契约类型 ───
 
@@ -276,6 +276,17 @@ export class ChatApiError extends Error {
   }
 }
 
+const chatStatusMap: Record<number, string> = {
+  400: '请求参数有误',
+  401: '登录已失效，请重新登录',
+  403: '没有操作权限',
+  404: '资源不存在',
+  413: '上传内容过大',
+  422: '输入内容不符合要求',
+  429: '操作过于频繁，请稍后再试',
+  500: '服务器异常，请稍后重试',
+}
+
 function parseChatError(status: number, body: string): ChatApiError {
   let parsed: unknown
   try {
@@ -303,7 +314,7 @@ function parseChatError(status: number, body: string): ChatApiError {
       return new ChatApiError(status, '当前版本暂不支持该操作类型', code, obj)
     }
   }
-  return new ChatApiError(status, `请求失败 (${status})`, null, null)
+  return new ChatApiError(status, chatStatusMap[status] ?? `请求失败 (${status})`, null, null)
 }
 
 // ─── 请求辅助 ───
@@ -314,6 +325,9 @@ async function chatRequest<T>(path: string, init?: RequestInit): Promise<T> {
   if (token) headers['Authorization'] = `Bearer ${token}`
   const res = await fetch(`${API_BASE_URL}${path}`, { headers, ...init })
   if (!res.ok) {
+    if (res.status === 401) {
+      handleUnauthorized()
+    }
     const text = await res.text().catch(() => '')
     throw parseChatError(res.status, text)
   }
