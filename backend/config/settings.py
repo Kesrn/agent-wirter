@@ -188,6 +188,9 @@ class Settings:
     COOKIE_SECURE: bool = _env_flag("COOKIE_SECURE", _IS_PRODUCTION)
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:3000,null")
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
+    # 通用请求体上限（ASGI 中间件用）。上传类接口有各自更高的专项上限，
+    # 见 api/body_limit.py 的规则表；这个值兜住其余所有带请求体的接口。
+    MAX_REQUEST_BODY_BYTES: int = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(10 * 1024 * 1024)))
     MAX_UPLOAD_BYTES: int = int(os.getenv("MAX_UPLOAD_BYTES", str(5 * 1024 * 1024)))
     MAX_TXT_IMPORT_BYTES: int = int(os.getenv("MAX_TXT_IMPORT_BYTES", str(50 * 1024 * 1024)))
     KNOWLEDGE_UPLOAD_MAX_BYTES: int = int(os.getenv("KNOWLEDGE_UPLOAD_MAX_BYTES", str(50 * 1024 * 1024)))

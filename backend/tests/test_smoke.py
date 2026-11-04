@@ -2057,7 +2057,8 @@ def test_upload_project_image_rejects_non_image():
         headers={**headers, "Content-Type": "text/plain"},
     )
 
-    assert upload.status_code == 415
+    # 0.6 起上传类型的拒绝统一用 400（原来是 415），与 /media 的类型白名单语义对齐
+    assert upload.status_code == 400
 
 
 # ==================== Chapter Version History ====================
