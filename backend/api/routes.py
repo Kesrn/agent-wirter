@@ -385,6 +385,42 @@ def _format_bytes_limit(size: int) -> str:
     return f"{size}B"
 
 
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+async def _read_body_chunked(request: Request, limit: int, detail: str) -> bytes:
+    """流式读取请求体，累计超过 limit 立即 413。
+
+    逐块判断的意义：`Content-Length` 是客户端自报的，分块传输时甚至不存在，
+    只有按实际收到的字节数才能保证“超限就不再继续读”。
+    """
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        if not chunk:
+            continue
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(status_code=413, detail=detail)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def _read_upload_file_chunked(file: UploadFile, limit: int, detail: str) -> bytes:
+    """分块读取 UploadFile，累计超过 limit 立即 413（不要先 read() 整份再判断）。"""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(status_code=413, detail=detail)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def _parse_directions(
     text: str,
     *,
@@ -1072,25 +1108,37 @@ async def upload_project_image(
         except ValueError:
             raise HTTPException(status_code=400, detail="无效的上传大小")
 
-    data = await request.body()
+    # 边读边计数：分块传输（没有 Content-Length）时上面的预检不起作用，
+    # 必须按实际收到的字节判断，超限立刻中断，不把超大请求体整个读进内存。
+    data = await _read_body_chunked(request, settings.MAX_UPLOAD_BYTES, "图片不能超过 5MB")
     if not data:
         raise HTTPException(status_code=400, detail="图片内容为空")
-    if len(data) > settings.MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="图片不能超过 5MB")
 
     content_type = request.headers.get("content-type", "")
     ext = _image_extension_from_bytes(content_type, data)
     if not ext:
-        raise HTTPException(status_code=415, detail="仅支持 PNG、JPEG、GIF、WebP 图片")
+        # 类型不在白名单，或魔数与声明类型不符（伪装成图片的文本、svg、html 等）
+        raise HTTPException(status_code=400, detail="仅支持 PNG、JPEG、GIF、WebP 图片")
 
     relative_dir = os.path.join("projects", str(uid), "images")
     target_dir = os.path.join(settings.UPLOAD_DIR, relative_dir)
     os.makedirs(target_dir, exist_ok=True)
 
+    # 文件名完全由服务端生成（uuid4 + 按真实类型判定的扩展名），不使用客户端文件名；
+    # 先写临时文件再 os.replace：失败或超限都不会在 images/ 里留下半截文件。
     filename = f"{uuid.uuid4().hex}.{ext}"
     target_path = os.path.join(target_dir, filename)
-    with open(target_path, "wb") as f:
-        f.write(data)
+    tmp_path = os.path.join(target_dir, f".{filename}.part")
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(data)
+        os.replace(tmp_path, target_path)
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
     url_path = f"/media/projects/{uid}/images/{filename}"
     return {
@@ -1160,14 +1208,13 @@ async def import_txt_project(
         except ValueError:
             raise HTTPException(status_code=400, detail="无效的上传大小")
 
-    data = await file.read()
+    data = await _read_upload_file_chunked(
+        file,
+        settings.MAX_TXT_IMPORT_BYTES,
+        f"TXT 文件不能超过 {_format_bytes_limit(settings.MAX_TXT_IMPORT_BYTES)}",
+    )
     if not data:
         raise HTTPException(status_code=400, detail="TXT 文件内容为空")
-    if len(data) > settings.MAX_TXT_IMPORT_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"TXT 文件不能超过 {_format_bytes_limit(settings.MAX_TXT_IMPORT_BYTES)}",
-        )
     if target_words is not None and target_words < 1:
         raise HTTPException(status_code=400, detail="目标字数必须大于 0")
 
@@ -5448,11 +5495,18 @@ async def resume_chapter_generation(
     # 新前端可能把它们放在 JSON body。
     body_data: dict = {}
     try:
-        body_raw = await request.body()
+        body_raw = await _read_body_chunked(
+            request,
+            settings.MAX_REQUEST_BODY_BYTES,
+            f"请求体过大，上限 {_format_bytes_limit(settings.MAX_REQUEST_BODY_BYTES)}",
+        )
         if body_raw:
             parsed_body = json.loads(body_raw)
             if isinstance(parsed_body, dict):
                 body_data = parsed_body
+    except HTTPException:
+        # 超限必须原样抛出（413），不能被下面兜 JSON 解析异常的 except 吞成 200/500
+        raise
     except Exception:
         body_data = {}
 
@@ -7765,10 +7819,12 @@ async def upload_knowledge_file(
     if not title.strip():
         title = filename
 
-    raw = await file.read()
-    if len(raw) > settings.KNOWLEDGE_UPLOAD_MAX_BYTES:
-        limit_mb = settings.KNOWLEDGE_UPLOAD_MAX_BYTES // (1024 * 1024)
-        raise HTTPException(status_code=413, detail=f"文件大小不能超过 {limit_mb}MB")
+    limit_mb = settings.KNOWLEDGE_UPLOAD_MAX_BYTES // (1024 * 1024)
+    raw = await _read_upload_file_chunked(
+        file,
+        settings.KNOWLEDGE_UPLOAD_MAX_BYTES,
+        f"文件大小不能超过 {limit_mb}MB",
+    )
 
     from services.knowledge_file_parser import extract_knowledge_text
 

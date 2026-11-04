@@ -24,6 +24,7 @@ from db.session import get_engine, init_db
 from harness.run_manager import discard_incomplete_runs
 from api.routes import router
 from api.auth import router as auth_router
+from api.body_limit import RequestBodyLimitMiddleware
 from api.media import router as media_router
 from api.llm_settings import router as llm_settings_router
 from observability.langfuse import log_langfuse_startup_status
@@ -88,6 +89,11 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# 中间件顺序很关键：Starlette 里「后添加的在最外层」。
+# 先加请求体大小限制、再加 CORS，CORS 才在外层，413 响应也会带上 CORS 头，
+# 浏览器 JS 才能读到状态码（否则 fetch 只能看到网络错误）。
+app.add_middleware(RequestBodyLimitMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
