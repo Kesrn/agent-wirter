@@ -10,8 +10,16 @@
 
 # --- Web 框架 ---
 fastapi
-python-multipart          # FastAPI 文件上传解析（运行时动态导入）
+python-multipart>=0.0.31,<0.0.32   # 安全下限（0.10）：0.0.31 清掉全部 3 条报告漏洞；FastAPI 上传解析（动态导入）
 uvicorn
+
+# --- 安全升级的传递依赖下限（0.10，pip-audit 报告） ---
+# starlette 1.3.1 清掉全部 5 条；urllib3 2.8.0 清掉 3 条；anyio 4.14.2 清掉 2 条；
+# certifi 2026.10.18 清掉 1 条 —— 四个都是传递依赖的安全下限；上限钉在最低修复版本，防止追新
+starlette>=1.3.1,<1.4
+urllib3>=2.8.0,<2.9
+anyio>=4.14.2,<4.15
+certifi>=2026.10.18,<2026.10.19  # 日期版本，钉在最低修复版
 
 # --- 数据库 ---
 sqlalchemy[asyncio]       # [asyncio] extra 无平台条件地安装 greenlet（SQLAlchemy async 必需；
@@ -23,27 +31,36 @@ alembic                   # backend/alembic 迁移工具链（alembic/env.py 导
 # --- 数据校验与配置 ---
 pydantic
 python-dotenv
-typing-extensions         # services/intent_models.py 直接导入
+typing-extensions>=4.15.0,<4.16  # services/intent_models.py 直接导入；上限防止 4.16 追新（无漏洞修复要求）
 
 # --- 认证与加密 ---
 bcrypt
-cryptography              # utils/crypto.py 的 Fernet（任务 0.2 起直接导入）
-PyJWT
+# 安全下限（0.10）：48.0.1 修复 GHSA-537c-gmf6-5ccf；其余 3 条漏洞需 49/50（跨主版本），未升
+cryptography>=48.0.1,<49
+# 安全下限（0.10）：2.15.0 清掉全部 15 条报告漏洞
+PyJWT>=2.15.0,<2.15.1
 
 # --- LLM / Agent ---
 langgraph
-langgraph-checkpoint-sqlite
-langgraph-checkpoint-postgres
+langgraph-checkpoint-sqlite>=3.1.1,<3.1.2    # 传递依赖的安全下限（0.10）：3.1.1 修 PYSEC-2026-3636
+langgraph-checkpoint-postgres>=3.1.3,<3.2  # 传递依赖的安全下限（0.10）：3.1.3 修 CVE-2026-115883
 langchain-core
 openai                    # api/llm_settings.py、agents/llm_provider.py（任务 0.2 起直接导入）
 langfuse                  # observability/langfuse.py 延迟可选导入（缺失时静默降级）
+
+# langgraph-checkpoint 修 PYSEC-2026-2573（下限 4.1.1，实际解析 4.3.1 属连带变动）；langsmith 0.8.18 修 CVE-2026-59152；
+# langgraph-sdk 0.3.15 修 2 条（第 3 条需 0.4.4 跨主版本，未升）—— 三者均为传递依赖安全下限
+langgraph-checkpoint>=4.1.1,<5  # 被迫放宽：checkpoint-postgres 3.1.3 强制要求 >=4.3.0，4.3.1 属连带变动
+langsmith>=0.8.18,<0.9
+langgraph-sdk>=0.3.15,<0.3.16
 
 # --- HTTP ---
 httpx
 
 # --- 知识库文档解析 ---
 openpyxl
-pypdf
+# 安全下限（0.10）：6.21.4 清掉全部 37 条报告漏洞
+pypdf>=6.21.4,<6.22
 python-docx
 jieba
 
