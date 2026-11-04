@@ -33,12 +33,13 @@ from pathlib import Path
 
 import pytest
 from cryptography.fernet import Fernet
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from api.auth import login, register
+from api.rate_limiter import auth_ip_limiter, auth_limiter
 from config.settings import settings
 from models.base import Base
 from models.llm_config import LLMConfig
@@ -55,6 +56,36 @@ SECRET_ENV_KEYS = (
     "ALLOW_FIRST_USER_BOOTSTRAP",
     "DATABASE_URL",
 )
+
+
+def _request(ip: str = "127.0.0.1") -> Request:
+    """构造一个最小 Request，供直接调用路由函数时使用。
+
+    0.3 起 login/register 需要 Request 来取客户端 IP（IP 维度限流），
+    直接调用路由函数时不经过 FastAPI，所以这里手工拼一个 scope。
+    """
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/auth/login",
+            "headers": [],
+            "client": (ip, 12345),
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "query_string": b"",
+        }
+    )
+
+
+@pytest.fixture(autouse=True)
+def _reset_auth_limiters():
+    """限流器是进程级全局状态，每个用例前清空，避免互相影响。"""
+    auth_limiter.reset()
+    auth_ip_limiter.reset()
+    yield
+    auth_limiter.reset()
+    auth_ip_limiter.reset()
 
 
 @contextmanager
@@ -203,6 +234,7 @@ async def test_production_login_on_empty_table_returns_401_and_creates_nothing()
                 with pytest.raises(HTTPException) as excinfo:
                     await login(
                         LoginRequest(username="intruder", password="whatever"),
+                        _request(),
                         db=db,
                     )
             assert excinfo.value.status_code == 401
@@ -222,6 +254,7 @@ async def test_production_register_returns_403():
                 with pytest.raises(HTTPException) as excinfo:
                     await register(
                         RegisterRequest(username="newcomer", password="secret123"),
+                        _request(),
                         db=db,
                     )
             assert excinfo.value.status_code == 403
@@ -247,6 +280,7 @@ async def test_development_defaults_keep_bootstrap_and_registration():
             ):
                 boot = await login(
                     LoginRequest(username="devboot", password="devpass1"),
+                    _request(),
                     db=db,
                 )
                 assert boot.access_token
@@ -254,6 +288,7 @@ async def test_development_defaults_keep_bootstrap_and_registration():
 
                 created = await register(
                     RegisterRequest(username="devregister", password="devpass2"),
+                    _request(),
                     db=db,
                 )
                 assert created.username == "devregister"
@@ -296,13 +331,18 @@ async def test_create_admin_script_creates_loginable_user(tmp_path):
             with settings_override(IS_PRODUCTION=True, ALLOW_REGISTRATION=False, ALLOW_FIRST_USER_BOOTSTRAP=False):
                 wrong = None
                 try:
-                    await login(LoginRequest(username="opsadmin", password="wrong-pw"), db=db)
+                    await login(
+                        LoginRequest(username="opsadmin", password="wrong-pw"),
+                        _request(),
+                        db=db,
+                    )
                 except HTTPException as exc:  # noqa: PERF203 - 明确断言密码校验生效
                     wrong = exc
                 assert wrong is not None and wrong.status_code == 401
 
                 ok = await login(
                     LoginRequest(username="opsadmin", password="strong-admin-pw"),
+                    _request(),
                     db=db,
                 )
                 assert ok.access_token

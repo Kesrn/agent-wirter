@@ -155,6 +155,12 @@ class Settings:
     MAX_REVISION_COUNT: int = 3
     AGENT_RATE_LIMIT_PER_MINUTE: int = 10
     AUTH_RATE_LIMIT_PER_MINUTE: int = 10
+    # 认证端点的第二个限流维度：同一 IP 对 /auth/login + /auth/register 的每分钟总次数。
+    # 只按用户名限流时，换用户名就能绕过，撞库依然有效，所以这里独立按 IP 再限一层。
+    AUTH_IP_RATE_LIMIT_PER_MINUTE: int = int(os.getenv("AUTH_IP_RATE_LIMIT_PER_MINUTE", "20"))
+    # 反向代理层数。0（默认）= 不信任 X-Forwarded-For，只用 TCP 连接的对端地址；
+    # 部署在 N 层代理后面时设为 N，取 X-Forwarded-For 从右往左第 N 个地址。
+    TRUSTED_PROXY_COUNT: int = int(os.getenv("TRUSTED_PROXY_COUNT", "0"))
     PROTECTED_WORKFLOW_POSITIONS: tuple = ("consistency_checker", "human_review")
 
     # --- LangGraph checkpointer ---
