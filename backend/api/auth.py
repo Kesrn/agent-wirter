@@ -18,6 +18,7 @@ JWT_SECRET 未配置时开发环境会自动生成随机密钥（重启后 token
 由 api/routes.py 里的 _verify_project_owner 在每个业务接口里校验。
 """
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -33,7 +34,7 @@ from schemas.api import LoginRequest, LoginResponse, AuthUser, RegisterRequest, 
 from config.settings import settings
 from db.session import get_db
 from models.user import User
-from api.rate_limiter import auth_limiter
+from api.rate_limiter import auth_ip_limiter, auth_limiter, get_client_ip
 
 router = APIRouter(prefix="/api/auth")
 
@@ -57,6 +58,53 @@ def _hash_password(password: str) -> str:
 def _verify_password(password: str, hashed: str) -> bool:
     """验证密码与哈希是否匹配。"""
     return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+
+
+async def hash_password_async(password: str) -> str:
+    """在线程池里做 bcrypt 哈希。
+
+    bcrypt 单次耗时几十到几百毫秒，而且只吃 CPU。直接在 async 接口里调用会把整个
+    事件循环卡住（其它请求、SSE 流一起等），所以放到 asyncio.to_thread 执行。
+    同步版 _hash_password 保留：scripts/create_admin.py 这类命令行脚本不需要它。
+    """
+    return await asyncio.to_thread(_hash_password, password)
+
+
+async def verify_password_async(password: str, hashed: str) -> bool:
+    """在线程池里做 bcrypt 校验（理由同 hash_password_async）。"""
+    return await asyncio.to_thread(_verify_password, password, hashed)
+
+
+# 模块加载时生成的假哈希：账号不存在时也拿它跑一次等价耗时的校验，
+# 让“用户不存在”和“密码错误”在耗时上不可区分（防用户名枚举）。
+_DUMMY_PASSWORD_HASH = _hash_password(uuid.uuid4().hex)
+_LOGIN_FAILED_DETAIL = "用户名或密码错误"
+
+# bcrypt 只处理前 72 字节，新版（5.x）对更长的输入直接抛 ValueError 而不是截断。
+# 这里显式设上限，把“密码过长”变回一个可预期的 400 / 401，而不是 500。
+MAX_PASSWORD_BYTES = 72
+PASSWORD_TOO_LONG_DETAIL = "密码过长：编码后最多 72 字节（约 24 个汉字或 72 个英文字符）"
+
+
+def password_within_byte_limit(password: str) -> bool:
+    """密码按 UTF-8 编码后是否在 bcrypt 的 72 字节上限内。
+
+    按字节而不是按字符判断：一个汉字 3 字节，25 个汉字就已经超了。
+    """
+    return len(password.encode("utf-8")) <= MAX_PASSWORD_BYTES
+
+
+async def _burn_password_check(password: str) -> None:
+    """对假哈希做一次 bcrypt 校验，只为消耗与真实校验相当的时间。
+
+    密码超过 72 字节时 bcrypt 会抛 ValueError，这里吞掉：这个分支的目的是不让
+    响应时间泄露“账号是否存在”，不应该因为密码过长而变成 500。真实用户路径由
+    password_within_byte_limit 提前拦下，不走这里。
+    """
+    try:
+        await verify_password_async(password, _DUMMY_PASSWORD_HASH)
+    except ValueError:
+        pass
 
 
 def _create_token(user_id: str, username: str) -> str:
@@ -132,6 +180,7 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
 @router.post("/register", response_model=RegisterResponse)
 async def register(
     req: RegisterRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """注册新用户。
@@ -141,11 +190,19 @@ async def register(
 
     生产环境（ALLOW_REGISTRATION=false）直接拒绝：自助注册会让任何人都能占用
     服务端资源，账号应由管理员用 scripts/create_admin.py 创建。
+
+    限流两个维度都先过：同一 IP 的总量（防止换用户名绕过）+ 同一用户名的次数。
     """
     if not settings.ALLOW_REGISTRATION:
         raise HTTPException(status_code=403, detail="注册已关闭")
 
-    auth_limiter.check(f"auth:{req.username}")
+    auth_ip_limiter.check(f"auth_ip:{get_client_ip(request)}", with_retry_after=True)
+    auth_limiter.check(f"auth:{req.username}", with_retry_after=True)
+
+    # 先挡住 bcrypt 处理不了的长度，避免落到 hashpw 里变成 500。
+    if not password_within_byte_limit(req.password):
+        raise HTTPException(status_code=400, detail=PASSWORD_TOO_LONG_DETAIL)
+
     # 校验 username 不重复
     result = await db.execute(select(User).where(User.username == req.username))
     if result.scalar_one_or_none():
@@ -157,7 +214,7 @@ async def register(
         if result.scalar_one_or_none():
             raise HTTPException(status_code=400, detail="邮箱已被注册")
 
-    hashed_password = _hash_password(req.password)
+    hashed_password = await hash_password_async(req.password)
     user = User(
         username=req.username,
         email=req.email,
@@ -176,16 +233,22 @@ async def register(
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """用户登录
 
     - 如果 User 表中有记录，则验证用户名和密码
     - 首次启动兼容：User 表为空且 ALLOW_FIRST_USER_BOOTSTRAP 开启时，允许用
       任意账号密码建立第一个用户（开发/桌面端）；生产环境关闭该开关，空表登录
       一律 401，账号只能由 scripts/create_admin.py 创建
+
+    防用户名枚举：账号不存在、库里没有任何账号（且不允许首次建号）、密码超长这几种
+    情况，都会先对固定假哈希跑一次 bcrypt 再做 401，响应体和耗时都与“密码错误”一致。
+    账号被禁用不作为“密码错误”处理：必须先验密码，密码正确才告知“用户已被禁用”，
+    否则不用密码就能探出“这个用户名存在且被禁用”。
     """
     identity = req.username or req.email
-    auth_limiter.check(f"auth:{identity}")
+    auth_ip_limiter.check(f"auth_ip:{get_client_ip(request)}", with_retry_after=True)
+    auth_limiter.check(f"auth:{identity}", with_retry_after=True)
 
     # 检查 User 表是否有记录。
     # 首次使用时自动创建用户，是为了降低本地演示/桌面端第一次启动门槛；
@@ -196,12 +259,18 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     if user_count == 0:
         if not settings.ALLOW_FIRST_USER_BOOTSTRAP:
             # 不创建用户、不透露“库里还没有账号”，避免变成任人取号的后门。
-            raise HTTPException(status_code=401, detail="用户名或密码错误")
+            # 但仍然要做一次等价耗时的校验，否则响应快慢就能暴露“库是空的”。
+            await _burn_password_check(req.password)
+            raise HTTPException(status_code=401, detail=_LOGIN_FAILED_DETAIL)
 
-        # 开发/桌面端首次使用，自动创建用户
+        # 开发/桌面端首次使用，自动创建用户。
+        # 密码超长同样不能建号，否则 bcrypt 会在下面 hashpw 时抛 ValueError。
+        if not password_within_byte_limit(req.password):
+            raise HTTPException(status_code=400, detail=PASSWORD_TOO_LONG_DETAIL)
+
         user = User(
             username=identity,
-            hashed_password=_hash_password(req.password),
+            hashed_password=await hash_password_async(req.password),
             is_active=True,
         )
         db.add(user)
@@ -224,13 +293,22 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
         user = result.scalar_one_or_none()
 
     if not user:
-        raise HTTPException(status_code=401, detail="用户名或密码错误")
+        # 账号不存在也跑一次 bcrypt，避免用响应时间枚举用户名。
+        await _burn_password_check(req.password)
+        raise HTTPException(status_code=401, detail=_LOGIN_FAILED_DETAIL)
+
+    # 超过 72 字节的密码 bcrypt 无法校验（会抛 ValueError），一律按密码错误处理：
+    # 不碰真实哈希，也不返回 400，避免“密码太长”成为一个可区分账号是否存在的信号。
+    if not password_within_byte_limit(req.password):
+        await _burn_password_check(req.password)
+        raise HTTPException(status_code=401, detail=_LOGIN_FAILED_DETAIL)
+
+    # 先验密码再看账号状态：密码错误时，禁用账号与不存在账号的响应必须完全一致。
+    if not await verify_password_async(req.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail=_LOGIN_FAILED_DETAIL)
 
     if not user.is_active:
         raise HTTPException(status_code=401, detail="用户已被禁用")
-
-    if not _verify_password(req.password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="用户名或密码错误")
 
     token = _create_token(str(user.id), user.username)
     return LoginResponse(
