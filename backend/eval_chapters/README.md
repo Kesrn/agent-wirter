@@ -22,6 +22,8 @@ python scripts/eval_chapters.py --dataset tests/data/eval_chapters_sample.jsonl 
 
 输出目录包含 `results.jsonl`（每个样本×变体一行）、`summary.json`、`compare.md` 和 `run_meta.json`。主表的规则通过率附 Wilson 95% 区间；其它连续指标按同一 `sample_id` 配对比较，使用固定种子的 5000 次 bootstrap，并报告均值差区间及胜/平/负。配对差值正向代表有利；参考稿改动率、成本和耗时按降低为有利。区间包含 0 时标为“不显著”。少于 30 个样本时报告会显示样本量警告；区间可能很宽，只有提升明显大于区间才适合称为改善。
 
+`rule_first_pass` 和 `rule_final_pass` 使用统一离线判定：先运行章节初稿/最终质量检查，再强制运行任务卡规则（含样本人物名称与别名）。这套判定不读取变体的 `rules_enabled` 或全局 `CHAPTER_RULES_ENABLED`。`pipeline_first_pass` 与 `pipeline_final_pass` 另存各变体流水线内部结果，仅供诊断，不用于主表。
+
 ## 预算与留出集纪律
 
 运行前按“（所有样本输入字符数 / 2 + 每样本 33024 输出 token 上限）× 变体数”保守估算；估算超过 `--max-total-tokens` 会在任何模型调用前中止。实际累计用量超过预算时立即停止，并写出已完成结果。未知价格写为 `null`。先用开发集调试和比较；留出集只应在方案冻结后运行。`--split holdout` 必须带 `--confirm-holdout`，每次运行追加记录到输出目录同级的 `holdout_runs.log`；已有记录会醒目警告，但不会阻止再次运行。评测输出默认放在被忽略的 `backend/eval_out/`。
