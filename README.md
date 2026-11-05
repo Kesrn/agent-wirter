@@ -329,3 +329,12 @@ pytest
 ## License
 
 This project is for learning, portfolio, and interview demonstration purposes.
+
+## 服务器形态部署
+
+1. 从示例文件创建本地配置：`cp .env.example .env`。
+2. 在 `.env` 中配置 `POSTGRES_PASSWORD`、`JWT_SECRET`、`ENCRYPTION_KEY` 和 `APP_ENV`，然后启动服务：
+   `docker compose up -d --build`。
+3. 检查服务状态：`docker compose ps`。后端容器启动时执行 `alembic upgrade head`，就绪探针确认数据库与 checkpointer 可用后才会标记为 healthy。
+
+桌面端仍使用用户数据目录中的 SQLite；此部署说明只适用于 PostgreSQL 服务器形态。
