@@ -166,6 +166,11 @@ def render_compare_markdown(summary: dict[str, Any], results: list[dict[str, Any
 
     lines.extend([
         "",
+        "所有变体的输出都用同一套规则离线判定，与该变体是否启用规则无关。",
+    ])
+
+    lines.extend([
+        "",
         "## 相对基线的配对差值",
         "",
         "正值表示有利于该变体；相对参考稿改动比例、成本和耗时已按“降低为有利”反向计分。",

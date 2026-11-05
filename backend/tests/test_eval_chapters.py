@@ -54,10 +54,12 @@ async def test_run_batch_writes_reconcilable_outputs_and_captures_fewshot(tmp_pa
         provider = provider_factory()
         await provider.complete("system", "user")
         prompts.append((variant, example_block if config["fewshot_enabled"] else "", config.copy()))
+        text = f"林澄听见雨声落在窗沿，信封里的铜表安静地躺着（{sample.id}）。"
         return {
-            "final_output": f"输出-{sample.id}-{variant}",
-            "rule_first_pass": variant != "baseline",
-            "rule_final_pass": True,
+            "first_draft": text,
+            "final_output": text,
+            "pipeline_first_pass": variant != "baseline",
+            "pipeline_final_pass": True,
             "writer_retries": 0,
             "editor_retries": 0,
             "fewshot_example_ids": example_ids if config["fewshot_enabled"] else [],
@@ -101,6 +103,7 @@ async def test_run_batch_writes_reconcilable_outputs_and_captures_fewshot(tmp_pa
     assert summary["by_variant"]["rules_fewshot"]["rule_first_pass"]["successes"] == 1
     compare = (out / "compare.md").read_text()
     assert "样本量警告" in compare
+    assert "所有变体的输出都用同一套规则离线判定，与该变体是否启用规则无关。" in compare
     assert "baseline" in compare and "rules_fewshot" in compare
     assert len((out / "run_meta.json").read_text()) > 0
     assert result["run_meta"]["result_rows"] == 2
@@ -108,6 +111,61 @@ async def test_run_batch_writes_reconcilable_outputs_and_captures_fewshot(tmp_pa
     assert prompts[1][0] == "rules_fewshot" and prompts[1][2]["rules_enabled"] is True
     assert "人工修改示例" in prompts[1][1]
     assert summary["baseline_variant"] == "baseline"
+
+
+@pytest.mark.asyncio
+async def test_offline_rules_score_baseline_and_rules_with_the_same_criteria(tmp_path):
+    class ScriptedProvider:
+        model = "scripted-test-provider"
+
+        def __init__(self, response):
+            self.response = response
+
+        async def complete(self, system, user, **kwargs):
+            return LLMResult(
+                text=self.response,
+                model=self.model,
+                usage=TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2),
+            )
+
+        async def generate(self, *args, **kwargs):
+            return self.response
+
+    async def judge(*args, **kwargs):
+        return 4.0
+
+    async def run_for(response: str, output_name: str):
+        async def pipeline(sample, variant, config, *, provider_factory, **kwargs):
+            text = await provider_factory().generate("system", "user")
+            internal_pass = variant == "baseline"
+            return {
+                "first_draft": text,
+                "final_output": text,
+                "pipeline_first_pass": internal_pass,
+                "pipeline_final_pass": internal_pass,
+            }
+
+        return await run_batch(
+            dataset_path=DATASET,
+            split="dev",
+            variant_names=["baseline", "rules"],
+            provider_name="mock",
+            output_dir=tmp_path / output_name,
+            max_total_tokens=70000,
+            limit=1,
+            provider_factory=lambda: ScriptedProvider(response),
+            judge_provider_factory=lambda: ScriptedProvider(response),
+            pipeline_runner=pipeline,
+            judge_runner=judge,
+        )
+
+    missing = await run_for("林澄站在旧车站，打开了信封。", "missing")
+    assert [row["rule_first_pass"] for row in missing["results"]] == [False, False]
+    assert [row["pipeline_first_pass"] for row in missing["results"]] == [True, False]
+
+    compliant = await run_for("林澄听见雨声落在窗沿，信封里的铜表安静地躺着。", "compliant")
+    assert [row["rule_first_pass"] for row in compliant["results"]] == [True, True]
+    assert [row["rule_final_pass"] for row in compliant["results"]] == [True, True]
 
 
 @pytest.mark.asyncio

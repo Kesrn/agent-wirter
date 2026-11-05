@@ -337,6 +337,8 @@ async def run_pipeline(
 
     context_text, context_summary = _context_text(sample)
     first_pass_report: dict[str, Any] | None = None
+    first_pass_draft = ""
+    first_pass_seen = False
 
     async def context_loader(_state):
         return {"context": context_text, "context_summary": context_summary}
@@ -350,7 +352,10 @@ async def run_pipeline(
     original_validator = workflow_v2.draft_validator_node
 
     async def observed_validator(state):
-        nonlocal first_pass_report
+        nonlocal first_pass_report, first_pass_draft, first_pass_seen
+        if not first_pass_seen:
+            first_pass_draft = str(state.get("draft") or "")
+            first_pass_seen = True
         output = await original_validator(state)
         if first_pass_report is None:
             first_pass_report = output.get("draft_quality_report")
@@ -408,9 +413,10 @@ async def run_pipeline(
         if isinstance(issue, dict) and issue.get("severity") == "ERROR"
     ]
     return {
+        "first_draft": first_pass_draft,
         "final_output": final_state.get("draft") or "",
-        "rule_first_pass": not first_errors,
-        "rule_final_pass": isinstance(raw_final_report, dict) and not final_errors,
+        "pipeline_first_pass": not first_errors,
+        "pipeline_final_pass": isinstance(raw_final_report, dict) and not final_errors,
         "writer_retries": int(final_state.get("writer_retry_count", 0) or 0),
         "editor_retries": int(final_state.get("editor_retry_count", 0) or 0),
         "fewshot_example_ids": list(final_state.get("fewshot_example_ids") or []),
@@ -458,6 +464,38 @@ def _has_errors(report: dict[str, Any] | None) -> bool:
     return any(
         isinstance(issue, dict) and issue.get("severity") == "ERROR"
         for issue in (report or {}).get("issues", [])
+    )
+
+
+def _offline_rule_pass(text: str, sample: EvalSample, *, final: bool) -> bool:
+    """Apply the same deterministic quality and task-card rules to every variant."""
+    from services.chapter_quality import validate_draft_quality, validate_final_quality
+    from services.chapter_rules import RulesConfig, validate_task_card_compliance
+
+    body = text or ""
+    if final:
+        report = validate_final_quality(body, sample.target_words)
+    else:
+        report = validate_draft_quality(body, sample.target_words)
+
+    raw_characters = sample.context.get("characters", [])
+    characters = [
+        {
+            "name": str(item.get("name") or item.get("label") or ""),
+            "aliases": item.get("aliases", []),
+        }
+        for item in raw_characters
+        if isinstance(item, dict) and (item.get("name") or item.get("label"))
+    ] if isinstance(raw_characters, list) else []
+    rule_issues = validate_task_card_compliance(
+        body,
+        sample.task_card,
+        characters,
+        config=RulesConfig(),
+    )
+    return not any(
+        getattr(issue, "severity", None) == "ERROR"
+        for issue in (*report.issues, *rule_issues)
     )
 
 
@@ -600,6 +638,9 @@ async def run_batch(
             try:
                 pipeline = await make_pipeline_result(sample, variant_name, variant_config)
                 judge_score = await make_judge_result(sample, pipeline["final_output"])
+                first_draft = str(pipeline.get("first_draft") or pipeline.get("final_output") or "")
+                offline_first_pass = _offline_rule_pass(first_draft, sample, final=False)
+                offline_final_pass = _offline_rule_pass(str(pipeline.get("final_output") or ""), sample, final=True)
                 ref_edit_ratio = None
                 if sample.reference is not None:
                     from services.edit_metrics_service import compute_edit_metrics
@@ -618,8 +659,10 @@ async def run_batch(
                     "split": sample.split,
                     "variant": variant_name,
                     "status": "completed",
-                    "rule_first_pass": bool(pipeline["rule_first_pass"]),
-                    "rule_final_pass": bool(pipeline["rule_final_pass"]),
+                    "rule_first_pass": offline_first_pass,
+                    "rule_final_pass": offline_final_pass,
+                    "pipeline_first_pass": bool(pipeline.get("pipeline_first_pass", pipeline.get("rule_first_pass", False))),
+                    "pipeline_final_pass": bool(pipeline.get("pipeline_final_pass", pipeline.get("rule_final_pass", False))),
                     "retries": int(pipeline.get("writer_retries", 0)) + int(pipeline.get("editor_retries", 0)),
                     "input_tokens": usage["input_tokens"],
                     "output_tokens": usage["output_tokens"],
