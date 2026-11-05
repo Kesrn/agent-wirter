@@ -910,6 +910,21 @@ export interface ProgressPayload {
   chapter_num?: number
 }
 
+export interface HumanEditMetrics {
+  method?: string
+  edited: boolean
+  anchor_version_id?: string | null
+  human_version_id?: string | null
+  original_chars: number
+  final_chars: number
+  changed_chars: number
+  changed_original_chars?: number
+  inserted_chars?: number
+  similarity?: number | null
+  edit_ratio: number
+  computed_at?: string
+}
+
 /** Payload for done SSE event */
 export interface DonePayload {
   message: string
@@ -1255,6 +1270,7 @@ export interface ApiGenerationRecordListItem {
   word_count: number
   status: GenerationRecordStatus
   langfuse_trace_id?: string | null
+  human_edit_metrics?: HumanEditMetrics | null
   created_at: string
 }
 
@@ -1352,6 +1368,7 @@ export interface GenerationRecord {
   createdAt: string
   content: string | null
   skillPacks: SkillPackPayload[]
+  humanEditMetrics?: HumanEditMetrics | null
 }
 
 export interface GenerationRecordUpdatePayload {
@@ -1365,6 +1382,53 @@ export interface GenerationRecordDiffRequest {
 export interface GenerationRecordDiffResponse {
   generation_id: string
   diff: DiffHunk[]
+}
+
+// ─── Edit Stats ───
+
+export interface EditStatsSummary {
+  count: number
+  edited_count: number
+  mean_edit_ratio: number | null
+  median_edit_ratio: number | null
+  p90_edit_ratio: number | null
+  total_original_chars: number
+  total_changed_chars: number
+}
+
+export interface EditStatsItem {
+  generation_record_id: string
+  chapter_id?: string | null
+  chapter_sequence_number?: number | null
+  run_id?: string | null
+  mode?: string | null
+  applied_at: string
+  original_chars: number
+  final_chars: number
+  changed_chars: number
+  edit_ratio: number
+  similarity?: number | null
+  edited?: boolean
+}
+
+export interface EditStatsResponse {
+  summary: EditStatsSummary
+  items: EditStatsItem[]
+  limit: number
+  offset: number
+}
+
+export interface EditStatsParams {
+  limit?: number
+  offset?: number
+  chapter_id?: string
+  since?: string
+  until?: string
+}
+
+export interface GenerationOriginalResponse {
+  id: string
+  content: string
 }
 
 // ─── Evaluation datasets ───

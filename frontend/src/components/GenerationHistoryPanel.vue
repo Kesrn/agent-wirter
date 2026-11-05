@@ -4,6 +4,7 @@ import { useGenerationHistoryStore } from '../stores'
 import { api } from '../api/client'
 import type { ApiRunContext, ApiRunContextCall, GenerationRecord, ProjectMode } from '../api/types'
 import SkillPackDetail from './SkillPackDetail.vue'
+import EditStatsPanel from './EditStatsPanel.vue'
 
 const props = defineProps<{
   projectId: string
@@ -18,6 +19,7 @@ const emit = defineEmits<{
 }>()
 
 const store = useGenerationHistoryStore()
+const showStats = ref(false)
 const expandedId = ref<string | null>(null)
 const previewContent = ref<Record<string, string>>({})
 const contextSnapshot = ref<ApiRunContext | null>(null)
@@ -143,7 +145,19 @@ watch(
   <div class="generation-panel">
     <div class="generation-panel-header">
       <span class="panel-title">AI生成历史</span>
+      <button
+        type="button"
+        class="stats-toggle-btn"
+        @click="showStats = !showStats"
+      >
+        {{ showStats ? '收起改动统计' : '人工改动统计' }}
+      </button>
     </div>
+
+    <EditStatsPanel
+      v-if="showStats"
+      :project-id="props.projectId"
+    />
 
     <div v-if="store.loading" class="generation-loading">
       <span class="spinner" />
@@ -164,6 +178,14 @@ watch(
           <span class="generation-mode">{{ modeLabel(record.mode) }}</span>
           <span class="generation-status" :class="statusInfo(record.status).cls">
             {{ statusInfo(record.status).label }}
+          </span>
+          <span
+            v-if="record.status === 'applied' && record.humanEditMetrics"
+            class="generation-edit-metric"
+            :class="{ 'metric-clean': record.humanEditMetrics.edited === false }"
+            title="采用后你到目前为止改动的比例，随编辑自动更新；刚采用还没改过时显示‘未改动’"
+          >
+            {{ record.humanEditMetrics.edited === false ? '未改动' : `改动 ${Math.round(record.humanEditMetrics.edit_ratio * 100)}%` }}
           </span>
           <span class="generation-words">{{ record.wordCount }}字</span>
         </div>
@@ -332,6 +354,32 @@ watch(
 .status-candidate { background: #e8f0fe; color: #1a73e8; }
 .status-applied { background: #e6f4ea; color: #1e8e3e; }
 .status-discarded { background: #f1f3f4; color: #5f6368; }
+.generation-edit-metric {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+.generation-edit-metric.metric-clean {
+  background: #f1f3f4;
+  color: #5f6368;
+}
+.stats-toggle-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition, 0.15s ease);
+}
+.stats-toggle-btn:hover {
+  background: var(--bg-hover, #f3f4f6);
+  color: var(--accent);
+}
 .generation-words,
 .generation-time,
 .generation-direction {
