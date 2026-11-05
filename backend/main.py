@@ -33,6 +33,7 @@ from api.media import router as media_router
 from api.llm_settings import router as llm_settings_router
 from observability.langfuse import log_langfuse_startup_status
 from agents.checkpointer import setup_checkpointer, teardown_checkpointer
+from services.background_tasks import shutdown as shutdown_background_tasks
 
 setup_logging(
     log_level=settings.LOG_LEVEL,
@@ -86,6 +87,7 @@ async def lifespan(app: FastAPI):
         raise
     yield
     logger.info("🛑 AI 小说创作平台关闭")
+    await shutdown_background_tasks()
     await teardown_checkpointer(_CHECKPOINTER)
 
 

@@ -31,6 +31,7 @@ from sqlalchemy.orm import load_only
 from sqlalchemy import bindparam, delete, select, func, text
 
 from db.session import get_db
+from services.background_tasks import spawn as spawn_background_task
 from models.project import Project
 from models.expert import Expert
 from models.chapter import Chapter
@@ -6928,7 +6929,7 @@ async def resume_chapter_generation(
             # commit 成功后再启动独立 session 的记忆抽取，避免后台任务读取到未提交版本。
             if memory_extraction_payload:
                 if memory_extraction_payload["use_story_recorder"]:
-                    asyncio.create_task(run_story_recorder_extraction(
+                    spawn_background_task(run_story_recorder_extraction(
                         project_id=memory_extraction_payload["project_id"],
                         chapter_id=memory_extraction_payload["chapter_id"],
                         chapter_version_id=memory_extraction_payload["chapter_version_id"],
@@ -6937,9 +6938,9 @@ async def resume_chapter_generation(
                         content=memory_extraction_payload["content"],
                         context=memory_extraction_payload["context"],
                         llm_config=memory_extraction_payload["llm_config"],
-                    ))
+                    ), name="story-recorder-extraction")
                 else:
-                    asyncio.create_task(run_fact_extraction(
+                    spawn_background_task(run_fact_extraction(
                         project_id=memory_extraction_payload["project_id"],
                         chapter_id=memory_extraction_payload["chapter_id"],
                         chapter_version_id=memory_extraction_payload["chapter_version_id"],
@@ -6948,7 +6949,7 @@ async def resume_chapter_generation(
                         content=memory_extraction_payload["content"],
                         context=memory_extraction_payload["context"],
                         llm_config=memory_extraction_payload["llm_config"],
-                    ))
+                    ), name="fact-extraction")
 
             if _resume_run:
                 yield f"event: run_status\ndata: {json.dumps({'run_id': _resume_run_id, 'status': 'COMPLETED'}, ensure_ascii=False)}\n\n"
