@@ -421,23 +421,33 @@ describe('api generation routes', () => {
   })
 
   it('calls POST /generation-records/{id}/refresh-edit-metrics and handles 401', async () => {
-    const mockMetrics = {
-      edited: true,
-      original_chars: 100,
-      final_chars: 120,
-      changed_chars: 20,
-      edit_ratio: 0.2,
+    const mockResponse = {
+      human_edit_metrics: {
+        method: 'char_diff',
+        approximate: false,
+        edited: true,
+        anchor_version_id: 'v-1',
+        human_version_id: 'v-2',
+        original_chars: 100,
+        final_chars: 120,
+        changed_chars: 20,
+        changed_original_chars: 20,
+        inserted_chars: 20,
+        similarity: 0.8,
+        edit_ratio: 0.2,
+        computed_at: '2026-11-05T00:00:00Z',
+      },
     }
 
     vi.mocked(fetch).mockImplementation(async () =>
-      new Response(JSON.stringify(mockMetrics), {
+      new Response(JSON.stringify(mockResponse), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       }),
     )
 
     const res = await api.refreshEditMetrics('rec-99')
-    expect(res).toEqual(mockMetrics)
+    expect(res).toEqual(mockResponse)
     const fetchMock = vi.mocked(fetch)
     const lastCall = fetchMock.mock.calls[fetchMock.mock.calls.length - 1]
     expect(String(lastCall[0])).toContain('/generation-records/rec-99/refresh-edit-metrics')

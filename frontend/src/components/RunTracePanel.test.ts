@@ -78,7 +78,8 @@ describe('RunTracePanel', () => {
             latency_ms: 11800,
             input_tokens: 4000,
             output_tokens: 1400,
-            cost: null,
+            total_tokens: 5400,
+            cost: 0.01,
             retries: 0,
             usage_estimated: false,
             structured: { schema: 'outline', repairs: 0, ok: true },
@@ -113,7 +114,8 @@ describe('RunTracePanel', () => {
             latency_ms: 15000,
             input_tokens: 4000,
             output_tokens: 2000,
-            cost: null,
+            total_tokens: 6000,
+            cost: 0.01,
             retries: 0,
             usage_estimated: false,
             structured: null,
@@ -128,7 +130,8 @@ describe('RunTracePanel', () => {
             latency_ms: 20000,
             input_tokens: 4000,
             output_tokens: 2000,
-            cost: null,
+            total_tokens: 6000,
+            cost: 0.011,
             retries: 1,
             usage_estimated: true,
             structured: { schema: 'draft', repairs: 1, ok: true },
@@ -411,5 +414,134 @@ describe('RunTracePanel', () => {
     wrapper.unmount()
     expect(document.activeElement).toBe(triggerBtn)
     document.body.removeChild(triggerBtn)
+  })
+
+  it('discards stale responses when runId or prompt toggle changes rapidly (outdated request protection)', async () => {
+    let resolveFirst: (val: RunTraceResponse) => void
+    const firstPromise = new Promise<RunTraceResponse>((res) => {
+      resolveFirst = res
+    })
+
+    let resolveSecond: (val: RunTraceResponse) => void
+    const secondPromise = new Promise<RunTraceResponse>((res) => {
+      resolveSecond = res
+    })
+
+    vi.mocked(api.getRunTrace)
+      .mockReturnValueOnce(firstPromise)
+      .mockReturnValueOnce(secondPromise)
+
+    const wrapper = mount(RunTracePanel, {
+      props: { runId: 'run-first' },
+    })
+    await wrapper.vm.$nextTick()
+
+    // Rapidly switch runId to 'run-second' before first promise resolves
+    await wrapper.setProps({ runId: 'run-second' })
+    await wrapper.vm.$nextTick()
+
+    // Second response arrives with run-second data
+    const secondTrace: RunTraceResponse = {
+      ...fullMockTrace,
+      run: { ...fullMockTrace.run, id: 'run-second', request_id: 'req-second' },
+    }
+    resolveSecond!(secondTrace)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('req-second')
+
+    // First response arrives late with old run-first data
+    const firstTrace: RunTraceResponse = {
+      ...fullMockTrace,
+      run: { ...fullMockTrace.run, id: 'run-first', request_id: 'req-first' },
+    }
+    resolveFirst!(firstTrace)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    // Old response should NOT overwrite new response
+    expect(wrapper.text()).toContain('req-second')
+    expect(wrapper.text()).not.toContain('req-first')
+  })
+
+  it('shows top reload error banner, preserves old data, and rolls back prompt state on reload failure', async () => {
+    vi.mocked(api.getRunTrace).mockResolvedValueOnce(fullMockTrace)
+
+    const wrapper = mount(RunTracePanel, {
+      props: { runId: 'run-uuid-1' },
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('abc123req')
+    const promptToggle = wrapper.find('.btn-toggle-prompts')
+    expect(promptToggle.classes()).not.toContain('active')
+
+    // Trigger show prompts confirm
+    await promptToggle.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    // Mock failure for reload
+    vi.mocked(api.getRunTrace).mockRejectedValueOnce(new Error('网络中断，重新加载失败'))
+
+    // Confirm include prompts
+    await wrapper.find('.btn-confirm-ok').trigger('click')
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    // Error is visible at top of trace
+    expect(wrapper.find('.trace-reload-error').exists()).toBe(true)
+    expect(wrapper.find('.trace-reload-error').text()).toContain('网络中断，重新加载失败')
+
+    // Old data is preserved!
+    expect(wrapper.text()).toContain('abc123req')
+    expect(wrapper.findAll('.timeline-step').length).toBe(2)
+
+    // Prompt toggle state is rolled back to inactive
+    expect(wrapper.find('.btn-toggle-prompts').classes()).not.toContain('active')
+  })
+
+  it('handles copy request_id: shows "已复制" on success, "复制失败，请手动选择" on error or missing clipboard API', async () => {
+    vi.mocked(api.getRunTrace).mockResolvedValue(fullMockTrace)
+
+    const wrapper = mount(RunTracePanel, {
+      props: { runId: 'run-uuid-1' },
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    // 1. Success case
+    const writeTextMock = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', {
+      clipboard: {
+        writeText: writeTextMock,
+      },
+    })
+
+    const copyBtn = wrapper.find('.btn-copy-req')
+    expect(copyBtn.text()).toBe('复制')
+
+    await copyBtn.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(writeTextMock).toHaveBeenCalledWith('abc123req')
+    expect(copyBtn.text()).toBe('已复制')
+
+    // 2. Failure case (clipboard writeText rejects)
+    writeTextMock.mockRejectedValueOnce(new Error('Permission denied'))
+    await copyBtn.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(copyBtn.text()).toBe('复制失败，请手动选择')
+
+    // 3. Fallback when clipboard API is missing
+    vi.stubGlobal('navigator', {})
+    await copyBtn.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(copyBtn.text()).toBe('复制失败，请手动选择')
+
+    vi.unstubAllGlobals()
   })
 })

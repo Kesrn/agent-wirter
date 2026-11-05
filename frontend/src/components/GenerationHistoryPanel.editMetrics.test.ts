@@ -92,6 +92,48 @@ describe('GenerationHistoryPanel edit metric badge', () => {
     expect(metricBadge.attributes('title')).toBe('采用后你到目前为止改动的比例，随编辑自动更新；刚采用还没改过时显示‘未改动’')
   })
 
+  it('renders "改动约 15%" badge and appends "改动较大，按保守估算" in title when approximate=true', async () => {
+    vi.spyOn(api, 'listChapterGenerations').mockResolvedValueOnce([
+      {
+        id: 'rec-approx',
+        project_id: 'proj-1',
+        chapter_id: 'chap-1',
+        document_id: null,
+        mode: 'full_pipeline',
+        expert_id: null,
+        direction: null,
+        word_count: 3000,
+        status: 'applied',
+        created_at: '2026-11-04T08:00:00Z',
+        human_edit_metrics: {
+          edited: true,
+          approximate: true,
+          original_chars: 3000,
+          final_chars: 3500,
+          changed_chars: 450,
+          edit_ratio: 0.15,
+        },
+      },
+    ])
+
+    const wrapper = mount(GenerationHistoryPanel, {
+      props: {
+        projectId: 'proj-1',
+        mode: 'novel',
+        sequenceNumber: 1,
+      },
+    })
+
+    await new Promise(r => setTimeout(r, 10))
+
+    const metricBadge = wrapper.find('.generation-edit-metric')
+    expect(metricBadge.exists()).toBe(true)
+    expect(metricBadge.text()).toBe('改动约 15%')
+    expect(metricBadge.attributes('title')).toBe(
+      '采用后你到目前为止改动的比例，随编辑自动更新；刚采用还没改过时显示‘未改动’；改动较大，按保守估算'
+    )
+  })
+
   it('handles HumanEditMetrics with new optional fields or missing optional fields gracefully', async () => {
     vi.spyOn(api, 'listChapterGenerations').mockResolvedValueOnce([
       {
