@@ -25,6 +25,8 @@ _INDEXES = (
 
 
 def upgrade() -> None:
+    if op.get_bind().dialect.name != "postgresql":
+        return
     # Concurrent builds avoid blocking writes on a running server. IF NOT EXISTS also
     # handles PostgreSQL databases previously initialized with metadata.create_all().
     for name, table, columns in _INDEXES:
@@ -39,6 +41,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if op.get_bind().dialect.name != "postgresql":
+        return
     for name, table, _columns in reversed(_INDEXES):
         with op.get_context().autocommit_block():
             op.drop_index(
