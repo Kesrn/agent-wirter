@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { GenerateMode, ProjectMode, QualityReportPayload } from '../api/types'
 import { buildTextComparisonDiff } from '../utils/textDiff'
+import { estimateEditMetrics, type EditMetricsResult } from '../utils/editMetrics'
 
 const props = defineProps<{
   show: boolean
@@ -18,11 +19,44 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'decision', value: 'accept' | 'accept_with_mods' | 'compress' | 'reject'): void
   (e: 'finalize'): void
+  (e: 'update:content', value: string): void
 }>()
 
 // 对比视图两侧的复制反馈状态（短暂显示“已复制”）
 const copiedSide = ref<'original' | 'candidate' | null>(null)
 let copyResetTimer: ReturnType<typeof setTimeout> | null = null
+
+// 编辑与实时指标状态
+const isEditing = ref(false)
+const editableContent = ref(props.content)
+const metrics = ref<EditMetricsResult>(estimateEditMetrics(props.originalContent ?? '', props.content))
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
+
+function updateMetricsNow(original: string, current: string) {
+  metrics.value = estimateEditMetrics(original, current)
+}
+
+function onContentInput() {
+  if (debounceTimer) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => {
+    updateMetricsNow(props.originalContent ?? '', editableContent.value)
+    emit('update:content', editableContent.value)
+  }, 200)
+}
+
+watch(() => props.content, (val) => {
+  editableContent.value = val
+  updateMetricsNow(props.originalContent ?? '', val)
+})
+
+watch(() => props.originalContent, (val) => {
+  updateMetricsNow(val ?? '', editableContent.value)
+})
+
+onBeforeUnmount(() => {
+  if (debounceTimer) clearTimeout(debounceTimer)
+  if (copyResetTimer) clearTimeout(copyResetTimer)
+})
 
 async function copySideContent(side: 'original' | 'candidate') {
   const text = side === 'original' ? (props.originalContent ?? '') : props.content
@@ -74,7 +108,7 @@ const hasComparison = computed(() =>
 const isEnhance = computed(() => props.mode === 'enhance')
 const comparisonDiff = computed(() => buildTextComparisonDiff(
   props.originalContent ?? '',
-  props.content,
+  editableContent.value,
 ))
 
 function titleLabel(): string {
@@ -114,6 +148,17 @@ function candidateTitle(): string {
       <div v-if="hasComparison" class="diff-legend" aria-label="差异标记说明">
         <span><i class="diff-legend-swatch diff-legend-removed"></i>原文删除或被替换</span>
         <span><i class="diff-legend-swatch diff-legend-added"></i>候选稿新增或替换</span>
+      </div>
+      <!-- 实时近似人工改动指标 -->
+      <div
+        v-if="props.originalContent && (metrics.changedChars > 0 || isEditing)"
+        class="edit-metrics-banner"
+        role="status"
+        title="最终以保存后的统计为准"
+      >
+        <span class="metrics-icon" aria-hidden="true">✎</span>
+        <span class="metrics-text">已修改约 {{ metrics.changedChars }} 字（约 {{ Math.round(metrics.ratio * 100) }}%）</span>
+        <span class="metrics-hint">最终以保存后的统计为准</span>
       </div>
       <!-- Quality report summary -->
       <div
@@ -157,16 +202,32 @@ function candidateTitle(): string {
           <section class="draft-block">
             <div class="draft-block-title">
               <strong>{{ candidateTitle() }}</strong>
-              <button
-                class="copy-btn"
-                :class="{ copied: copiedSide === 'candidate' }"
-                :disabled="!content"
-                @click="copySideContent('candidate')"
-              >
-                {{ copiedSide === 'candidate' ? '已复制' : '复制' }}
-              </button>
+              <div class="draft-block-actions">
+                <button
+                  type="button"
+                  class="edit-toggle-btn"
+                  @click="isEditing = !isEditing"
+                >
+                  {{ isEditing ? '完成修改' : '手动修改' }}
+                </button>
+                <button
+                  class="copy-btn"
+                  :class="{ copied: copiedSide === 'candidate' }"
+                  :disabled="!content"
+                  @click="copySideContent('candidate')"
+                >
+                  {{ copiedSide === 'candidate' ? '已复制' : '复制' }}
+                </button>
+              </div>
             </div>
-            <pre class="modal-content"><span v-for="(segment, index) in comparisonDiff.candidate" :key="`candidate-${index}`" class="diff-segment" :class="`diff-${segment.type}`">{{ segment.text }}</span></pre>
+            <textarea
+              v-if="isEditing"
+              v-model="editableContent"
+              class="modal-content modal-textarea"
+              placeholder="在此修改候选稿..."
+              @input="onContentInput"
+            />
+            <pre v-else class="modal-content"><span v-for="(segment, index) in comparisonDiff.candidate" :key="`candidate-${index}`" class="diff-segment" :class="`diff-${segment.type}`">{{ segment.text }}</span></pre>
           </section>
         </div>
       </div>
@@ -326,6 +387,68 @@ function candidateTitle(): string {
   margin: 0;
   font-family: inherit;
   color: var(--text);
+}
+
+.modal-textarea {
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  box-sizing: border-box;
+}
+
+.modal-textarea:focus {
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+
+.edit-metrics-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2, 8px);
+  padding: 6px 12px;
+  margin: 0 var(--sp-4, 16px) var(--sp-2, 8px);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: var(--radius-sm, 6px);
+  font-size: var(--text-xs, 12px);
+  color: var(--text);
+}
+
+.metrics-icon {
+  font-size: 13px;
+  color: var(--accent);
+}
+
+.metrics-text {
+  font-weight: 650;
+  color: var(--accent);
+}
+
+.metrics-hint {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.draft-block-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2, 8px);
+}
+
+.edit-toggle-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition, 0.15s ease);
+}
+
+.edit-toggle-btn:hover {
+  background: var(--bg-hover, #f3f4f6);
+  color: var(--accent);
 }
 
 .diff-segment {

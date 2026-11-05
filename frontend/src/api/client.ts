@@ -30,6 +30,7 @@ import {
   type EvaluationDatasetCreatePayload, type EvaluationDatasetUpdatePayload,
   type EvaluationCaseCreatePayload, type EvaluationCaseUpdatePayload, type EvaluationRunCreatePayload,
   type ClarificationState, type ClarificationAnswerRequest,
+  type EditStatsResponse, type EditStatsParams, type GenerationOriginalResponse,
 } from './types'
 import { getAuthToken, handleUnauthorized } from '../utils/authSession'
 
@@ -860,6 +861,18 @@ export const api = {
     request<ApiGenerationRecord>(`/projects/${projectId}/generations/${generationId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   diffGenerationRecord: (projectId: string, generationId: string, data: GenerationRecordDiffRequest) =>
     request<GenerationRecordDiffResponse>(`/projects/${projectId}/generations/${generationId}/diff`, { method: 'POST', body: JSON.stringify(data) }),
+  getGenerationOriginal: (recordId: string) =>
+    request<GenerationOriginalResponse>(`/generation-records/${recordId}/original`),
+  getEditStats: (projectId: string, params?: EditStatsParams) => {
+    const query = new URLSearchParams()
+    if (params?.limit !== undefined) query.set('limit', String(params.limit))
+    if (params?.offset !== undefined) query.set('offset', String(params.offset))
+    if (params?.chapter_id) query.set('chapter_id', params.chapter_id)
+    if (params?.since) query.set('since', params.since)
+    if (params?.until) query.set('until', params.until)
+    const qs = query.toString()
+    return request<EditStatsResponse>(`/projects/${projectId}/edit-stats${qs ? `?${qs}` : ''}`)
+  },
 
   // ==================== 写作记忆 staging ====================
   listMemoryStaging: (projectId: string, status?: string) =>

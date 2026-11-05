@@ -343,4 +343,80 @@ describe('api generation routes', () => {
       vi.useRealTimers()
     }
   })
+
+  it('calls GET /projects/{id}/edit-stats with query params', async () => {
+    vi.mocked(fetch).mockImplementation(async () =>
+      new Response(JSON.stringify({
+        summary: { count: 0, edited_count: 0, mean_edit_ratio: null, median_edit_ratio: null, p90_edit_ratio: null, total_original_chars: 0, total_changed_chars: 0 },
+        items: [],
+        limit: 20,
+        offset: 0,
+      }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    )
+
+    await api.getEditStats('proj-123', { limit: 10, offset: 5, chapter_id: 'chap-1' })
+    const fetchMock = vi.mocked(fetch)
+    const lastCall = fetchMock.mock.calls[fetchMock.mock.calls.length - 1]
+    const url = String(lastCall[0])
+    expect(url).toContain('/projects/proj-123/edit-stats')
+    expect(url).toContain('limit=10')
+    expect(url).toContain('offset=5')
+    expect(url).toContain('chapter_id=chap-1')
+  })
+
+  it('triggers unauthorized redirect on getEditStats 401', async () => {
+    resetUnauthorizedFlag()
+    const redirectMock = vi.fn()
+    vi.stubGlobal('window', {
+      location: {
+        set href(val: string) { redirectMock(val) },
+      },
+    })
+
+    vi.mocked(fetch).mockImplementation(async () =>
+      new Response(JSON.stringify({ detail: 'unauthorized' }), { status: 401 }),
+    )
+
+    await expect(api.getEditStats('proj-123')).rejects.toMatchObject({
+      status: 401,
+    })
+
+    expect(redirectMock).toHaveBeenCalledWith('/login')
+    vi.unstubAllGlobals()
+    resetUnauthorizedFlag()
+  })
+
+  it('calls GET /generation-records/{id}/original and handles 401', async () => {
+    vi.mocked(fetch).mockImplementation(async () =>
+      new Response(JSON.stringify({ id: 'rec-1', content: 'AI 原稿全文' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+
+    const res = await api.getGenerationOriginal('rec-1')
+    expect(res).toEqual({ id: 'rec-1', content: 'AI 原稿全文' })
+    const fetchMock = vi.mocked(fetch)
+    const lastCall = fetchMock.mock.calls[fetchMock.mock.calls.length - 1]
+    expect(String(lastCall[0])).toContain('/generation-records/rec-1/original')
+
+    // 401 unauthorized
+    resetUnauthorizedFlag()
+    const redirectMock = vi.fn()
+    vi.stubGlobal('window', {
+      location: {
+        set href(val: string) { redirectMock(val) },
+      },
+    })
+    vi.mocked(fetch).mockImplementation(async () =>
+      new Response(JSON.stringify({ detail: 'unauthorized' }), { status: 401 }),
+    )
+
+    await expect(api.getGenerationOriginal('rec-1')).rejects.toMatchObject({
+      status: 401,
+    })
+    expect(redirectMock).toHaveBeenCalledWith('/login')
+    vi.unstubAllGlobals()
+    resetUnauthorizedFlag()
+  })
 })

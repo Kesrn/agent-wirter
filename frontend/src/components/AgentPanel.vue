@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 import { useChapterStore, useDocumentStore, useExpertStore, useUiStore, useOutlineStore, useCharacterStore, useCharacterEventStore, useWorldEntryStore, useHiddenThreadStore, useGenerationHistoryStore, useConversationStore, friendlyError } from '../stores'
-import type { WorkflowStep, SSEEnvelope, GenerateMode, ProjectMode, ArticleGenerateParams, WritingUnit } from '../api/types'
+import type { WorkflowStep, SSEEnvelope, GenerateMode, ProjectMode, ArticleGenerateParams, WritingUnit, HumanEditMetrics } from '../api/types'
+import { formatApprovalSuccessToast } from '../utils/editMetrics'
 import type { AgentStartPayload, AgentOutputPayload, AgentDonePayload, ProgressPayload, ErrorPayload, WriterOutputPayload, CriticOutputPayload, ConsistencyCheckPayload, EnhanceDirectionsPayload, TurnSuggestionsPayload, RevisionSuggestionsPayload, SkillPackPayload, ArticleReviewPayload, GenerationRecordPayload, RunCreatedPayload, ClarificationRequiredPayload, ClarificationEmbedded, TaskCardClarificationStatus, TaskCardContextSummary, TaskCardPayload, TaskCardReviewRequiredPayload, PreGenerationMode, QualityReportPayload } from '../api/types'
 import type { ConversationTaskCard } from '../api/chat'
 import { api } from '../api/client'
@@ -558,11 +559,12 @@ function refreshGenerationHistory() {
   }
 }
 
-async function resumeHumanReviewTerminal(action: 'approve' | 'finalize' | 'reject') {
+async function resumeHumanReviewTerminal(action: 'approve' | 'finalize' | 'reject'): Promise<HumanEditMetrics | null> {
   const threadId = hitlThreadId.value
   if (!threadId) throw new Error('人工审核任务已失效，请重新生成')
 
   let streamError = ''
+  let latestDoneMetrics: HumanEditMetrics | null = null
   await api.resumeGeneration(
     pid.value,
     threadId,
@@ -573,6 +575,12 @@ async function resumeHumanReviewTerminal(action: 'approve' | 'finalize' | 'rejec
         streamError = payload.message || '人工审核操作失败'
         return
       }
+      if (envelope.event === 'done') {
+        const doneData = envelope.data as Record<string, unknown>
+        if (doneData && doneData.human_edit_metrics) {
+          latestDoneMetrics = doneData.human_edit_metrics as HumanEditMetrics
+        }
+      }
       handleSSEEvent(envelope)
     },
     undefined,
@@ -580,6 +588,7 @@ async function resumeHumanReviewTerminal(action: 'approve' | 'finalize' | 'rejec
     props.mode,
   )
   if (streamError) throw new Error(streamError)
+  return latestDoneMetrics
 }
 
 // ─── Generate (full pipeline) ───
@@ -1689,7 +1698,7 @@ async function handleDecision(decision: 'accept' | 'accept_with_mods' | 'compres
   }
 
   try {
-    await resumeHumanReviewTerminal('approve')
+    const metrics = await resumeHumanReviewTerminal('approve')
     applyCandidateToEditor(candidateContent)
     if (isNovel.value) {
       await chapterStore.loadChapters(pid.value)
@@ -1697,7 +1706,7 @@ async function handleDecision(decision: 'accept' | 'accept_with_mods' | 'compres
       await documentStore.loadDocuments(pid.value)
     }
     expertStore.setDraft(pid.value, candidateContent)
-    ui.showToast('候选内容已采用并保存为草稿', 'success')
+    ui.showToast(formatApprovalSuccessToast('候选内容已采用并保存为草稿', metrics), 'success')
   } catch (e: unknown) {
     hitlResuming = false
     showApproval.value = true
@@ -1733,7 +1742,7 @@ async function handleFinalizeChapter() {
   hitlResuming = true
   showApproval.value = false
   try {
-    await resumeHumanReviewTerminal('finalize')
+    const metrics = await resumeHumanReviewTerminal('finalize')
     await chapterStore.loadChapters(pid.value)
     expertStore.setDraft(pid.value, candidateContent)
     approvalContent.value = candidateContent
@@ -1743,7 +1752,7 @@ async function handleFinalizeChapter() {
     showApproval.value = false
     refreshGenerationHistory()
     expertStore.stopGenerating(pid.value)
-    ui.showToast('本章已定稿，下一章创作会自动使用这版正文衔接', 'success')
+    ui.showToast(formatApprovalSuccessToast('本章已定稿，下一章创作会自动使用这版正文衔接', metrics), 'success')
   } catch (e: unknown) {
     showApproval.value = true
     ui.showToast(friendlyError(e, '章节定稿失败'), 'error')
@@ -2072,6 +2081,7 @@ defineExpose({
       :quality-report="latestQualityReport"
       @decision="handleDecision"
       @finalize="handleFinalizeChapter"
+      @update:content="val => approvalContent = val"
     />
 
     <ContextPicker

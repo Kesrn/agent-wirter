@@ -1612,6 +1612,7 @@ function apiGenerationRecordToRecord(record: ApiGenerationRecordListItem | ApiGe
     createdAt: record.created_at,
     content: 'content' in record ? record.content : null,
     skillPacks: 'request_params' in record ? skillPacksFromRequestParams(record.request_params) : [],
+    humanEditMetrics: record.human_edit_metrics ?? null,
   }
 }
 
