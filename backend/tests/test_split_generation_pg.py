@@ -13,6 +13,7 @@
 import asyncio
 import hashlib
 import os
+import re
 import subprocess
 import uuid
 from pathlib import Path
@@ -42,8 +43,8 @@ pytestmark = pytest.mark.skipif(
     reason="PG 集成测试需 RUN_PG_TESTS=1（真实 PostgreSQL）",
 )
 
-PG_HOST = "localhost"
-PG_PORT = "5432"
+PG_HOST = os.environ.get("TEST_PG_HOST", "localhost")
+PG_PORT = os.environ.get("TEST_PG_PORT", "5432")
 DB_NAME = f"ai_creative_split_test_{uuid.uuid4().hex[:8]}"
 PG_URL = f"postgresql+asyncpg://{PG_HOST}:{PG_PORT}/{DB_NAME}"
 
@@ -92,25 +93,43 @@ def make_ledger(source: str) -> dict:
 @pytest.fixture(scope="module")
 def pg_engine():
     """创建测试库 → 真实跑 alembic 033/034 → 提供 async engine（模块级单 loop）。"""
-    # 建库（已存在则忽略）
-    subprocess.run(["createdb", "-h", PG_HOST, "-p", PG_PORT, DB_NAME],
-                   check=False, capture_output=True)
+    created = False
+    engine = None
+    try:
+        subprocess.run(["createdb", "-h", PG_HOST, "-p", PG_PORT, DB_NAME],
+                       check=True, capture_output=True, text=True)
+        created = True
 
-    # alembic upgrade head（PG 上真实执行 033 + 034）。
-    # env.py 会覆盖 sqlalchemy.url 为 settings.DATABASE_URL → 先改 settings 实例
-    # （frozen dataclass，用 object.__setattr__ 绕过）。
-    from config.settings import settings as app_settings
-    object.__setattr__(app_settings, "DATABASE_URL", PG_URL)
-    cfg = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-    command.upgrade(cfg, "head")
+        async def _connected_database_name():
+            guard_engine = create_async_engine(PG_URL)
+            try:
+                async with guard_engine.connect() as conn:
+                    return (await conn.execute(text("SELECT current_database()"))).scalar_one()
+            finally:
+                await guard_engine.dispose()
 
-    engine = create_async_engine(PG_URL)
-    yield engine
+        connected_db = _run(_connected_database_name())
+        if connected_db != DB_NAME or not re.fullmatch(r"ai_creative_split_test_[0-9a-f]{8}", connected_db):
+            pytest.fail(f"拒绝在非测试数据库运行 PG 用例: {connected_db}")
 
-    _run(engine.dispose())
-    subprocess.run(["dropdb", "--if-exists", "-h", PG_HOST, "-p", PG_PORT, DB_NAME],
-                   check=False, capture_output=True)
-    _LOOP.close()
+        # alembic upgrade head（PG 上真实执行 033 + 034）。
+        # env.py 会覆盖 sqlalchemy.url 为 settings.DATABASE_URL → 先改 settings 实例
+        # （frozen dataclass，用 object.__setattr__ 绕过）。
+        from config.settings import settings as app_settings
+        object.__setattr__(app_settings, "DATABASE_URL", PG_URL)
+        cfg = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+        command.upgrade(cfg, "head")
+
+        engine = create_async_engine(PG_URL)
+        yield engine
+    finally:
+        if engine is not None:
+            _run(engine.dispose())
+        if created:
+            subprocess.run(["dropdb", "--if-exists", "-h", PG_HOST, "-p", PG_PORT, DB_NAME],
+                           check=False, capture_output=True, text=True)
+        if not _LOOP.is_closed():
+            _LOOP.close()
 
 
 @pytest.fixture(scope="module")

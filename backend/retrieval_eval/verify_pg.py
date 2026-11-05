@@ -3,7 +3,7 @@
 
 流程
 ----
-1. 连 PG（--pg-url，默认 postgres:postgres@localhost:5432/ai_creative）；连接失败
+1. 连 PG（必须显式提供 --pg-url）；连接失败
    → 退出码 2（可跳过，不阻塞离线环境）。
 2. 幂等建表/建索引（复用 setup_pg.setup_pg_tables / setup_indexes，安全）。
 3. 前置数据安全检查：报告 PG 检索四表现有数据量（不动任何数据）。
@@ -36,8 +36,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
-
-DEFAULT_PG_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_creative"
 
 # 检索四表 + verify 会写入的 4 张词典业务表（全部按 project_id 精确隔离）
 _RETRIEVAL_TABLES = (
@@ -460,8 +458,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="PostgreSQL 双后端分支检索验证（独立 project_id + 跑完清理）"
     )
-    parser.add_argument("--pg-url", default=DEFAULT_PG_URL,
-                        help=f"PostgreSQL 连接串（默认 {DEFAULT_PG_URL}）")
+    parser.add_argument("--pg-url", required=True,
+                        help="必须显式指定隔离 PostgreSQL 测试库连接串")
     args = parser.parse_args()
     return asyncio.run(run(args.pg_url))
 

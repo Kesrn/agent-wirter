@@ -39,17 +39,19 @@ jobs:
         image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: runner
-          POSTGRES_DB: ai_creative
+          POSTGRES_DB: aicp_ci_postgres
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
-          - 5432:5432
+          - 55432:5432
         options: >-
-          --health-cmd "pg_isready -U runner -d ai_creative"
+          --health-cmd "pg_isready -U runner -d aicp_ci_postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql+asyncpg://runner@127.0.0.1:5432/ai_creative
+      TEST_PG_HOST: 127.0.0.1
+      TEST_PG_PORT: "55432"
+      DATABASE_URL: postgresql+asyncpg://runner@127.0.0.1:55432/aicp_schema_parity_test
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -68,6 +70,8 @@ jobs:
       - name: Run PostgreSQL tests one file at a time
         working-directory: backend
         run: bash scripts/run_tests_per_file.sh --pg-only
+      - name: Create isolated schema parity database
+        run: createdb -h 127.0.0.1 -p 55432 -U runner aicp_schema_parity_test
       - name: Check PostgreSQL schema parity
         working-directory: backend
         env:

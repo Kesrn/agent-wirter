@@ -3,7 +3,7 @@
 
 职责
 ----
-1. 在 ai_creative 库建检索投影表：retrieval_chunks / retrieval_index_generation /
+1. 在指定 PostgreSQL 测试库建检索投影表：retrieval_chunks / retrieval_index_generation /
    retrieval_index_source_state（用 ORM ``Base.metadata.create_all`` 显式限定三张
    ORM 表，已存在的表不会被触碰）+ retrieval_chunks_fts（PG 普通表，复用
    services.retrieval_indexer.ensure_fts_table，与索引写入侧契约保持一致）。
@@ -29,14 +29,13 @@
   retrieval_index_generation / retrieval_index_source_state）；业务表绝不
   create/alter/drop，import 模式对业务表零写入。
 - sqlite 侧全程 ``mode=ro`` 只读，零写入。
-- 默认连接 ``postgresql+asyncpg://postgres:postgres@localhost:5432/ai_creative``，
-  可用 --pg-url 覆盖。
+- 必须显式传入隔离 PostgreSQL 测试库的 ``--pg-url``，避免误写本地业务库。
 
 用法
 ----
     cd backend
-    venv/bin/python retrieval_eval/setup_pg.py                  # 建表 + 索引
-    venv/bin/python retrieval_eval/setup_pg.py --import-sqlite  # 建表 + 索引 + 导数据
+    venv/bin/python retrieval_eval/setup_pg.py --pg-url "$TEST_PG_URL"  # 建表 + 索引
+    venv/bin/python retrieval_eval/setup_pg.py --pg-url "$TEST_PG_URL" --import-sqlite  # 建表 + 索引 + 导数据
     venv/bin/python retrieval_eval/setup_pg.py --import-sqlite --project <pid>  # 只导某项目
 """
 
@@ -57,7 +56,6 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, async_sessionma
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
-DEFAULT_PG_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_creative"
 DEFAULT_SQLITE = BACKEND_DIR / "dev-web.sqlite3"
 
 # 检索 SQL（lexical_retriever._PG_FTS_SQL）从 retrieval_chunks_fts 过滤，
@@ -435,8 +433,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="PostgreSQL 检索投影表初始化：建表 + FTS GIN/trgm 索引 + （可选）从 sqlite 导入检索四表"
     )
-    parser.add_argument("--pg-url", default=DEFAULT_PG_URL,
-                        help=f"PostgreSQL 连接串（默认 {DEFAULT_PG_URL}）")
+    parser.add_argument("--pg-url", required=True,
+                        help="必须显式指定隔离 PostgreSQL 测试库连接串")
     parser.add_argument("--sqlite", default=str(DEFAULT_SQLITE),
                         help="dev sqlite 数据库路径（仅 --import-sqlite 时读取，只读）")
     parser.add_argument("--import-sqlite", action="store_true",

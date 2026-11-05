@@ -35,10 +35,10 @@
 用法
 ----
     cd backend
-    ./venv/bin/python retrieval_eval/verify_pg_vector.py                 # 默认全流程
-    ./venv/bin/python retrieval_eval/verify_pg_vector.py --n-chunks 200 --limit 5
+    ./venv/bin/python retrieval_eval/verify_pg_vector.py --pg-url "$TEST_PG_URL"  # 全流程
+    ./venv/bin/python retrieval_eval/verify_pg_vector.py --pg-url "$TEST_PG_URL" --n-chunks 200 --limit 5
     ./venv/bin/python retrieval_eval/verify_pg_vector.py \
-        --pg-url postgresql+asyncpg://postgres:postgres@localhost:5432/ai_creative \
+        --pg-url "$TEST_PG_URL" \
         --out retrieval_eval/results/pg_vector_verify.json
 
 退出码：0=全部通过，1=存在失败，2=PG 不可达（跳过）。
@@ -63,7 +63,6 @@ from sqlalchemy import text
 EVAL_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = EVAL_DIR.parent
 DEFAULT_DB = BACKEND_DIR / "dev-web.sqlite3"
-DEFAULT_PG_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_creative"
 
 # 测试行哨兵：retrieval_chunks.index_generation_id 打上该值，用于自愈清理
 # （真实业务数据的 generation id 是 UUID 串，绝不会等于该哨兵）。
@@ -608,8 +607,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="PG 端向量检索实测：独立 project 导入真实 chunks → 索引 → 检索冒烟 + SQLite 一致性 + 耗时"
     )
-    parser.add_argument("--pg-url", default=DEFAULT_PG_URL,
-                        help=f"PostgreSQL 连接串（默认 {DEFAULT_PG_URL}）")
+    parser.add_argument("--pg-url", required=True,
+                        help="必须显式指定隔离 PostgreSQL 测试库连接串")
     parser.add_argument("--sqlite", default=str(DEFAULT_DB), help="源 sqlite 数据库（只读）")
     parser.add_argument("--source-project", default=None,
                         help="源项目（从 sqlite 取前 N 块）；默认取库中第一个项目")

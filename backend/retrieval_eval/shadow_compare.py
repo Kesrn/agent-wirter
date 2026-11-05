@@ -781,8 +781,7 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=5, help="新链路 top-k（默认 5）")
     parser.add_argument("--old-limit", type=int, default=5, help="旧链路 top-N（默认 5）")
     parser.add_argument("--old-db-url", default=None,
-                        help="旧链路数据库连接串（默认同一 dev 库；可指生产 PG，如 "
-                             "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_creative）")
+                        help="旧链路数据库连接串（默认同一 dev SQLite 库；如需 PG 请显式指定隔离测试库）")
     parser.add_argument("--out", default=None, help="结果 JSON 输出路径（默认仅控制台）")
     parser.add_argument("--verbose", action="store_true", help="逐条打印查询与匹配原因")
     args = parser.parse_args()
