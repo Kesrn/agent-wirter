@@ -88,7 +88,10 @@ async def test_logged_provider_generate_writes_log(async_db):
     assert "sys" in log.rendered_prompt_snapshot
     assert "usr" in log.rendered_prompt_snapshot
     assert log.error_message is None
-    assert log.input_tokens is None  # 第一阶段拿不到
+    assert log.input_tokens == 3  # 没有 SDK 用量时按字符数估算
+    assert log.output_tokens == 6
+    assert log.total_tokens == 9
+    assert log.request["usage_estimated"] is True
 
 
 @pytest.mark.asyncio
