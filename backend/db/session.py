@@ -12,7 +12,23 @@ from config.settings import settings
 
 # 全局 engine 在进程启动时创建。settings.DATABASE_URL 可以是 PostgreSQL asyncpg，
 # 也可以是桌面端覆盖后的 SQLite aiosqlite。
-_engine = create_async_engine(settings.DATABASE_URL, echo=settings.SQL_ECHO)
+def _create_engine(database_url: str, *, echo: bool):
+    """Create the engine with server-side pool settings only for non-SQLite DBs."""
+    if database_url.split(":", 1)[0].startswith("sqlite"):
+        # Keep the desktop SQLite call exactly as before: no pool-specific options.
+        return create_async_engine(database_url, echo=echo)
+    return create_async_engine(
+        database_url,
+        echo=echo,
+        pool_pre_ping=True,
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
+        pool_timeout=settings.DB_POOL_TIMEOUT,
+        pool_recycle=settings.DB_POOL_RECYCLE,
+    )
+
+
+_engine = _create_engine(settings.DATABASE_URL, echo=settings.SQL_ECHO)
 _session_factory = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
 async_session = _session_factory
 
