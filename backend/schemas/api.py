@@ -791,6 +791,21 @@ class DocumentVersionDiffResponse(BaseModel):
 
 
 # --- AI 生成历史 ---
+class HumanEditMetricsResponse(BaseModel):
+    method: str
+    edited: bool
+    anchor_version_id: str
+    human_version_id: str | None
+    original_chars: int
+    final_chars: int
+    changed_chars: int
+    changed_original_chars: int
+    inserted_chars: int
+    similarity: float
+    edit_ratio: float
+    computed_at: datetime
+
+
 class GenerationRecordListItemResponse(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID
@@ -804,6 +819,7 @@ class GenerationRecordListItemResponse(BaseModel):
     status: str
     langfuse_trace_id: str | None = None
     created_at: datetime
+    human_edit_metrics: HumanEditMetricsResponse | None = None
 
     model_config = {"from_attributes": True}
 
@@ -831,6 +847,47 @@ class GenerationRecordDiffRequest(BaseModel):
 class GenerationRecordDiffResponse(BaseModel):
     generation_id: uuid.UUID
     diff: list[dict]
+
+
+class GenerationRecordOriginalResponse(BaseModel):
+    id: uuid.UUID
+    content: str
+
+
+class GenerationRecordEditMetricsRefreshResponse(BaseModel):
+    human_edit_metrics: HumanEditMetricsResponse | None
+
+
+class EditStatsSummaryResponse(BaseModel):
+    count: int
+    edited_count: int
+    mean_edit_ratio: float | None
+    median_edit_ratio: float | None
+    p90_edit_ratio: float | None
+    total_original_chars: int
+    total_changed_chars: int
+
+
+class EditStatsItemResponse(BaseModel):
+    generation_record_id: uuid.UUID
+    chapter_id: uuid.UUID
+    chapter_sequence_number: int
+    run_id: uuid.UUID | None
+    mode: str
+    applied_at: datetime
+    original_chars: int
+    final_chars: int
+    changed_chars: int
+    edit_ratio: float
+    similarity: float
+    edited: bool
+
+
+class EditStatsResponse(BaseModel):
+    summary: EditStatsSummaryResponse
+    items: list[EditStatsItemResponse]
+    limit: int
+    offset: int
 
 
 # --- 评测集 ---
