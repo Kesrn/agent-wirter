@@ -348,6 +348,7 @@ async def _ensure_incremental_columns(conn):
         "base_version_id": "CHAR(36)",
         "task_card_id": "CHAR(36)",
         "superseded_by_execution_id": "CHAR(36)",
+        "human_edit_metrics": "JSON",
     })
     # 036：索引与列分别补齐（列存在但索引缺失的库也必须建索引）
     await conn.execute(text(

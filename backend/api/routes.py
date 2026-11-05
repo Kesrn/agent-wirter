@@ -15,6 +15,7 @@ import asyncio
 from contextlib import suppress
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -26,6 +27,7 @@ from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel, Field
 from urllib.parse import quote
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 from sqlalchemy import bindparam, delete, select, func, text
 
 from db.session import get_db
@@ -89,6 +91,8 @@ from schemas.api import (
     DocumentVersionDiffRequest, DocumentVersionDiffResponse,
     GenerationRecordListItemResponse, GenerationRecordResponse,
     GenerationRecordUpdate, GenerationRecordDiffRequest, GenerationRecordDiffResponse,
+    GenerationRecordOriginalResponse, GenerationRecordEditMetricsRefreshResponse,
+    EditStatsResponse,
     EvaluationDatasetCreate, EvaluationDatasetUpdate, EvaluationDatasetResponse,
     EvaluationCaseCreate, EvaluationCaseUpdate, EvaluationCaseResponse,
     ProjectSourceCreate, ProjectSourceUpdate, ProjectSourceResponse,
@@ -159,6 +163,7 @@ from services.generation_record_service import (
     upsert_candidate_for_run,
     update_generation_record_status,
 )
+from services.edit_metrics_service import ensure_fresh_metrics, refresh_edit_metrics_for_record
 from services.evaluation import default_rubric, normalize_expected_properties, normalize_rubric, run_evaluation_case
 from services.memory_staging_service import run_fact_extraction, run_story_recorder_extraction
 from observability.langfuse import activate_langfuse_context, current_langfuse_trace_id, finish_langfuse_context
@@ -877,6 +882,7 @@ def _generation_list_item(record: GenerationRecord) -> GenerationRecordListItemR
         status=record.status,
         langfuse_trace_id=record.langfuse_trace_id,
         created_at=record.created_at,
+        human_edit_metrics=record.human_edit_metrics,
     )
 
 
@@ -7125,6 +7131,8 @@ async def list_chapter_generations(
         raise HTTPException(status_code=404, detail="章节不存在")
 
     records = await list_generation_records_for_chapter(db, project_id=uid, chapter_id=chapter.id)
+    await ensure_fresh_metrics(db, records)
+    await db.commit()
     return [_generation_list_item(record) for record in records]
 
 
@@ -7140,7 +7148,150 @@ async def get_generation_history_record(
     record = await get_generation_record(db, project_id=uid, record_id=_to_uuid(generation_id))
     if not record:
         raise HTTPException(status_code=404, detail="生成记录不存在")
+    await ensure_fresh_metrics(db, [record])
+    await db.commit()
     return record
+
+
+@router.get("/generation-records/{record_id}/original", response_model=GenerationRecordOriginalResponse)
+async def get_generation_record_original(
+    record_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    record = await db.get(GenerationRecord, _to_uuid(record_id))
+    if record is None:
+        raise HTTPException(status_code=404, detail="生成记录不存在")
+    await _verify_project_owner(record.project_id, user.id, db)
+    await ensure_fresh_metrics(db, [record])
+    await db.commit()
+
+    original_content = record.content or ""
+    if record.chapter_id is not None and record.accepted_version_id is not None:
+        anchor = await db.get(ChapterVersion, record.accepted_version_id)
+        if anchor is not None and str(anchor.chapter_id) == str(record.chapter_id):
+            original_content = anchor.content or ""
+    return {"id": record.id, "content": original_content}
+
+
+@router.post(
+    "/generation-records/{record_id}/refresh-edit-metrics",
+    response_model=GenerationRecordEditMetricsRefreshResponse,
+)
+async def refresh_generation_record_edit_metrics(
+    record_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    record = await db.get(GenerationRecord, _to_uuid(record_id))
+    if record is None:
+        raise HTTPException(status_code=404, detail="生成记录不存在")
+    await _verify_project_owner(record.project_id, user.id, db)
+    await refresh_edit_metrics_for_record(db, record)
+    await db.commit()
+    return {"human_edit_metrics": record.human_edit_metrics}
+
+
+@router.get("/projects/{project_id}/edit-stats", response_model=EditStatsResponse)
+async def get_project_edit_stats(
+    project_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    chapter_id: str | None = Query(default=None),
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    uid = _to_uuid(project_id)
+    await _verify_project_owner(uid, user.id, db)
+    query = select(GenerationRecord).options(load_only(
+        GenerationRecord.id,
+        GenerationRecord.chapter_id,
+        GenerationRecord.run_id,
+        GenerationRecord.mode,
+        GenerationRecord.status,
+        GenerationRecord.accepted_version_id,
+        GenerationRecord.updated_at,
+        GenerationRecord.human_edit_metrics,
+    )).where(
+        GenerationRecord.project_id == uid,
+        GenerationRecord.status == "applied",
+        GenerationRecord.chapter_id.is_not(None),
+    )
+    if chapter_id is not None:
+        query = query.where(GenerationRecord.chapter_id == _to_uuid(chapter_id))
+    if since is not None:
+        query = query.where(GenerationRecord.updated_at >= since)
+    if until is not None:
+        query = query.where(GenerationRecord.updated_at <= until)
+    query = query.order_by(GenerationRecord.updated_at.desc(), GenerationRecord.id.desc())
+    records = list((await db.execute(query)).scalars().all())
+    applied_at_by_record = {str(record.id): record.updated_at for record in records}
+
+    # Summary spans all matching records; only the first 20 candidates are refreshed
+    # per request. Older records beyond this budget contribute their existing cache.
+    await ensure_fresh_metrics(db, records[:20], max_recompute=20)
+    metric_records = [
+        record for record in records
+        if isinstance(record.human_edit_metrics, dict) and record.human_edit_metrics
+    ]
+    ratio_values = sorted(float(record.human_edit_metrics.get("edit_ratio", 0.0)) for record in metric_records)
+    count = len(metric_records)
+    if count:
+        median = (
+            ratio_values[count // 2]
+            if count % 2
+            else (ratio_values[count // 2 - 1] + ratio_values[count // 2]) / 2
+        )
+        p90 = ratio_values[max(0, math.ceil(0.9 * count) - 1)]
+        summary = {
+            "count": count,
+            "edited_count": sum(bool(record.human_edit_metrics.get("edited")) for record in metric_records),
+            "mean_edit_ratio": round(sum(ratio_values) / count, 4),
+            "median_edit_ratio": round(median, 4),
+            "p90_edit_ratio": round(p90, 4),
+            "total_original_chars": sum(int(record.human_edit_metrics.get("original_chars", 0)) for record in metric_records),
+            "total_changed_chars": sum(int(record.human_edit_metrics.get("changed_chars", 0)) for record in metric_records),
+        }
+    else:
+        summary = {
+            "count": 0,
+            "edited_count": 0,
+            "mean_edit_ratio": None,
+            "median_edit_ratio": None,
+            "p90_edit_ratio": None,
+            "total_original_chars": 0,
+            "total_changed_chars": 0,
+        }
+
+    page = metric_records[offset:offset + limit]
+    chapter_ids = list({record.chapter_id for record in page if record.chapter_id is not None})
+    chapter_sequences: dict[str, int] = {}
+    if chapter_ids:
+        chapter_rows = await db.execute(
+            select(Chapter.id, Chapter.sequence_number).where(Chapter.id.in_(chapter_ids))
+        )
+        chapter_sequences = {str(row.id): row.sequence_number for row in chapter_rows}
+    items = []
+    for record in page:
+        metrics = record.human_edit_metrics
+        items.append({
+            "generation_record_id": record.id,
+            "chapter_id": record.chapter_id,
+            "chapter_sequence_number": chapter_sequences.get(str(record.chapter_id), 0),
+            "run_id": record.run_id,
+            "mode": record.mode,
+            "applied_at": applied_at_by_record[str(record.id)],
+            "original_chars": int(metrics.get("original_chars", 0)),
+            "final_chars": int(metrics.get("final_chars", 0)),
+            "changed_chars": int(metrics.get("changed_chars", 0)),
+            "edit_ratio": float(metrics.get("edit_ratio", 0.0)),
+            "similarity": float(metrics.get("similarity", 1.0)),
+            "edited": bool(metrics.get("edited", False)),
+        })
+    await db.commit()
+    return {"summary": summary, "items": items, "limit": limit, "offset": offset}
 
 
 @router.patch("/projects/{project_id}/generations/{generation_id}", response_model=GenerationRecordResponse)
@@ -7476,6 +7627,8 @@ async def list_document_generations(
         raise HTTPException(status_code=404, detail="文档不存在")
 
     records = await list_generation_records_for_document(db, project_id=uid, document_id=did)
+    await ensure_fresh_metrics(db, records)
+    await db.commit()
     return [_generation_list_item(record) for record in records]
 
 
