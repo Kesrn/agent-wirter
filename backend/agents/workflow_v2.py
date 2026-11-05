@@ -32,6 +32,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from langgraph.graph import END, StateGraph
 
+from config.settings import settings
 from agents.critic_schema import StructuralCritique
 from agents.guardrail import parse_guardrail_result
 from agents.llm_provider import get_llm_provider
@@ -65,6 +66,7 @@ from services.chapter_quality import (
     clean_generated_content,
     check_heading,
 )
+from services.chapter_rules import validate_task_card_compliance
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +121,7 @@ class CreativeStateV2(TypedDict, total=False):
     harness_step_id: str
     # ── v2 新增 ──
     chapter_task_card: dict      # architect 输出
+    rules_enabled: bool          # 可按工作流状态覆盖章节规则总开关
     writer_draft: str            # 兼容字段：等同第一版写手原文，后续不得覆盖
     original_writer_draft: str   # 第一版写手原文；只用于人工查看，永不覆盖
     cycle_writer_draft: str      # 当前生成/修订轮次的写手稿；Editor 有效性对比基线
@@ -978,6 +981,52 @@ def _quality_failure_reason(stage: str, report: dict) -> str:
     return f"{prefix}：" + "；".join(messages) if messages else prefix
 
 
+def _merge_task_card_rules(report: QualityReport, state: CreativeStateV2, text: str) -> None:
+    """Merge deterministic task-card findings without introducing database reads."""
+    enabled_override = state.get("rules_enabled")
+    enabled = enabled_override if isinstance(enabled_override, bool) else settings.CHAPTER_RULES_ENABLED
+    if not enabled:
+        return
+
+    task_card = state.get("modified_task_card") or state.get("chapter_task_card")
+    context_summary = state.get("context_summary") or {}
+    raw_characters = context_summary.get("characters", []) if isinstance(context_summary, dict) else []
+    characters: list[dict] = []
+    if isinstance(raw_characters, list):
+        for character in raw_characters:
+            if not isinstance(character, dict):
+                continue
+            name = character.get("name") or character.get("label")
+            if name:
+                characters.append({"name": str(name), "aliases": character.get("aliases", [])})
+
+    # Context summaries currently carry the canonical names but not profile aliases.
+    # Task-card names are already loaded state and provide a safe fallback.
+    if isinstance(task_card, dict):
+        scenes = task_card.get("scenes") or []
+        if isinstance(scenes, list):
+            known = {character["name"] for character in characters}
+            for scene in scenes:
+                if not isinstance(scene, dict):
+                    continue
+                expected = scene.get("characters") or []
+                if isinstance(expected, str):
+                    expected = [expected]
+                if isinstance(expected, list):
+                    for name in expected:
+                        value = str(name or "").strip()
+                        if value and value not in known:
+                            characters.append({"name": value, "aliases": []})
+                            known.add(value)
+
+    new_issues = validate_task_card_compliance(text, task_card, characters)
+    if not new_issues:
+        return
+    report.issues.extend(new_issues)
+    if any(issue.severity == "ERROR" for issue in new_issues):
+        report.passed = False
+
+
 async def draft_validator_node(state: CreativeStateV2) -> dict:
     """Writer 初稿确定性质量检查。
 
@@ -992,6 +1041,7 @@ async def draft_validator_node(state: CreativeStateV2) -> dict:
     run_id = state.get("harness_run_id", "")
 
     report = validate_draft_quality(draft, target_words, run_id=run_id)
+    _merge_task_card_rules(report, state, draft)
     errors = [i for i in report.issues if i.severity == "ERROR"]
 
     update: dict = {
@@ -1051,6 +1101,7 @@ async def edited_draft_validator_node(state: CreativeStateV2) -> dict:
     report = validate_edited_draft_quality(
         cycle_writer_draft, draft, target_words, structural_critique, run_id=run_id,
     )
+    _merge_task_card_rules(report, state, draft)
     eff = validate_editor_effectiveness(
         cycle_writer_draft,
         draft,
@@ -1108,6 +1159,7 @@ async def final_quality_gate_node(state: CreativeStateV2) -> dict:
     )
 
     report = validate_final_quality(draft, target_words, edit_effectiveness=eff, run_id=run_id)
+    _merge_task_card_rules(report, state, draft)
 
     return {
         "final_quality_report": report.to_dict(),
