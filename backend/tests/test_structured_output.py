@@ -142,6 +142,42 @@ def test_json_mode_rejection_falls_back_and_is_remembered_per_provider():
     ]
 
 
+def test_json_mode_rejection_is_not_cached_for_non_weakrefable_provider():
+    from agents.llm_types import LLMResult
+    from agents.structured import generate_structured
+
+    class _RejectJsonMode(Exception):
+        status_code = 400
+
+        def __str__(self):
+            return "response_format JSON mode is not supported"
+
+    class _SlottedProvider:
+        __slots__ = ("calls",)
+
+        def __init__(self):
+            self.calls = []
+
+        async def complete(self, system_prompt, user_prompt, **kwargs):
+            uses_json_mode = "response_format" in kwargs
+            self.calls.append(uses_json_mode)
+            if uses_json_mode:
+                raise _RejectJsonMode()
+            return LLMResult('{"name":"ok","count":1}', None, [], None, "fake", 0, 0)
+
+    provider = _SlottedProvider()
+
+    async def run():
+        await generate_structured(provider, _Payload, "system", "user", max_repairs=0)
+        await generate_structured(provider, _Payload, "system", "user", max_repairs=0)
+
+    asyncio.run(run())
+
+    # The provider cannot be weakly referenced or assigned a support attribute;
+    # unsupported mode is therefore retried on each independent call.
+    assert provider.calls == [True, False, True, False]
+
+
 def test_extract_json_object_escapes_control_characters_without_changing_text():
     from agents.structured import extract_json_object
 

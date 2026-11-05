@@ -7,6 +7,7 @@ import logging
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, TypeVar
+from weakref import WeakKeyDictionary
 
 from pydantic import BaseModel, ValidationError
 
@@ -14,7 +15,7 @@ from agents.llm_types import LLMResult, TokenUsage
 
 logger = logging.getLogger(__name__)
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
-_JSON_MODE_SUPPORT: dict[int, bool] = {}
+_JSON_MODE_SUPPORT: WeakKeyDictionary[Any, bool] = WeakKeyDictionary()
 
 
 class StructuredOutputError(ValueError):
@@ -233,14 +234,21 @@ def _remember_json_mode(provider: Any, supported: bool) -> None:
     try:
         setattr(provider, "_structured_json_mode_supported", supported)
     except (AttributeError, TypeError):
-        _JSON_MODE_SUPPORT[id(provider)] = supported
+        try:
+            _JSON_MODE_SUPPORT[provider] = supported
+        except TypeError:
+            # Objects that cannot be weakly referenced (or hashed) are not cached.
+            pass
 
 
 def _json_mode_supported(provider: Any) -> bool:
     remembered = getattr(provider, "_structured_json_mode_supported", None)
     if remembered is not None:
         return bool(remembered)
-    return _JSON_MODE_SUPPORT.get(id(provider), True)
+    try:
+        return _JSON_MODE_SUPPORT.get(provider, True)
+    except TypeError:
+        return True
 
 
 def _merge_usage(usages: list[TokenUsage]) -> TokenUsage | None:
