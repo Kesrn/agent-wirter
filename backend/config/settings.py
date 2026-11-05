@@ -105,6 +105,8 @@ class Settings:
     IS_PRODUCTION: bool = _IS_PRODUCTION
     ALLOW_REGISTRATION: bool = _env_flag("ALLOW_REGISTRATION", not _IS_PRODUCTION)
     ALLOW_FIRST_USER_BOOTSTRAP: bool = _env_flag("ALLOW_FIRST_USER_BOOTSTRAP", not _IS_PRODUCTION)
+    # 章节任务卡确定性规则。工作流 state 的 rules_enabled 可按次覆盖此默认值。
+    CHAPTER_RULES_ENABLED: bool = os.getenv("CHAPTER_RULES_ENABLED", "true").strip().lower() == "true"
 
     # --- JWT ---
     # JWT_SECRET 只用于签发/校验登录 token。
