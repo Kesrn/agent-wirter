@@ -142,7 +142,8 @@ def build_ai_run_trace(run, steps: list[Any], logs: list[Any], *, include_prompt
     input_tokens = sum(_integer(call["input_tokens"]) for call in rendered_calls)
     output_tokens = sum(_integer(call["output_tokens"]) for call in rendered_calls)
     total_tokens = sum(_integer(call["total_tokens"]) for call in rendered_calls)
-    costs = sum(float(call["cost"] or 0) for call in rendered_calls)
+    valid_costs = [float(call["cost"]) for call in rendered_calls if call.get("cost") is not None]
+    total_cost = round(sum(valid_costs), 6) if valid_costs else None
     retries = sum(_integer(call["retries"]) for call in rendered_calls)
     return {
         "run": {
@@ -162,7 +163,7 @@ def build_ai_run_trace(run, steps: list[Any], logs: list[Any], *, include_prompt
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
-            "cost": round(costs, 6),
+            "cost": total_cost,
             "retries": retries,
             "estimated_calls": sum(bool(call["usage_estimated"]) for call in rendered_calls),
             "structured_repairs": sum(structured_context_repairs.values()),

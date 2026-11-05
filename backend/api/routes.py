@@ -7337,6 +7337,7 @@ async def get_project_edit_stats(
             "edit_ratio": float(metrics.get("edit_ratio", 0.0)),
             "similarity": float(metrics.get("similarity", 1.0)),
             "edited": bool(metrics.get("edited", False)),
+            "approximate": bool(metrics.get("approximate", False)),
         })
     await db.commit()
     return {"summary": summary, "items": items, "limit": limit, "offset": offset}

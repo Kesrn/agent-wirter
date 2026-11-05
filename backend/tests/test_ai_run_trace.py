@@ -216,4 +216,51 @@ def test_trace_builder_caps_steps_and_calls_and_marks_truncated():
     assert len(result["steps"]) == 500
     assert len(result["steps"][0]["llm_calls"]) == 50
     assert result["totals"]["llm_calls"] == 50
+    assert result["totals"]["cost"] is None
     assert result["truncated"] is True
+
+
+@pytest.mark.parametrize(
+    ("costs", "expected_total"),
+    [
+        ([None, None, None], None),
+        ([None, 0.012345, None, 0.000001], 0.012346),
+        ([0.05, 0.02, 0.01], 0.08),
+        ([], None),
+    ],
+)
+def test_trace_builder_cost_aggregation_semantics(costs, expected_total):
+    from services.ai_run_trace import build_ai_run_trace
+    from schemas.api import AiRunTraceTotalsResponse
+
+    now = datetime.now(timezone.utc)
+    run = SimpleNamespace(
+        id=uuid.uuid4(), request_id="r", status="COMPLETED", run_type="test", mode="full_pipeline",
+        workflow_key=None, started_at=now, finished_at=now, error_message=None,
+    )
+    step = SimpleNamespace(
+        id=uuid.uuid4(), step_order=1, step_name="step-1", node_key=None,
+        agent_name=None, status="SUCCESS", started_at=now, ended_at=now,
+        created_at=now, retry_count=0, max_retry=0, error_message=None, output=None,
+    )
+    logs = [
+        SimpleNamespace(
+            id=uuid.uuid4(), step_id=step.id, created_at=now, request={},
+            rendered_prompt_snapshot=None, input_tokens=10, output_tokens=10,
+            total_tokens=20, cost=cost, latency_ms=10, agent_name="agent", model="model",
+            error_message=None,
+        )
+        for cost in costs
+    ]
+    result = build_ai_run_trace(run, [step], logs)
+    if expected_total is None:
+        assert result["totals"]["cost"] is None
+    else:
+        assert result["totals"]["cost"] == pytest.approx(expected_total)
+
+    totals_obj = AiRunTraceTotalsResponse(**result["totals"])
+    if expected_total is None:
+        assert totals_obj.cost is None
+    else:
+        assert totals_obj.cost == pytest.approx(expected_total)
+
