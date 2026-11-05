@@ -637,9 +637,9 @@ watch(() => store.messages.length, () => {
 .ca-tc-resolved {
   margin: 2px 0 6px;
   padding: 6px 8px;
-  border-left: 2px solid var(--accent, #576bff);
+  border-left: 2px solid var(--accent);
   border-radius: 4px;
-  background: color-mix(in srgb, var(--accent, #576bff) 8%, transparent);
+  background: var(--accent-subtle);
   font-size: 12px;
   color: var(--text-primary);
   line-height: 1.6;
@@ -647,7 +647,7 @@ watch(() => store.messages.length, () => {
 .ca-tc-resolved .ca-tc-key {
   display: inline-block;
   min-width: 64px;
-  color: var(--accent, #576bff);
+  color: var(--accent);
 }
 .ca-tc-original {
   color: var(--text-tertiary);
@@ -781,17 +781,17 @@ watch(() => store.messages.length, () => {
   align-items: center;
   gap: 8px;
   padding: 12px 16px;
-  border: 1px solid color-mix(in srgb, var(--status-info, #1a73e8) 35%, var(--border));
+  border: 1px solid var(--border);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--status-info, #1a73e8) 6%, transparent);
-  color: var(--text-secondary, #5f6368);
+  background: var(--accent-subtle);
+  color: var(--text-secondary);
   font-size: 14px;
 }
 .ca-running-spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid color-mix(in srgb, var(--status-info, #1a73e8) 30%, transparent);
-  border-top-color: var(--status-info, #1a73e8);
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: ca-spin 0.8s linear infinite;
 }

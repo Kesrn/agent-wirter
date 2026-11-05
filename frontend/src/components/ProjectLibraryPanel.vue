@@ -419,8 +419,8 @@ function errorText(loadError: string, label: string): string {
   align-items: flex-start;
   justify-content: flex-start;
   padding: 72px 0 0 208px;
-  background: rgba(4, 6, 10, 0.55);
-  backdrop-filter: blur(2px);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
 }
 
 .plp-panel {
@@ -428,12 +428,10 @@ function errorText(loadError: string, label: string): string {
   max-height: min(600px, calc(100vh - 120px));
   display: flex;
   flex-direction: column;
-  border: 1px solid #252b38;
-  border-radius: 16px;
-  background:
-    radial-gradient(circle at 70% -12%, rgba(87, 107, 255, 0.16), transparent 34%),
-    #0d1118;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-modal);
   overflow: hidden;
 }
 
@@ -442,52 +440,52 @@ function errorText(loadError: string, label: string): string {
   align-items: center;
   justify-content: space-between;
   padding: 14px 18px;
-  border-bottom: 1px solid #222834;
+  border-bottom: 1px solid var(--border);
 }
 
 .plp-head h3 {
   margin: 0;
   font-size: 15px;
-  color: #e8edf6;
+  color: var(--text);
 }
 
 .plp-close {
   width: 26px;
   height: 26px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm, 6px);
   background: transparent;
-  color: #69758a;
+  color: var(--text-tertiary);
   font-size: 18px;
   line-height: 1;
   cursor: pointer;
 }
 
 .plp-close:hover {
-  background: #1a202b;
-  color: #e8edf6;
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .plp-tabs {
   display: flex;
   gap: 4px;
   padding: 10px 14px 0;
-  border-bottom: 1px solid #222834;
+  border-bottom: 1px solid var(--border);
 }
 
 .plp-tab {
   padding: 7px 12px;
   border: 0;
-  border-radius: 10px 10px 0 0;
+  border-radius: var(--radius-sm, 6px) var(--radius-sm, 6px) 0 0;
   background: transparent;
-  color: #7d8898;
+  color: var(--text-tertiary);
   font-size: 12.5px;
   cursor: pointer;
 }
 
 .plp-tab.active {
-  background: rgba(87, 107, 255, 0.14);
-  color: #c9d4ff;
+  background: var(--accent-subtle);
+  color: var(--accent);
 }
 
 .plp-subtabs {
@@ -498,18 +496,18 @@ function errorText(loadError: string, label: string): string {
 
 .plp-subtab {
   padding: 4px 12px;
-  border: 1px solid #222834;
+  border: 1px solid var(--border);
   border-radius: 999px;
   background: transparent;
-  color: #7d8898;
+  color: var(--text-tertiary);
   font-size: 12px;
   cursor: pointer;
 }
 
 .plp-subtab.active {
-  border-color: rgba(87, 107, 255, 0.5);
-  background: rgba(87, 107, 255, 0.14);
-  color: #c9d4ff;
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--accent);
 }
 
 .plp-body {
@@ -519,21 +517,21 @@ function errorText(loadError: string, label: string): string {
 
 .plp-state {
   margin: 12px 4px;
-  color: #69758a;
+  color: var(--text-tertiary);
   font-size: 12.5px;
   line-height: 1.7;
 }
 
 .plp-error {
-  color: #e07a7a;
+  color: var(--status-error);
 }
 
 .plp-item {
   padding: 10px 12px;
   margin: 6px 0;
-  border: 1px solid #222834;
-  border-radius: 12px;
-  background: rgba(20, 26, 35, 0.6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 10px);
+  background: var(--bg-hover);
 }
 
 .plp-item-head {
@@ -545,32 +543,32 @@ function errorText(loadError: string, label: string): string {
 
 .plp-item-head strong {
   font-size: 13.5px;
-  color: #e8edf6;
+  color: var(--text);
 }
 
 .plp-tag {
   padding: 2px 8px;
   border-radius: 999px;
-  background: rgba(87, 107, 255, 0.16);
-  color: #9db0ff;
+  background: var(--accent-subtle);
+  color: var(--accent);
   font-size: 11px;
 }
 
 .plp-tag-muted {
-  background: rgba(148, 163, 184, 0.12);
-  color: #7d8898;
+  background: var(--bg);
+  color: var(--text-tertiary);
 }
 
 .plp-item-desc {
   margin: 7px 0 0;
-  color: #aab4c4;
+  color: var(--text-secondary);
   font-size: 12.5px;
   line-height: 1.65;
   white-space: pre-wrap;
 }
 
 .plp-item-desc.plp-turning {
-  color: #d3b16b;
+  color: var(--status-reviewing);
 }
 
 .plp-item-actions {
@@ -581,23 +579,23 @@ function errorText(loadError: string, label: string): string {
 
 .plp-btn {
   padding: 4px 12px;
-  border: 1px solid #2a3140;
-  border-radius: 8px;
-  background: rgba(30, 35, 43, 0.84);
-  color: #b7beca;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg);
+  color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
 }
 
 .plp-btn:hover {
-  background: #242a35;
-  color: #e8edf6;
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .plp-btn-primary {
-  border-color: rgba(87, 107, 255, 0.5);
-  background: rgba(87, 107, 255, 0.2);
-  color: #c9d4ff;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--text-inverse);
 }
 
 .plp-btn-primary:disabled {
@@ -606,8 +604,9 @@ function errorText(loadError: string, label: string): string {
 }
 
 .plp-btn-danger {
-  border-color: rgba(224, 122, 122, 0.35);
-  color: #e07a7a;
+  border-color: var(--status-error);
+  color: var(--status-error);
+  background: var(--status-error-bg);
 }
 
 .plp-add-form {
@@ -616,24 +615,24 @@ function errorText(loadError: string, label: string): string {
   gap: 8px;
   margin-top: 12px;
   padding: 12px;
-  border: 1px dashed #2a3140;
-  border-radius: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius, 10px);
 }
 
 .plp-input {
   width: 100%;
   box-sizing: border-box;
   padding: 7px 10px;
-  border: 1px solid #2a3140;
-  border-radius: 8px;
-  background: #12151b;
-  color: #e8edf6;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg);
+  color: var(--text);
   font-size: 12.5px;
 }
 
 .plp-input:focus {
   outline: none;
-  border-color: rgba(87, 107, 255, 0.55);
+  border-color: var(--accent);
 }
 
 .plp-select {

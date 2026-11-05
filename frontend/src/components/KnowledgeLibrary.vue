@@ -936,7 +936,7 @@ async function handleFileUpload(e: Event) {
   cursor: pointer;
   white-space: nowrap;
 }
-.filter-tab.active { background: var(--accent); color: #fff; }
+.filter-tab.active { background: var(--accent); color: var(--text-inverse); }
 .filter-tab:hover:not(.active) { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .loading, .empty-list { padding: 20px; text-align: center; color: var(--text-secondary); font-size: 13px; }
 .source-list { flex: 1; overflow-y: auto; }
@@ -958,8 +958,8 @@ async function handleFileUpload(e: Event) {
   display: inline-block;
   padding: 0 4px;
   border-radius: 3px;
-  background: #ff9800;
-  color: #fff;
+  background: var(--status-reviewing);
+  color: var(--text-inverse);
   font-size: 10px;
   font-weight: 600;
 }
@@ -983,11 +983,11 @@ async function handleFileUpload(e: Event) {
   font-weight: 600;
   flex-shrink: 0;
 }
-.source-type-badge.upload { background: #e3f2fd; color: #1565c0; }
-.source-type-badge.fanfic_rule { background: #fce4ec; color: #c62828; }
-.source-type-badge.timeline { background: #f3e5f5; color: #7b1fa2; }
-.source-type-badge.note { background: #fff3e0; color: #e65100; }
-.source-type-badge.reference { background: #e8f5e9; color: #2e7d32; }
+.source-type-badge.upload { background: var(--accent-subtle); color: var(--accent); }
+.source-type-badge.fanfic_rule { background: var(--status-error-bg); color: var(--status-error); }
+.source-type-badge.timeline { background: var(--status-revision-bg); color: var(--status-revision); }
+.source-type-badge.note { background: var(--status-reviewing-bg); color: var(--status-reviewing); }
+.source-type-badge.reference { background: var(--status-final-bg); color: var(--status-final); }
 .source-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .source-meta { font-size: 11px; color: var(--text-secondary); flex-shrink: 0; }
 
@@ -1010,8 +1010,8 @@ async function handleFileUpload(e: Event) {
   cursor: pointer;
 }
 .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
-.btn-sm.btn-danger { color: #c62828; }
-.btn-sm.btn-danger:hover { border-color: #c62828; }
+.btn-sm.btn-danger { color: var(--status-error); }
+.btn-sm.btn-danger:hover { border-color: var(--status-error); }
 .inline-confirm {
   display: flex;
   align-items: center;
@@ -1019,9 +1019,9 @@ async function handleFileUpload(e: Event) {
   flex-wrap: wrap;
   margin: -2px 0 12px;
   padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, #c62828 35%, var(--border));
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: color-mix(in srgb, #c62828 7%, transparent);
+  background: var(--status-error-bg);
   color: var(--text);
   font-size: 12px;
 }
@@ -1034,8 +1034,8 @@ async function handleFileUpload(e: Event) {
   display: inline-block;
   padding: 3px 10px;
   border-radius: 6px;
-  background: color-mix(in srgb, #ff9800 15%, transparent);
-  color: #e65100;
+  background: var(--status-reviewing-bg);
+  color: var(--status-reviewing);
   font-size: 12px;
   font-weight: 600;
   margin-bottom: 10px;
@@ -1087,8 +1087,8 @@ async function handleFileUpload(e: Event) {
 .chunk-keywords { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
 .keyword-tag {
   padding: 1px 6px; border-radius: 3px;
-  background: color-mix(in srgb, #4caf50 10%, transparent);
-  color: #2e7d32; font-size: 10px;
+  background: var(--status-final-bg);
+  color: var(--status-final); font-size: 10px;
 }
 .load-more-btn {
   align-self: center;
@@ -1152,7 +1152,7 @@ async function handleFileUpload(e: Event) {
   border: none;
   border-radius: 6px;
   background: var(--accent);
-  color: #fff;
+  color: var(--text-inverse);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -1266,7 +1266,7 @@ async function handleFileUpload(e: Event) {
   opacity: 0.85;
 }
 .session-action-btn.danger {
-  color: #c62828;
+  color: var(--status-error);
 }
 .session-action-btn:disabled {
   cursor: not-allowed;
@@ -1330,8 +1330,8 @@ async function handleFileUpload(e: Event) {
 .summary-notice {
   padding: 6px 14px;
   font-size: 11px;
-  color: #e65100;
-  background: color-mix(in srgb, #ff9800 10%, transparent);
+  color: var(--status-reviewing);
+  background: var(--status-reviewing-bg);
   text-align: center;
 }
 .qa-messages { flex: 1; overflow-y: auto; padding: 12px; }
@@ -1385,8 +1385,8 @@ async function handleFileUpload(e: Event) {
   cursor: pointer;
 }
 .citation-chip.web {
-  background: color-mix(in srgb, #00bfa5 14%, transparent);
-  color: #19d4bd;
+  background: var(--status-final-bg);
+  color: var(--status-final);
 }
 .citation-chip:hover { text-decoration: underline; }
 .citation-prefix {
@@ -1400,8 +1400,8 @@ async function handleFileUpload(e: Event) {
   margin-right: 4px;
   padding: 0 4px;
   border-radius: 3px;
-  background: #eff6ff;
-  color: #2563eb;
+  background: var(--accent-subtle);
+  color: var(--accent);
   font-size: 11px;
 }
 .evidence-tag {
@@ -1414,14 +1414,14 @@ async function handleFileUpload(e: Event) {
   vertical-align: middle;
   line-height: 14px;
 }
-.evidence-tag.direct_character_evidence { background: #4caf50; color: #fff; }
-.evidence-tag.relationship_evidence { background: #e91e63; color: #fff; }
-.evidence-tag.ability_table { background: #2196f3; color: #fff; }
-.evidence-tag.worldbuilding_entry { background: #9c27b0; color: #fff; }
-.evidence-tag.timeline_event { background: #ff9800; color: #fff; }
-.evidence-tag.generic_context { background: #78909c; color: #fff; }
-.evidence-tag.negative_evidence { background: #b0bec5; color: #546e7a; }
-.evidence-tag.web_search { background: #009688; color: #fff; }
+.evidence-tag.direct_character_evidence { background: var(--status-final); color: var(--text-inverse); }
+.evidence-tag.relationship_evidence { background: var(--status-error); color: var(--text-inverse); }
+.evidence-tag.ability_table { background: var(--accent); color: var(--text-inverse); }
+.evidence-tag.worldbuilding_entry { background: var(--status-revision); color: var(--text-inverse); }
+.evidence-tag.timeline_event { background: var(--status-reviewing); color: var(--text-inverse); }
+.evidence-tag.generic_context { background: var(--bg-hover); color: var(--text-secondary); }
+.evidence-tag.negative_evidence { background: var(--border); color: var(--text-tertiary); }
+.evidence-tag.web_search { background: var(--status-final); color: var(--text-inverse); }
 .query-plan-details {
   margin-top: 6px;
   font-size: 11px;
@@ -1474,9 +1474,9 @@ async function handleFileUpload(e: Event) {
   user-select: none;
 }
 .web-toggle.active {
-  border-color: #00bfa5;
-  color: #19d4bd;
-  background: color-mix(in srgb, #00bfa5 10%, transparent);
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-subtle);
 }
 .web-toggle input {
   flex: 0 0 auto;

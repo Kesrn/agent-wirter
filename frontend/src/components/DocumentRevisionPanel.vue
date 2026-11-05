@@ -201,11 +201,11 @@ watch(
   padding: 1px 6px;
   border-radius: 6px;
 }
-.source-manual { background: #e8f0fe; color: #1a73e8; }
-.source-ai { background: #fce8e6; color: #d93025; }
-.source-enhance { background: #e6f4ea; color: #1e8e3e; }
-.source-continue { background: #fef7e0; color: #b06000; }
-.source-other { background: #f1f3f4; color: #5f6368; }
+.source-manual { background: var(--status-revision-bg); color: var(--status-revision); }
+.source-ai { background: var(--sev-warning-bg); color: var(--sev-warning); }
+.source-enhance { background: var(--status-final-bg); color: var(--status-final); }
+.source-continue { background: var(--accent-subtle); color: var(--accent); }
+.source-other { background: var(--bg-hover); color: var(--text-tertiary); }
 
 .version-words {
   font-size: var(--text-xs);

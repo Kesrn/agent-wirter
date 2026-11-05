@@ -149,7 +149,7 @@ const hasGenerationError = computed(() => Boolean(projectState.value.generationE
 }
 
 .wf-progress-head .failed {
-  color: #ef4444;
+  color: var(--status-error);
 }
 
 .wf-progress-track {
@@ -169,7 +169,7 @@ const hasGenerationError = computed(() => Boolean(projectState.value.generationE
 }
 
 .wf-progress-bar.failed {
-  background: #ef4444;
+  background: var(--status-error);
 }
 
 .wf-error-alert {
@@ -177,16 +177,16 @@ const hasGenerationError = computed(() => Boolean(projectState.value.generationE
   gap: 4px;
   padding: var(--sp-2);
   margin-bottom: var(--sp-3);
-  color: #fecaca;
-  background: rgb(127 29 29 / 18%);
-  border: 1px solid rgb(239 68 68 / 45%);
+  color: var(--status-error);
+  background: var(--status-error-bg);
+  border: 1px solid var(--border);
   border-radius: calc(var(--radius) - 2px);
   font-size: var(--text-xs);
   line-height: 1.45;
 }
 
 .wf-error-alert strong {
-  color: #f87171;
+  color: var(--status-error);
 }
 
 .wf-error-alert small {
@@ -224,14 +224,14 @@ const hasGenerationError = computed(() => Boolean(projectState.value.generationE
 }
 
 .wf-dot.error {
-  background: #ef4444;
+  background: var(--status-error);
   opacity: 1;
 }
 
 .wf-check {
   font-size: 13px;
   font-weight: 700;
-  color: #22c55e;
+  color: var(--status-final);
   line-height: 1;
 }
 
@@ -265,7 +265,7 @@ const hasGenerationError = computed(() => Boolean(projectState.value.generationE
 }
 
 .wf-hint.error {
-  color: #ef4444;
+  color: var(--status-error);
 }
 
 .wf-skill,
@@ -290,11 +290,11 @@ const hasGenerationError = computed(() => Boolean(projectState.value.generationE
 }
 
 .wf-row.success .wf-label {
-  color: #22c55e;
+  color: var(--status-final);
 }
 
 .wf-row.error .wf-label {
-  color: #ef4444;
+  color: var(--status-error);
 }
 
 .wf-row.cancelled .wf-label {
@@ -323,7 +323,7 @@ const hasGenerationError = computed(() => Boolean(projectState.value.generationE
 }
 
 .wf-connector.done {
-  background: #22c55e;
+  background: var(--status-final);
   opacity: 0.5;
 }
 

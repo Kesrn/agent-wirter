@@ -374,34 +374,34 @@ watch(
   padding: 1px 6px;
   border-radius: 6px;
 }
-.status-superseded { background: #f1f3f4; color: #5f6368; }
-.status-candidate { background: #e8f0fe; color: #1a73e8; }
-.status-applied { background: #e6f4ea; color: #1e8e3e; }
-.status-discarded { background: #f1f3f4; color: #5f6368; }
+.status-superseded { background: var(--bg-hover); color: var(--text-tertiary); }
+.status-candidate { background: var(--status-revision-bg); color: var(--status-revision); }
+.status-applied { background: var(--status-final-bg); color: var(--status-final); }
+.status-discarded { background: var(--bg-hover); color: var(--text-tertiary); }
 .generation-edit-metric {
   font-size: 10px;
   font-weight: 600;
   padding: 1px 6px;
   border-radius: 6px;
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  background: var(--accent-subtle);
   color: var(--accent);
 }
 .generation-edit-metric.metric-clean {
-  background: #f1f3f4;
-  color: #5f6368;
+  background: var(--bg-hover);
+  color: var(--text-tertiary);
 }
 .stats-toggle-btn {
   font-size: 11px;
   padding: 2px 8px;
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--bg-panel);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all var(--transition, 0.15s ease);
+  transition: all var(--transition);
 }
 .stats-toggle-btn:hover {
-  background: var(--bg-hover, #f3f4f6);
+  background: var(--bg-hover);
   color: var(--accent);
 }
 .generation-words,
@@ -483,7 +483,8 @@ watch(
   align-items: center;
   justify-content: center;
   padding: var(--sp-5);
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
 }
 .context-modal {
   width: min(960px, calc(100vw - 48px));

@@ -2147,7 +2147,7 @@ defineExpose({
   border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
   border-radius: 16px;
   background: color-mix(in srgb, var(--bg-panel) 84%, transparent);
-  box-shadow: 0 1px 0 rgba(255,255,255,0.035) inset, var(--shadow-sm);
+  box-shadow: var(--shadow-sm);
 }
 .command-top {
   display: flex;
@@ -2199,7 +2199,7 @@ defineExpose({
 .assistant-mode-toggle button.active {
   background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel));
   color: var(--accent);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, var(--shadow-sm);
+  box-shadow: var(--shadow-sm);
 }
 .unit-context {
   display: flex;
@@ -2232,7 +2232,7 @@ defineExpose({
 
 .context-stats {
   font-size: 12px;
-  color: var(--text-tertiary, #768390);
+  color: var(--text-tertiary);
   padding: 0 4px;
   margin-top: 4px;
   line-height: 1.6;
@@ -2301,19 +2301,19 @@ defineExpose({
   flex-wrap: wrap;
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid color-mix(in srgb, var(--border, #2a3342) 60%, transparent);
+  border-top: 1px solid var(--border);
   font-size: 13px;
 }
 .pre-gen-label {
   font-weight: 600;
-  color: var(--text-secondary, #cbd5e1);
+  color: var(--text-secondary);
 }
 .pre-gen-option {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   cursor: pointer;
-  color: var(--text, #f8fafc);
+  color: var(--text);
 }
 .pre-gen-option input[type="radio"] {
   margin: 0;
@@ -2324,16 +2324,16 @@ defineExpose({
   align-items: center;
   gap: 4px;
   margin-left: auto;
-  color: var(--text-tertiary, #94a3b8);
+  color: var(--text-tertiary);
   font-size: 12px;
 }
 .rounds-input {
   width: 48px;
   padding: 2px 4px;
-  border: 1px solid var(--border, #2a3342);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg-elevated, #1e293b);
-  color: var(--text, #f8fafc);
+  background: var(--bg);
+  color: var(--text);
   font-size: 12px;
   text-align: center;
 }
@@ -2355,7 +2355,7 @@ defineExpose({
   color: var(--text-secondary);
   text-align: center;
   white-space: nowrap;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.035) inset, var(--shadow-sm);
+  box-shadow: var(--shadow-sm);
   transition: background var(--transition), border-color var(--transition), color var(--transition), opacity var(--transition);
 }
 .quick-actions button:hover {

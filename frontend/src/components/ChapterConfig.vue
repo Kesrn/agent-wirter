@@ -716,7 +716,7 @@ onMounted(async () => {
 .btn-submit {
   border-color: var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--text-inverse);
 }
 .btn-cancel,
 .btn-add-inline {
@@ -895,10 +895,10 @@ onMounted(async () => {
   color: var(--color-text-muted);
   white-space: nowrap;
 }
-.dark-line-status.status-planted { border-color: #3b82f6; color: #3b82f6; }
-.dark-line-status.status-active { border-color: #22c55e; color: #22c55e; }
-.dark-line-status.status-resolved { border-color: #94a3b8; color: #94a3b8; }
-.dark-line-status.status-dropped { border-color: #ef4444; color: #ef4444; }
+.dark-line-status.status-planted { border-color: var(--accent); color: var(--accent); }
+.dark-line-status.status-active { border-color: var(--status-final); color: var(--status-final); }
+.dark-line-status.status-resolved { border-color: var(--text-tertiary); color: var(--text-tertiary); }
+.dark-line-status.status-dropped { border-color: var(--status-error); color: var(--status-error); }
 .dark-line-meta {
   margin: var(--sp-1) 0 0;
   font-size: 11px;

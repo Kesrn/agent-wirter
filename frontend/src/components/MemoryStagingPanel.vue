@@ -93,12 +93,12 @@ onMounted(loadStaging)
 }
 .section-label {
   font-size: 13px;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
 }
 .refresh-btn {
   font-size: 12px;
   padding: 2px 8px;
-  border: 1px solid var(--border-color, #ddd);
+  border: 1px solid var(--border);
   border-radius: 4px;
   background: transparent;
   cursor: pointer;
@@ -108,7 +108,7 @@ onMounted(loadStaging)
   align-items: flex-start;
   justify-content: space-between;
   padding: 6px 0;
-  border-bottom: 1px solid var(--border-color-light, #f0f0f0);
+  border-bottom: 1px solid var(--border);
 }
 .item-main {
   flex: 1;
@@ -121,8 +121,8 @@ onMounted(loadStaging)
   font-size: 11px;
   padding: 1px 6px;
   border-radius: 3px;
-  background: var(--bg-tag, #e8e8e8);
-  color: var(--text-secondary, #666);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 .item-title {
   font-size: 13px;
@@ -130,7 +130,7 @@ onMounted(loadStaging)
 }
 .item-evidence {
   font-size: 12px;
-  color: var(--text-tertiary, #aaa);
+  color: var(--text-tertiary);
 }
 .item-actions {
   display: flex;
@@ -140,18 +140,18 @@ onMounted(loadStaging)
 .action-btn {
   font-size: 12px;
   padding: 2px 8px;
-  border: 1px solid var(--border-color, #ddd);
+  border: 1px solid var(--border);
   border-radius: 4px;
   background: transparent;
   cursor: pointer;
 }
 .action-btn.confirm {
-  color: var(--color-success, #52c41a);
-  border-color: var(--color-success, #52c41a);
+  color: var(--status-final);
+  border-color: var(--status-final);
 }
 .action-btn.reject {
-  color: var(--color-danger, #ff4d4f);
-  border-color: var(--color-danger, #ff4d4f);
+  color: var(--status-error);
+  border-color: var(--status-error);
 }
 .badge {
   font-size: 11px;
@@ -159,16 +159,16 @@ onMounted(loadStaging)
   border-radius: 3px;
 }
 .badge.confirmed {
-  background: #f6ffed;
-  color: #52c41a;
+  background: var(--status-final-bg);
+  color: var(--status-final);
 }
 .badge.rejected {
-  background: #f5f5f5;
-  color: #999;
+  background: var(--bg-hover);
+  color: var(--text-tertiary);
 }
 .loading-text, .empty-text {
   font-size: 13px;
-  color: var(--text-tertiary, #aaa);
+  color: var(--text-tertiary);
   padding: 8px 0;
 }
 </style>

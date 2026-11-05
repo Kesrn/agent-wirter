@@ -173,7 +173,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', handleDocument
   font-weight: 550;
   line-height: 1.2;
   text-align: left;
-  box-shadow: 0 1px 0 rgba(17, 24, 39, 0.02);
+  box-shadow: var(--shadow-sm);
   transition: border-color var(--transition), box-shadow var(--transition), background var(--transition), color var(--transition);
 }
 

@@ -91,6 +91,6 @@ function sourceLabel(item: ApiCharacterArcItem): string {
 .arc-confidence { font-size: 10px; background: var(--color-surface); border: 1px solid var(--color-border); padding: 0 4px; border-radius: 3px; }
 .arc-item-title { font-size: 13px; font-weight: 500; }
 .arc-item-summary { font-size: 12px; color: var(--color-text-secondary); margin-top: 2px; }
-.arc-item-change { font-size: 12px; color: #3b82f6; margin-top: 2px; }
+.arc-item-change { font-size: 12px; color: var(--accent); margin-top: 2px; }
 .arc-item-emotion { font-size: 12px; color: var(--color-text-muted); margin-top: 2px; }
 </style>

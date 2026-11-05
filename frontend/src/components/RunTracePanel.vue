@@ -459,8 +459,8 @@ onBeforeUnmount(() => {
 .run-trace-overlay {
   position: fixed;
   inset: 0;
-  background: color-mix(in srgb, #020617 65%, transparent);
-  backdrop-filter: blur(4px);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
   z-index: 2500;
   display: flex;
   justify-content: flex-end;
@@ -478,7 +478,7 @@ onBeforeUnmount(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-lg);
   border-left: 1px solid var(--border);
   overflow: hidden;
   animation: slideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
@@ -528,16 +528,16 @@ onBeforeUnmount(() => {
 
 .trace-close-btn:hover {
   color: var(--text);
-  background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+  background: var(--bg-hover);
 }
 
 .trace-body {
   flex: 1;
   overflow-y: auto;
-  padding: var(--sp-4, 16px) var(--sp-5, 20px);
+  padding: var(--sp-4) var(--sp-5);
   display: flex;
   flex-direction: column;
-  gap: var(--sp-3, 14px);
+  gap: var(--sp-3);
 }
 
 .trace-state {
@@ -551,15 +551,15 @@ onBeforeUnmount(() => {
 }
 
 .trace-error {
-  color: var(--status-error, #ef4444);
+  color: var(--status-error);
 }
 
 .btn-retry {
   padding: 4px 14px;
   background: var(--accent);
-  color: var(--text-inverse, #fff);
+  color: var(--text-inverse);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   cursor: pointer;
 }
@@ -567,7 +567,7 @@ onBeforeUnmount(() => {
 /* Alerts */
 .trace-alert {
   padding: 10px 14px;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-sm);
   font-size: 13px;
   display: flex;
   align-items: flex-start;
@@ -575,15 +575,15 @@ onBeforeUnmount(() => {
 }
 
 .trace-alert-warning {
-  background: color-mix(in srgb, #f59e0b 12%, transparent);
-  border: 1px solid color-mix(in srgb, #f59e0b 35%, transparent);
-  color: #b45309;
+  background: var(--sev-warning-bg);
+  border: 1px solid color-mix(in srgb, var(--sev-warning) 35%, transparent);
+  color: var(--sev-warning);
 }
 
 .trace-alert-danger {
-  background: color-mix(in srgb, var(--status-error, #ef4444) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--status-error, #ef4444) 35%, transparent);
-  color: var(--status-error, #dc2626);
+  background: var(--sev-critical-bg);
+  border: 1px solid color-mix(in srgb, var(--status-error) 35%, transparent);
+  color: var(--status-error);
 }
 
 .trace-reload-error {
@@ -660,18 +660,18 @@ onBeforeUnmount(() => {
 }
 
 .status-tag.completed {
-  background: color-mix(in srgb, #10b981 18%, transparent);
-  color: #059669;
+  background: var(--status-final-bg);
+  color: var(--status-final);
 }
 
 .status-tag.failed {
-  background: color-mix(in srgb, #ef4444 18%, transparent);
-  color: #dc2626;
+  background: var(--status-error-bg);
+  color: var(--status-error);
 }
 
 .status-tag.running {
-  background: color-mix(in srgb, #3b82f6 18%, transparent);
-  color: #2563eb;
+  background: var(--status-revision-bg);
+  color: var(--status-revision);
 }
 
 .request-id-row {
@@ -764,9 +764,9 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   align-items: center;
   padding: 8px 12px;
-  background: color-mix(in srgb, #3b82f6 12%, transparent);
-  border: 1px solid color-mix(in srgb, #3b82f6 30%, transparent);
-  border-radius: var(--radius-sm, 6px);
+  background: var(--sev-info-bg);
+  border: 1px solid color-mix(in srgb, var(--sev-info) 30%, transparent);
+  border-radius: var(--radius-sm);
   font-size: 12px;
   color: var(--text);
 }
@@ -780,9 +780,9 @@ onBeforeUnmount(() => {
   font-size: 11px;
   padding: 2px 10px;
   background: var(--accent);
-  color: #fff;
+  color: var(--text-inverse);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
@@ -812,8 +812,8 @@ onBeforeUnmount(() => {
 }
 
 .timeline-step.is-failed {
-  border-color: var(--status-error, #ef4444);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--status-error, #ef4444) 30%, transparent);
+  border-color: var(--status-error);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--status-error) 30%, transparent);
 }
 
 .step-header {
@@ -870,13 +870,13 @@ onBeforeUnmount(() => {
 }
 
 .step-status-tag.completed {
-  background: color-mix(in srgb, #10b981 15%, transparent);
-  color: #059669;
+  background: var(--status-final-bg);
+  color: var(--status-final);
 }
 
 .step-status-tag.failed {
-  background: color-mix(in srgb, #ef4444 15%, transparent);
-  color: #dc2626;
+  background: var(--status-error-bg);
+  color: var(--status-error);
 }
 
 .step-header-right {
@@ -891,16 +891,16 @@ onBeforeUnmount(() => {
   gap: 4px;
   font-size: 10px;
   padding: 1px 6px;
-  border-radius: 4px;
-  background: color-mix(in srgb, #ef4444 12%, transparent);
-  color: #dc2626;
-  border: 1px solid color-mix(in srgb, #ef4444 25%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--status-error-bg);
+  color: var(--status-error);
+  border: 1px solid color-mix(in srgb, var(--status-error) 25%, transparent);
 }
 
 .step-quality-pill.passed {
-  background: color-mix(in srgb, #10b981 12%, transparent);
-  color: #059669;
-  border-color: color-mix(in srgb, #10b981 25%, transparent);
+  background: var(--status-final-bg);
+  color: var(--status-final);
+  border-color: color-mix(in srgb, var(--status-final) 25%, transparent);
 }
 
 .quality-code {
@@ -932,7 +932,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   padding-left: 6px;
-  color: var(--text-inverse, #fff);
+  color: var(--text-inverse);
   font-size: 10px;
   font-weight: 600;
   white-space: nowrap;
@@ -940,11 +940,11 @@ onBeforeUnmount(() => {
 }
 
 .step-duration-bar.completed {
-  background: #059669;
+  background: var(--status-final);
 }
 
 .step-duration-bar.failed {
-  background: #dc2626;
+  background: var(--status-error);
 }
 
 .duration-text {
@@ -1024,14 +1024,14 @@ onBeforeUnmount(() => {
 .call-estimated {
   font-size: 10px;
   padding: 1px 4px;
-  border-radius: 3px;
-  background: color-mix(in srgb, #f59e0b 15%, transparent);
-  color: #b45309;
+  border-radius: var(--radius-sm);
+  background: var(--sev-warning-bg);
+  color: var(--sev-warning);
 }
 
 .call-retry {
   font-size: 10px;
-  color: #b45309;
+  color: var(--sev-warning);
 }
 
 .call-structured {
@@ -1048,8 +1048,8 @@ onBeforeUnmount(() => {
 .call-prompt-snapshot {
   margin-top: 4px;
   border: 1px solid var(--border);
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--bg-surface, var(--bg-panel)) 80%, black 5%);
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
   overflow: hidden;
 }
 
@@ -1065,8 +1065,8 @@ onBeforeUnmount(() => {
 }
 
 .snapshot-truncated {
-  color: #b45309;
-  background: color-mix(in srgb, #f59e0b 15%, transparent);
+  color: var(--sev-warning);
+  background: var(--sev-warning-bg);
   padding: 1px 4px;
   border-radius: 2px;
 }

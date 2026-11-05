@@ -687,9 +687,9 @@ label {
   color: var(--text-secondary);
 }
 .btn-danger-soft {
-  background: var(--status-error-bg, #fef2f2);
-  border-color: color-mix(in srgb, var(--status-error, #ef4444) 28%, var(--border));
-  color: var(--status-error, #ef4444);
+  background: var(--status-error-bg);
+  border-color: var(--status-error);
+  color: var(--status-error);
 }
 .case-list,
 .run-list {
@@ -745,8 +745,8 @@ label {
   color: var(--status-final);
 }
 .status-pill.failed {
-  background: var(--status-error-bg, #fef2f2);
-  color: var(--status-error, #ef4444);
+  background: var(--status-error-bg);
+  color: var(--status-error);
 }
 .case-actions {
   display: flex;
@@ -792,7 +792,7 @@ label {
   font-size: var(--text-xs);
 }
 .error-text {
-  color: var(--status-error, #ef4444) !important;
+  color: var(--status-error) !important;
 }
 .empty-hint,
 .loading-hint {

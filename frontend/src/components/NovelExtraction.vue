@@ -335,23 +335,23 @@ onUnmounted(() => {
 .extraction-status { margin-bottom: 12px; }
 .status-row { display: flex; gap: 12px; align-items: center; font-size: 13px; margin-bottom: 6px; flex-wrap: wrap; }
 .status-badge { padding: 2px 8px; border-radius: 4px; font-size: 12px; }
-.status-badge.COMPLETED { background: #2d8a4e; color: #fff; }
-.status-badge.BATCH_DONE { background: #2563eb; color: #fff; }
-.status-badge.RUNNING, .status-badge.PENDING { background: #d9a300; color: #fff; }
-.status-badge.FAILED, .status-badge.PARTIAL_FAILED { background: #c0392b; color: #fff; }
+.status-badge.COMPLETED { background: var(--status-final); color: var(--text-inverse); }
+.status-badge.BATCH_DONE { background: var(--accent); color: var(--text-inverse); }
+.status-badge.RUNNING, .status-badge.PENDING { background: var(--status-reviewing); color: var(--text-inverse); }
+.status-badge.FAILED, .status-badge.PARTIAL_FAILED { background: var(--status-error); color: var(--text-inverse); }
 .status-badge.NONE { background: var(--bg-soft); color: var(--text-soft); }
-.failed-count { color: #c0392b; }
+.failed-count { color: var(--status-error); }
 .progress-bar { position: relative; height: 18px; background: var(--bg-soft); border-radius: 4px; margin: 6px 0; overflow: hidden; }
-.progress-fill { height: 100%; background: #3b82f6; transition: width 0.3s; }
-.progress-text { position: absolute; top: 0; left: 50%; transform: translateX(-50%); font-size: 11px; line-height: 18px; color: #fff; }
-.error-msg { color: #c0392b; font-size: 12px; margin: 4px 0; }
-.mock-warning { font-size: 12px; color: #92400e; margin: 6px 0; padding: 6px 10px; background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.4); border-radius: 4px; line-height: 1.5; }
-.real-no-result-warning { font-size: 12px; color: #b91c1c; margin: 6px 0; padding: 6px 10px; background: rgba(220,38,38,0.10); border: 1px solid rgba(220,38,38,0.4); border-radius: 4px; line-height: 1.5; }
+.progress-fill { height: 100%; background: var(--accent); transition: width 0.3s; }
+.progress-text { position: absolute; top: 0; left: 50%; transform: translateX(-50%); font-size: 11px; line-height: 18px; color: var(--text-inverse); }
+.error-msg { color: var(--status-error); font-size: 12px; margin: 4px 0; }
+.mock-warning { font-size: 12px; color: var(--status-reviewing); margin: 6px 0; padding: 6px 10px; background: var(--status-reviewing-bg); border: 1px solid var(--border); border-radius: 4px; line-height: 1.5; }
+.real-no-result-warning { font-size: 12px; color: var(--status-error); margin: 6px 0; padding: 6px 10px; background: var(--status-error-bg); border: 1px solid var(--border); border-radius: 4px; line-height: 1.5; }
 .extraction-actions { display: flex; gap: 8px; margin-top: 8px; }
-.current-chapter { font-size: 13px; color: #2563eb; margin: 4px 0; font-weight: 500; }
+.current-chapter { font-size: 13px; color: var(--accent); margin: 4px 0; font-weight: 500; }
 .provider-tag { font-size: 11px; padding: 1px 6px; border-radius: 3px; background: var(--bg-soft); color: var(--text-soft); }
-.real-model-hint { font-size: 12px; color: var(--text-soft); margin: 6px 0; padding: 6px 8px; background: #eff6ff; border-radius: 4px; border-left: 3px solid #3b82f6; }
+.real-model-hint { font-size: 12px; color: var(--text-secondary); margin: 6px 0; padding: 6px 8px; background: var(--accent-subtle); border-radius: 4px; border-left: 3px solid var(--accent); }
 .btn-sm { padding: 4px 10px; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); cursor: pointer; }
 .btn-sm:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-sm.btn-danger { color: #c0392b; border-color: #c0392b; }
+.btn-sm.btn-danger { color: var(--status-error); border-color: var(--status-error); }
 </style>

@@ -441,31 +441,14 @@ async function openProjectWorldLibrary(project: Project) {
 <style scoped>
 .project-list-page {
   --project-page-bg:
-    linear-gradient(180deg, rgba(21, 28, 38, 0.96) 0%, rgba(13, 17, 23, 0.98) 48%, rgba(18, 21, 26, 1) 100%),
-    radial-gradient(circle at 18% 0%, rgba(59, 157, 255, 0.16), transparent 32%),
-    radial-gradient(circle at 78% 8%, rgba(45, 212, 191, 0.1), transparent 30%);
-  --project-panel-bg: linear-gradient(180deg, rgba(28, 33, 41, 0.98), rgba(22, 27, 34, 0.98));
-  --project-panel-strong-bg: linear-gradient(180deg, rgba(27, 32, 40, 0.96), rgba(20, 25, 32, 0.96));
-  --project-button-bg: rgba(30, 35, 43, 0.84);
-  --project-border: rgba(148, 163, 184, 0.18);
-  --project-inner-bg: rgba(13, 17, 23, 0.42);
-  --project-shadow: 0 18px 44px rgba(0, 0, 0, 0.26), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
-  --bg-panel: #181a1f;
-  --bg-hover: #24272e;
-  --bg-input: #12151b;
-  --border: #2b3038;
-  --text: #f3f6fb;
-  --text-secondary: #b7beca;
-  --text-tertiary: #737d8c;
-  --text-inverse: #06111f;
-  --status-draft: #a8a29e;
-  --status-draft-bg: rgba(168, 162, 158, 0.14);
-  --status-reviewing: #fbbf24;
-  --status-reviewing-bg: rgba(251, 191, 36, 0.14);
-  --status-final: #34d399;
-  --status-final-bg: rgba(52, 211, 153, 0.14);
-  --status-error: #f87171;
-  --accent-subtle: rgba(59, 157, 255, 0.14);
+    radial-gradient(circle at 18% 0%, var(--accent-subtle), transparent 32%),
+    var(--bg);
+  --project-panel-bg: var(--bg-panel);
+  --project-panel-strong-bg: var(--bg-hover);
+  --project-button-bg: var(--bg-hover);
+  --project-border: var(--border);
+  --project-inner-bg: var(--bg-hover);
+  --project-shadow: var(--shadow);
   height: calc(100vh - var(--desktop-status-bar-height, 0px));
   overflow-y: auto;
   max-width: none;
@@ -473,35 +456,7 @@ async function openProjectWorldLibrary(project: Project) {
   padding: 46px max(var(--sp-8), calc((100vw - 1520px) / 2 + var(--sp-8))) 72px;
   background: var(--project-page-bg);
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--accent) 40%, var(--border)) transparent;
-}
-:global(:root:not(.desktop-runtime)[data-theme="light"]) .project-list-page {
-  --project-page-bg:
-    linear-gradient(180deg, #f7f9fd 0%, #eef3f9 52%, #f4f6fb 100%),
-    radial-gradient(circle at 18% 0%, rgba(49, 89, 217, 0.1), transparent 32%),
-    radial-gradient(circle at 78% 8%, rgba(5, 150, 105, 0.08), transparent 30%);
-  --project-panel-bg: rgba(255, 255, 255, 0.92);
-  --project-panel-strong-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 251, 255, 0.96));
-  --project-button-bg: rgba(255, 255, 255, 0.86);
-  --project-border: rgba(120, 136, 160, 0.28);
-  --project-inner-bg: rgba(238, 242, 247, 0.7);
-  --project-shadow: 0 18px 44px rgba(17, 24, 39, 0.08), 0 1px 0 rgba(255, 255, 255, 0.9) inset;
-  --bg-panel: #ffffff;
-  --bg-hover: #edf3ff;
-  --bg-input: #ffffff;
-  --border: #d8e0ec;
-  --text: #111827;
-  --text-secondary: #5d6675;
-  --text-tertiary: #96a0ae;
-  --text-inverse: #ffffff;
-  --status-draft: #6b7280;
-  --status-draft-bg: #f3f4f6;
-  --status-reviewing: #d97706;
-  --status-reviewing-bg: #fffbeb;
-  --status-final: #059669;
-  --status-final-bg: #ecfdf5;
-  --status-error: #dc2626;
-  --accent-subtle: #edf3ff;
+  scrollbar-color: var(--border) transparent;
 }
 .project-list-page::-webkit-scrollbar {
   width: 8px;
@@ -788,7 +743,7 @@ async function openProjectWorldLibrary(project: Project) {
 }
 .project-card:hover {
   border-color: var(--border-focus);
-  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(59, 157, 255, 0.1) inset;
+  box-shadow: var(--shadow-lg), 0 0 0 1px var(--accent-subtle) inset;
   transform: translateY(-2px);
 }
 .card-header {
@@ -837,10 +792,10 @@ async function openProjectWorldLibrary(project: Project) {
 }
 .btn-card-delete {
   padding: 3px 8px;
-  border: 1px solid color-mix(in srgb, var(--status-error, #ef4444) 36%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--status-error) 36%, var(--border));
   border-radius: 9px;
-  background: color-mix(in srgb, var(--status-error-bg, #fef2f2) 72%, transparent);
-  color: var(--status-error, #ef4444);
+  background: color-mix(in srgb, var(--status-error-bg) 72%, transparent);
+  color: var(--status-error);
   font-size: var(--text-xs);
   font-weight: 650;
   transition: opacity var(--transition), background var(--transition), border-color var(--transition);
@@ -896,8 +851,8 @@ async function openProjectWorldLibrary(project: Project) {
   opacity: 0.65;
 }
 .btn-card-delete:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--status-error, #ef4444) 12%, var(--bg-panel));
-  border-color: color-mix(in srgb, var(--status-error, #ef4444) 64%, var(--border));
+  background: color-mix(in srgb, var(--status-error) 12%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--status-error) 64%, var(--border));
 }
 .btn-card-delete:disabled {
   cursor: not-allowed;
@@ -939,7 +894,7 @@ async function openProjectWorldLibrary(project: Project) {
   align-items: center;
   justify-content: center;
   padding: 32px;
-  background: rgba(0, 0, 0, 0.58);
+  background: var(--bg-overlay);
   backdrop-filter: blur(10px);
 }
 .project-config-modal {
@@ -949,7 +904,7 @@ async function openProjectWorldLibrary(project: Project) {
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--bg-panel);
-  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+  box-shadow: var(--shadow-lg);
 }
 
 @media (max-width: 720px) {

@@ -98,7 +98,8 @@ function handleConfirm() {
 .picker-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -113,7 +114,7 @@ function handleConfirm() {
   max-height: 85vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-modal);
 }
 .picker-header {
   padding: var(--sp-4) var(--sp-5);
@@ -179,14 +180,14 @@ function handleConfirm() {
   width: 24px; height: 24px;
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
+  color: var(--text-inverse);
   font-size: 12px;
   font-weight: 700;
   flex-shrink: 0;
 }
 .dir-title { font-weight: 650; font-size: var(--text-base); }
 .dir-desc { margin: 0 0 4px 0; font-size: var(--text-sm); color: var(--text-secondary); line-height: 1.5; }
-.dir-risk { margin: 0; font-size: 12px; color: var(--text-tertiary, #768390); }
+.dir-risk { margin: 0; font-size: 12px; color: var(--text-tertiary); }
 .note-section { margin-top: 16px; }
 .note-label { display: block; font-size: var(--text-sm); font-weight: 600; margin-bottom: 4px; }
 .note-input {
@@ -223,7 +224,7 @@ function handleConfirm() {
   border: none;
   border-radius: var(--radius);
   background: var(--accent);
-  color: #fff;
+  color: var(--text-inverse);
   font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;
