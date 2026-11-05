@@ -8492,8 +8492,8 @@ async def list_knowledge_facts(
     object: str | None = None,
     source_id: str | None = None,
     confidence: str | None = None,
-    limit: int = 100,
-    offset: int = 0,
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
@@ -8587,8 +8587,8 @@ _STRUCTURED_WRITABLE_FIELDS: dict[str, set[str]] = {
 async def list_structured_knowledge(
     project_id: str,
     table: str,
-    limit: int = 100,
-    offset: int = 0,
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
@@ -9003,8 +9003,8 @@ async def retry_extraction_chapter(
 async def list_character_appearances(
     project_id: str,
     character_id: str,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):

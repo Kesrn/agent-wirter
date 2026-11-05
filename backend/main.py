@@ -10,11 +10,14 @@
 鉴权在 api/auth.py、LLM 设置在 api/llm_settings.py。
 """
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from fastapi.middleware.cors import CORSMiddleware
 
 from config.settings import settings
@@ -53,12 +56,14 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 AI 小说创作平台启动")
     log_langfuse_startup_status()
     app.state.database_ready = False
+    app.state.checkpointer_ready = False
     from agents.workflow import _CHECKPOINTER
     try:
         await init_db()
         # 持久化 checkpointer setup：sqlite/postgres 建表。失败 fail-fast，
         # 不静默降级到 memory（否则 WAITING_HUMAN 状态重启后无法恢复）。
         await setup_checkpointer(_CHECKPOINTER)
+        app.state.checkpointer_ready = True
 
         # 进程被强制关闭时，SSE 请求没有机会执行异常处理。启动后清理上次遗留的
         # CREATED/RUNNING run，防止半截任务、步骤和提示词审计记录长期留在数据库。
@@ -117,6 +122,41 @@ app.include_router(router)
 app.include_router(auth_router)
 app.include_router(media_router)
 app.include_router(llm_settings_router)
+
+
+@app.get("/health/live")
+async def health_live():
+    """进程存活探针，不访问数据库或其它外部服务。"""
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def health_ready():
+    """检查应用、数据库连接与 checkpointer 初始化状态，不暴露内部异常。"""
+    database_initialized = bool(getattr(app.state, "database_ready", False))
+    checkpointer_initialized = bool(getattr(app.state, "checkpointer_ready", False))
+    database_connected = False
+    try:
+        async def _ping_database():
+            async with get_engine().connect() as connection:
+                await connection.execute(text("SELECT 1"))
+
+        await asyncio.wait_for(_ping_database(), timeout=2.0)
+        database_connected = True
+    except Exception:
+        # Health probes intentionally avoid returning connection strings or exception text.
+        database_connected = False
+
+    checks = {
+        "database_initialized": database_initialized,
+        "database_connected": database_connected,
+        "checkpointer_initialized": checkpointer_initialized,
+    }
+    ready = all(checks.values())
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={"status": "ok" if ready else "not_ready", "checks": checks},
+    )
 
 
 @app.get("/health")

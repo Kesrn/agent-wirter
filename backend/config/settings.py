@@ -195,6 +195,11 @@ class Settings:
     # --- 应用 ---
     # CORS_ORIGINS 包含 null 是为了兼容 Electron/file origin；纯 Web 部署时可收紧。
     SQL_ECHO: bool = os.getenv("SQL_ECHO", "false").lower() == "true"
+    # PostgreSQL 连接池。SQLite（桌面端）不接收这些参数，保持原连接行为。
+    DB_POOL_SIZE: int = int(os.getenv("DB_POOL_SIZE", "10"))
+    DB_MAX_OVERFLOW: int = int(os.getenv("DB_MAX_OVERFLOW", "20"))
+    DB_POOL_TIMEOUT: int = int(os.getenv("DB_POOL_TIMEOUT", "30"))
+    DB_POOL_RECYCLE: int = int(os.getenv("DB_POOL_RECYCLE", "1800"))
     # /media 鉴权 Cookie 是否加 Secure 属性。生产环境（HTTPS）默认开启，开发默认关闭，
     # 否则 http://localhost 下浏览器不会回传 Cookie。
     COOKIE_SECURE: bool = _env_flag("COOKIE_SECURE", _IS_PRODUCTION)
