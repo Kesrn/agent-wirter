@@ -882,6 +882,7 @@ class EditStatsItemResponse(BaseModel):
     edit_ratio: float
     similarity: float
     edited: bool
+    approximate: bool = False
 
 
 class EditStatsResponse(BaseModel):
@@ -1277,7 +1278,7 @@ class AiRunTraceTotalsResponse(BaseModel):
     input_tokens: int
     output_tokens: int
     total_tokens: int
-    cost: float
+    cost: float | None = None
     retries: int
     estimated_calls: int
     structured_repairs: int

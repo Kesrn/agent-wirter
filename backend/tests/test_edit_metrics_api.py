@@ -218,3 +218,61 @@ def test_no_accepted_anchor_stays_null_and_list_models_include_field():
     assert response.status_code == 200
     row = next(value for value in response.json() if value["id"] == record_id)
     assert row["human_edit_metrics"] is None
+
+
+def test_stats_items_approximate_flag():
+    headers, project_id, chapter_ids = _project("edit_metrics_owner5", "近似标记测试")
+
+    async def insert_approx_records():
+        async with test_session_factory() as db:
+            project = await db.get(Project, uuid.UUID(project_id))
+            r1 = GenerationRecord(
+                project_id=project.id,
+                chapter_id=uuid.UUID(chapter_ids[0]),
+                mode="full_pipeline",
+                content="测试1",
+                word_count=3,
+                status="applied",
+                accepted_version_id=uuid.uuid4(),
+                updated_at=datetime(2026, 11, 2, tzinfo=timezone.utc),
+                human_edit_metrics={
+                    "original_chars": 10,
+                    "final_chars": 12,
+                    "changed_chars": 2,
+                    "edit_ratio": 0.2,
+                    "similarity": 0.8,
+                    "edited": True,
+                    "approximate": True,
+                },
+            )
+            r2 = GenerationRecord(
+                project_id=project.id,
+                chapter_id=uuid.UUID(chapter_ids[1]),
+                mode="full_pipeline",
+                content="测试2",
+                word_count=3,
+                status="applied",
+                accepted_version_id=uuid.uuid4(),
+                updated_at=datetime(2026, 11, 1, tzinfo=timezone.utc),
+                human_edit_metrics={
+                    "original_chars": 10,
+                    "final_chars": 10,
+                    "changed_chars": 0,
+                    "edit_ratio": 0.0,
+                    "similarity": 1.0,
+                    "edited": False,
+                    # simulating legacy cached record without "approximate"
+                },
+            )
+            db.add_all([r1, r2])
+            await db.commit()
+            return str(r1.id), str(r2.id)
+
+    r1_id, r2_id = asyncio.run(insert_approx_records())
+    response = client.get(f"/api/projects/{project_id}/edit-stats", headers=headers)
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    by_id = {item["generation_record_id"]: item for item in items}
+    assert by_id[r1_id]["approximate"] is True
+    assert by_id[r2_id]["approximate"] is False
+
