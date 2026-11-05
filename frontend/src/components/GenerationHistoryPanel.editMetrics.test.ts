@@ -201,4 +201,57 @@ describe('GenerationHistoryPanel edit metric badge', () => {
 
     expect(wrapper.find('.generation-edit-metric').exists()).toBe(false)
   })
+
+  it('renders "查看追踪" button only for records with runId', async () => {
+    vi.spyOn(api, 'listChapterGenerations').mockResolvedValueOnce([
+      {
+        id: 'rec-with-run',
+        project_id: 'proj-1',
+        chapter_id: 'chap-1',
+        document_id: null,
+        mode: 'full_pipeline',
+        expert_id: null,
+        direction: null,
+        word_count: 3000,
+        status: 'applied',
+        created_at: '2026-11-04T08:00:00Z',
+        run_id: 'run-12345',
+      },
+      {
+        id: 'rec-no-run',
+        project_id: 'proj-1',
+        chapter_id: 'chap-1',
+        document_id: null,
+        mode: 'full_pipeline',
+        expert_id: null,
+        direction: null,
+        word_count: 3000,
+        status: 'applied',
+        created_at: '2026-11-04T07:00:00Z',
+        run_id: null,
+      },
+    ])
+
+    const wrapper = mount(GenerationHistoryPanel, {
+      props: {
+        projectId: 'proj-1',
+        mode: 'novel',
+        sequenceNumber: 1,
+      },
+    })
+
+    await new Promise(r => setTimeout(r, 10))
+
+    const items = wrapper.findAll('.generation-item')
+    expect(items.length).toBe(2)
+
+    // First item (newer) has run_id: "查看追踪" button exists
+    const traceBtn0 = items[0].find('.btn-trace')
+    expect(traceBtn0.exists()).toBe(true)
+    expect(traceBtn0.text()).toBe('查看追踪')
+
+    // Second item has no run_id: "查看追踪" button does NOT exist
+    const traceBtn1 = items[1].find('.btn-trace')
+    expect(traceBtn1.exists()).toBe(false)
+  })
 })

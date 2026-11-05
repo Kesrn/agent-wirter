@@ -462,4 +462,61 @@ describe('api generation routes', () => {
     vi.unstubAllGlobals()
     resetUnauthorizedFlag()
   })
+
+  it('calls GET /ai-runs/{id}/trace with include_prompts and handles 401 and 404', async () => {
+    const mockTrace = {
+      run: { id: 'run-1', request_id: 'req-1', status: 'COMPLETED' },
+      totals: { llm_calls: 1, total_tokens: 100 },
+      failed_step: null,
+      truncated: false,
+      steps: [],
+    }
+
+    vi.mocked(fetch).mockImplementation(async () =>
+      new Response(JSON.stringify(mockTrace), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+
+    // Default include_prompts = false
+    const resDefault = await api.getRunTrace('run-1')
+    expect(resDefault).toEqual(mockTrace)
+    let fetchMock = vi.mocked(fetch)
+    let lastCall = fetchMock.mock.calls[fetchMock.mock.calls.length - 1]
+    expect(String(lastCall[0])).toContain('/ai-runs/run-1/trace?include_prompts=false')
+
+    // include_prompts = true
+    await api.getRunTrace('run-1', { includePrompts: true })
+    fetchMock = vi.mocked(fetch)
+    lastCall = fetchMock.mock.calls[fetchMock.mock.calls.length - 1]
+    expect(String(lastCall[0])).toContain('/ai-runs/run-1/trace?include_prompts=true')
+
+    // 404 not found
+    vi.mocked(fetch).mockImplementation(async () =>
+      new Response(JSON.stringify({ detail: 'Run trace not found' }), { status: 404 }),
+    )
+    await expect(api.getRunTrace('run-missing')).rejects.toMatchObject({
+      status: 404,
+    })
+
+    // 401 unauthorized
+    resetUnauthorizedFlag()
+    const redirectMock = vi.fn()
+    vi.stubGlobal('window', {
+      location: {
+        set href(val: string) { redirectMock(val) },
+      },
+    })
+    vi.mocked(fetch).mockImplementation(async () =>
+      new Response(JSON.stringify({ detail: 'unauthorized' }), { status: 401 }),
+    )
+
+    await expect(api.getRunTrace('run-1')).rejects.toMatchObject({
+      status: 401,
+    })
+    expect(redirectMock).toHaveBeenCalledWith('/login')
+    vi.unstubAllGlobals()
+    resetUnauthorizedFlag()
+  })
 })

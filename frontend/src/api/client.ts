@@ -31,6 +31,7 @@ import {
   type EvaluationCaseCreatePayload, type EvaluationCaseUpdatePayload, type EvaluationRunCreatePayload,
   type ClarificationState, type ClarificationAnswerRequest,
   type EditStatsResponse, type EditStatsParams, type GenerationOriginalResponse, type HumanEditMetrics,
+  type RunTraceResponse, type GetRunTraceOptions,
 } from './types'
 import { getAuthToken, handleUnauthorized } from '../utils/authSession'
 
@@ -848,6 +849,16 @@ export const api = {
     request<ApiRunStep[]>(`/ai-runs/${runId}/steps`),
   getRunContext: (runId: string) =>
     request<ApiRunContext>(`/ai-runs/${runId}/context`),
+  getRunTrace: (runId: string, options?: GetRunTraceOptions) => {
+    const query = new URLSearchParams()
+    if (options?.includePrompts) {
+      query.set('include_prompts', 'true')
+    } else {
+      query.set('include_prompts', 'false')
+    }
+    const qs = query.toString()
+    return request<RunTraceResponse>(`/ai-runs/${encodeURIComponent(runId)}/trace${qs ? `?${qs}` : ''}`)
+  },
   listProjectRuns: (projectId: string, limit?: number) =>
     request<ApiRunListItem[]>(`/projects/${projectId}/ai-runs${limit ? `?limit=${limit}` : ''}`),
   // ─── Clarification Loop (生成前澄清) ───

@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import type { ApiRunContext, ApiRunContextCall, GenerationRecord, ProjectMode } from '../api/types'
 import SkillPackDetail from './SkillPackDetail.vue'
 import EditStatsPanel from './EditStatsPanel.vue'
+import RunTracePanel from './RunTracePanel.vue'
 
 const props = defineProps<{
   projectId: string
@@ -25,6 +26,15 @@ const previewContent = ref<Record<string, string>>({})
 const contextSnapshot = ref<ApiRunContext | null>(null)
 const contextLoading = ref(false)
 const contextError = ref('')
+const activeTraceRunId = ref<string | null>(null)
+
+function openRunTrace(runId: string) {
+  activeTraceRunId.value = runId
+}
+
+function closeRunTrace() {
+  activeTraceRunId.value = null
+}
 
 const sortedRecords = computed(() =>
   [...store.records].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
@@ -198,6 +208,14 @@ watch(
           <button class="btn-action" :disabled="!record.runId" @click="openContextSnapshot(record)">
             上下文
           </button>
+          <button
+            v-if="record.runId"
+            class="btn-action btn-trace"
+            type="button"
+            @click="openRunTrace(record.runId)"
+          >
+            查看追踪
+          </button>
           <button class="btn-action" @click="emit('compare-current', record.id)">与当前对比</button>
           <button class="btn-action btn-apply" @click="handleApply(record)">应用</button>
         </div>
@@ -260,6 +278,12 @@ watch(
         </div>
       </div>
     </div>
+
+    <RunTracePanel
+      v-if="activeTraceRunId"
+      :run-id="activeTraceRunId"
+      @close="closeRunTrace"
+    />
   </div>
 </template>
 
