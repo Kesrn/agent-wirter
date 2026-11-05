@@ -15,8 +15,13 @@
 3. 停止前最后一个版本是人工终稿 H；没有这样的版本时 H 为空。
 4. 只比较 A 与 H。多次编辑只看最后一个人工版本，中间版本不累计。
 
-正文计数先去掉所有空白字符。编辑差异使用 `difflib-v1`：按换行段落对齐，只对
-发生变化的段落调用现有 `calculate_edit_change_metrics` 字符级算法。
+正文计数先去掉所有空白字符。编辑差异使用 `difflib-v1`：先按换行段落对齐；
+替换段再按 `。！？；` 和换行切成句子单元对齐，只对发生变化且两侧长度均不超过
+1500 字符的块调用现有 `calculate_edit_change_metrics` 字符级算法。超限块不做字符级
+二次比较，而使用保守估算：`changed_chars=max(旧块长度, 新块长度)`，
+`changed_original_chars=旧块长度`，`inserted_chars=max(0, 新块长度-旧块长度)`，并在
+缓存中标记 `approximate=true`。未触发该回退时 `approximate=false`。读时重算通过
+`asyncio.to_thread` 在工作线程执行，避免长文本比较阻塞事件循环。
 
 ```text
 edit_ratio = round(min(1.0, changed_chars / max(original_chars, 1)), 4)
