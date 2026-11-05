@@ -133,6 +133,8 @@ def test_full_pipeline_leaves_run_and_steps():
                 assert l.latency_ms is not None
                 assert l.rendered_prompt_snapshot is not None
                 assert l.run_id == run.id
-                assert l.input_tokens is None  # 第一阶段允许 NULL
+            assert l.input_tokens is not None
+            assert l.output_tokens is not None
+            assert l.request["usage_estimated"] is True
 
     asyncio.run(_query())

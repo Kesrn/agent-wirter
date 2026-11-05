@@ -1,19 +1,26 @@
 """LoggedLLMProvider — 包装 LLMProvider，每次调用写 llm_call_logs 审计行。
 
-不修改 llm_provider.py 抽象。实现与 LLMProvider 相同的 generate/generate_stream 接口，
+实现与 LLMProvider 相同的 generate/generate_stream 接口，
 内部委托给被包装的真实 provider。best-effort：写日志失败只记 warning，不中断生成。
-token/cost 第一阶段拿不到（OpenAIProvider.generate 返回纯 str），写 NULL。
+没有 provider 用量时按输入输出字符数估算；只有明确配置模型费率时才写 cost。
 """
 
 from __future__ import annotations
 
 import logging
+import json
+import inspect
+import math
+from math import isfinite
 import time
 import uuid
 from typing import Any, AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agents.llm_provider import _CALL_METADATA
+from agents.llm_types import LLMResult, TokenUsage
+from config.settings import settings
 from models.llm_call_log import LlmCallLog
 
 logger = logging.getLogger(__name__)
@@ -33,6 +40,45 @@ def _truncate(text: str) -> tuple[str, bool]:
     if len(text) <= MAX_PROMPT_SNAPSHOT_CHARS:
         return text, False
     return text[:MAX_PROMPT_SNAPSHOT_CHARS], True
+
+
+def _estimate_usage_from_lengths(system_prompt: str, user_prompt: str, output_characters: int) -> TokenUsage:
+    input_tokens = math.ceil((len(system_prompt) + len(user_prompt)) / 2)
+    output_tokens = math.ceil(output_characters / 2)
+    return TokenUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=input_tokens + output_tokens,
+        estimated=True,
+    )
+
+
+def _estimate_usage(system_prompt: str, user_prompt: str, output_text: str) -> TokenUsage:
+    return _estimate_usage_from_lengths(system_prompt, user_prompt, len(output_text))
+
+
+def _calculate_cost(model: str | None, usage: TokenUsage) -> float | None:
+    """Return a price only when an explicit model rate exists in the USD/1k table."""
+    raw_table = settings.LLM_PRICE_TABLE
+    if not raw_table or not model:
+        return None
+    try:
+        table = json.loads(raw_table)
+        rates = table.get(model)
+        if not isinstance(rates, dict):
+            return None
+        input_rate = float(rates["input_per_1k"])
+        output_rate = float(rates["output_per_1k"])
+        if not isfinite(input_rate) or not isfinite(output_rate) or input_rate < 0 or output_rate < 0:
+            return None
+        return round(
+            usage.input_tokens * input_rate / 1000
+            + usage.output_tokens * output_rate / 1000,
+            6,
+        )
+    except (AttributeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        logger.warning("LLM_PRICE_TABLE 无法解析或缺少模型费率，cost 保持 NULL")
+        return None
 
 
 class LoggedLLMProvider:
@@ -66,32 +112,84 @@ class LoggedLLMProvider:
     def model(self) -> str | None:
         return getattr(self._wrapped, "model", None)
 
-    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> str:
-        """记录非流式 LLM 调用。
-
-        不改变返回值；只在调用前后计时，并在成功/失败后写 llm_call_logs。
-        """
+    async def complete(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        tools=None,
+        response_format=None,
+        timeout: float | None = None,
+    ) -> LLMResult:
+        """Record a full completion while retaining the wrapped result type."""
         rendered = _build_rendered_prompt(system_prompt, user_prompt)
         started = time.perf_counter()
+        call_context = _CALL_METADATA.set({})
         try:
-            result = await self._wrapped.generate(system_prompt, user_prompt, temperature, max_tokens)
+            complete = getattr(self._wrapped, "complete", None)
+            if callable(complete):
+                result = await complete(
+                    system_prompt,
+                    user_prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    tools=tools,
+                    response_format=response_format,
+                    timeout=timeout,
+                )
+            else:
+                result = LLMResult(
+                    text=await self._wrapped.generate(system_prompt, user_prompt, temperature, max_tokens),
+                    usage=None,
+                    model=self.model,
+                )
+            usage = result.usage or _estimate_usage(system_prompt, user_prompt, result.text)
             latency_ms = int((time.perf_counter() - started) * 1000)
             await self._write_log(
                 rendered_prompt=rendered,
                 latency_ms=latency_ms,
                 error_message=None,
+                usage=usage,
+                retries=result.retries,
+                finish_reason=result.finish_reason,
             )
             return result
         except Exception as exc:
             latency_ms = int((time.perf_counter() - started) * 1000)
+            metadata = _CALL_METADATA.get() or {}
             await self._write_log(
                 rendered_prompt=rendered,
                 latency_ms=latency_ms,
                 error_message=str(exc),
+                usage=_estimate_usage(system_prompt, user_prompt, ""),
+                retries=int(metadata.get("retries", 0) or 0),
+                finish_reason=metadata.get("finish_reason"),
             )
             raise
+        finally:
+            _CALL_METADATA.reset(call_context)
 
-    async def generate_stream(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> AsyncIterator[str]:
+    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> str:
+        """Legacy string API; keeps existing callers unchanged."""
+        result = await self.complete(
+            system_prompt,
+            user_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return result.text
+
+    async def generate_stream(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        *,
+        usage_sink: list[TokenUsage] | None = None,
+    ) -> AsyncIterator[str]:
         """记录流式 LLM 调用。
 
         只有 stream 正常迭代结束后才写成功日志；中途异常则写 error_message 后继续抛出，
@@ -99,25 +197,67 @@ class LoggedLLMProvider:
         """
         rendered = _build_rendered_prompt(system_prompt, user_prompt)
         started = time.perf_counter()
+        output_characters = 0
+        stream_usage: list[TokenUsage] = []
+        call_context = _CALL_METADATA.set({})
         try:
-            async for chunk in self._wrapped.generate_stream(system_prompt, user_prompt, temperature, max_tokens):
+            stream_method = self._wrapped.generate_stream
+            try:
+                parameters = inspect.signature(stream_method).parameters.values()
+                supports_usage_sink = any(
+                    parameter.name == "usage_sink"
+                    or parameter.kind is inspect.Parameter.VAR_KEYWORD
+                    for parameter in parameters
+                )
+            except (TypeError, ValueError):
+                supports_usage_sink = False
+            stream_kwargs = {"usage_sink": stream_usage} if supports_usage_sink else {}
+            async for chunk in stream_method(
+                system_prompt,
+                user_prompt,
+                temperature,
+                max_tokens,
+                **stream_kwargs,
+            ):
+                output_characters += len(chunk)
                 yield chunk
             latency_ms = int((time.perf_counter() - started) * 1000)
+            if usage_sink is not None and stream_usage:
+                usage_sink.extend(stream_usage)
+            metadata = _CALL_METADATA.get() or {}
             await self._write_log(
                 rendered_prompt=rendered,
                 latency_ms=latency_ms,
                 error_message=None,
+                usage=stream_usage[-1] if stream_usage else _estimate_usage_from_lengths(system_prompt, user_prompt, output_characters),
+                retries=int(metadata.get("retries", 0) or 0),
+                finish_reason=metadata.get("finish_reason"),
             )
         except Exception as exc:
             latency_ms = int((time.perf_counter() - started) * 1000)
+            metadata = _CALL_METADATA.get() or {}
             await self._write_log(
                 rendered_prompt=rendered,
                 latency_ms=latency_ms,
                 error_message=str(exc),
+                usage=_estimate_usage_from_lengths(system_prompt, user_prompt, output_characters),
+                retries=int(metadata.get("retries", 0) or 0),
+                finish_reason=metadata.get("finish_reason"),
             )
             raise
+        finally:
+            _CALL_METADATA.reset(call_context)
 
-    async def _write_log(self, *, rendered_prompt: str, latency_ms: int, error_message: str | None) -> None:
+    async def _write_log(
+        self,
+        *,
+        rendered_prompt: str,
+        latency_ms: int,
+        error_message: str | None,
+        usage: TokenUsage | None,
+        retries: int,
+        finish_reason: str | None,
+    ) -> None:
         """best-effort 写入 llm_call_logs。
 
         日志写入不能影响生成主链路，所以所有异常都被吞掉并写 warning。
@@ -126,7 +266,11 @@ class LoggedLLMProvider:
         """
         try:
             snapshot, truncated = _truncate(rendered_prompt)
-            request_meta = {"prompt_snapshot_truncated": True} if truncated else None
+            request_meta: dict[str, Any] = {"prompt_snapshot_truncated": True} if truncated else {}
+            request_meta["retries"] = retries
+            request_meta["usage_estimated"] = bool(usage and usage.estimated)
+            if finish_reason is not None:
+                request_meta["finish_reason"] = finish_reason
             # 解析 step_id：不依赖 aupdate_state 注入（on_chain_start 的 aupdate_state
             # 在并行/动态节点下有竞态，节点读到 None）。改为查 run 下最新 RUNNING step。
             step_id = self._step_id
@@ -142,12 +286,12 @@ class LoggedLLMProvider:
                 context_package_snapshot=self._context_snapshot,
                 model_config_snapshot=self._model_config_snapshot,
                 latency_ms=latency_ms,
-                input_tokens=None,
-                output_tokens=None,
-                total_tokens=None,
-                cost=None,
+                input_tokens=usage.input_tokens if usage else None,
+                output_tokens=usage.output_tokens if usage else None,
+                total_tokens=usage.total_tokens if usage else None,
+                cost=_calculate_cost(self.model, usage) if usage else None,
                 error_message=error_message,
-                request=request_meta,
+                request=request_meta or None,
             )
             # 用独立 session 写日志：节点在 LangGraph 执行上下文内运行，请求 session
             # 此时可能处于 flush/事务中间态。从全局 engine 新开 session 写入 + commit，

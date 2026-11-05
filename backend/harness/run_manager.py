@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import uuid
+import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -15,10 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.ai_run import AiRun
 from models.harness_enums import RunStatus
+from models.llm_call_log import LlmCallLog
 
 if TYPE_CHECKING:
     from models.expert import Expert
     from services.workflow_definitions import WorkflowDefinition
+
+logger = logging.getLogger(__name__)
 
 
 def sanitize_model_config_snapshot(
@@ -110,6 +114,10 @@ async def mark_waiting_human(
 
 async def mark_completed(db: AsyncSession, run: AiRun) -> None:
     """把 run 标记为完成。"""
+    try:
+        await aggregate_run_usage(db, run.id)
+    except Exception:
+        logger.warning("汇总 LLM 用量失败 run_id=%s", run.id, exc_info=True)
     run.status = RunStatus.COMPLETED
     run.finished_at = datetime.now(timezone.utc)
     await db.flush()
@@ -117,6 +125,10 @@ async def mark_completed(db: AsyncSession, run: AiRun) -> None:
 
 async def mark_failed(db: AsyncSession, run: AiRun, error_message: str) -> None:
     """把 run 标记为失败，并保存错误信息，便于前端展示和排查。"""
+    try:
+        await aggregate_run_usage(db, run.id)
+    except Exception:
+        logger.warning("汇总 LLM 用量失败 run_id=%s", run.id, exc_info=True)
     run.status = RunStatus.FAILED
     run.error_message = error_message
     run.finished_at = datetime.now(timezone.utc)
@@ -125,9 +137,56 @@ async def mark_failed(db: AsyncSession, run: AiRun, error_message: str) -> None:
 
 async def mark_cancelled(db: AsyncSession, run: AiRun) -> None:
     """把 run 标记为用户取消。"""
+    try:
+        await aggregate_run_usage(db, run.id)
+    except Exception:
+        logger.warning("汇总 LLM 用量失败 run_id=%s", run.id, exc_info=True)
     run.status = RunStatus.CANCELLED
     run.finished_at = datetime.now(timezone.utc)
     await db.flush()
+
+
+async def aggregate_run_usage(db: AsyncSession, run_id: str | uuid.UUID) -> None:
+    """Aggregate call-level tokens, retries, estimate flags, and explicitly priced cost."""
+    rows = await db.execute(
+        select(LlmCallLog).where(LlmCallLog.run_id == run_id)
+    )
+    logs = list(rows.scalars().all())
+    run_row = await db.execute(select(AiRun).where(AiRun.id == run_id))
+    run = run_row.scalar_one_or_none()
+    if run is None:
+        return
+
+    def token_value(field: str) -> int:
+        return sum(int(getattr(log, field) or 0) for log in logs)
+
+    retry_count = 0
+    estimated_calls = 0
+    for log in logs:
+        request_meta = log.request if isinstance(log.request, dict) else {}
+        try:
+            retry_count += max(0, int(request_meta.get("retries", 0) or 0))
+        except (TypeError, ValueError):
+            pass
+        estimated_calls += bool(request_meta.get("usage_estimated"))
+
+    run.token_usage = {
+        "input": token_value("input_tokens"),
+        "output": token_value("output_tokens"),
+        "total": token_value("total_tokens"),
+        "calls": len(logs),
+        "retries": retry_count,
+        "estimated_calls": estimated_calls,
+    }
+    # Price rates are explicitly documented as USD per 1,000 tokens. A partial
+    # total would be misleading when even one model has no configured price.
+    known_costs = [float(log.cost) for log in logs if log.cost is not None]
+    total_cost = (
+        round(sum(known_costs), 6)
+        if logs and len(known_costs) == len(logs)
+        else None
+    )
+    run.cost_usage = {"total": total_cost, "currency_unit": "USD"}
 
 
 async def discard_run_artifacts(

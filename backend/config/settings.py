@@ -89,6 +89,12 @@ class Settings:
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
+    LLM_TIMEOUT_SECONDS: float = float(os.getenv("LLM_TIMEOUT_SECONDS", "120"))
+    LLM_MAX_RETRIES: int = int(os.getenv("LLM_MAX_RETRIES", "2"))
+    LLM_RETRY_BASE_SECONDS: float = float(os.getenv("LLM_RETRY_BASE_SECONDS", "1.0"))
+    LLM_RETRY_MAX_SECONDS: float = float(os.getenv("LLM_RETRY_MAX_SECONDS", "20"))
+    # Price table rates are USD per 1,000 input/output tokens; unknown models remain unpriced.
+    LLM_PRICE_TABLE: str = os.getenv("LLM_PRICE_TABLE", "")
     # 生产默认禁用 Mock；自动化测试可显式开启，避免真实网络和 token 消耗。
     ALLOW_MOCK_PROVIDER: bool = os.getenv("ALLOW_MOCK_PROVIDER", "false").lower() == "true"
 
