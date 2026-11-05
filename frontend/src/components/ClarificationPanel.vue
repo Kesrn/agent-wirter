@@ -237,7 +237,7 @@ function handleSkip() {
   border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
   border-radius: 16px;
   background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.035) inset, var(--shadow-sm);
+  box-shadow: var(--shadow-sm);
 }
 .clar-header {
   display: flex;
@@ -252,7 +252,7 @@ function handleSkip() {
 .clar-badge {
   font-size: var(--text-sm);
   font-weight: 700;
-  color: #fff;
+  color: var(--text-inverse);
   background: var(--accent);
   padding: 2px 10px;
   border-radius: var(--radius);
@@ -311,8 +311,8 @@ function handleSkip() {
   flex: 0 0 auto;
   font-size: 10px;
   font-weight: 700;
-  color: var(--status-error, #ff4d4f);
-  border: 1px solid var(--status-error, #ff4d4f);
+  color: var(--status-error);
+  border: 1px solid var(--status-error);
   border-radius: 3px;
   padding: 0 4px;
 }
@@ -434,7 +434,7 @@ function handleSkip() {
   border: none;
   border-radius: var(--radius);
   background: var(--accent);
-  color: #fff;
+  color: var(--text-inverse);
   font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;

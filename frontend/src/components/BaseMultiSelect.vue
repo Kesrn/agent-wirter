@@ -141,7 +141,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', handleDocument
   background: var(--bg-input);
   color: var(--text);
   text-align: left;
-  box-shadow: 0 1px 0 rgba(17, 24, 39, 0.02);
+  box-shadow: var(--shadow-sm);
   transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
 }
 

@@ -300,9 +300,8 @@ onBeforeRouteLeave(() => {
 
 // Font switcher (novel mode)
 const FONT_OPTIONS = [
-  { label: '衬线', value: 'var(--font-serif)' },
-  { label: '宋体', value: "'Songti SC', 'SimSun', serif" },
-  { label: '黑体', value: "'PingFang SC', 'Microsoft YaHei', sans-serif" },
+  { label: '宋体', value: 'var(--editor-font)' },
+  { label: '黑体', value: 'var(--font-sans)' },
   { label: '等宽', value: 'var(--font-mono)' },
 ]
 const HEADING_OPTIONS = [
@@ -311,11 +310,17 @@ const HEADING_OPTIONS = [
   { label: 'H2', value: '2' },
   { label: 'H3', value: '3' },
 ]
-const selectedFont = ref('var(--font-serif)')
+const selectedFont = ref('var(--editor-font)')
 
 onMounted(() => {
   const saved = localStorage.getItem('novel_font_family')
-  if (saved) selectedFont.value = saved
+  if (saved) {
+    if (saved === 'var(--font-serif)' || saved.includes('Songti') || saved.includes('SimSun')) {
+      selectedFont.value = 'var(--editor-font)'
+    } else {
+      selectedFont.value = saved
+    }
+  }
   const savedArticleView = localStorage.getItem('article_markdown_view')
   if (isArticleViewMode(savedArticleView)) articleViewMode.value = savedArticleView
   window.addEventListener('resize', handleEditorResize)
@@ -1129,7 +1134,7 @@ function onTextareaInput(e: Event) {
   border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   flex-wrap: wrap;
   flex-shrink: 0;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.025) inset;
+  box-shadow: none;
   backdrop-filter: blur(16px);
 }
 .editor-title {
@@ -1244,7 +1249,7 @@ function onTextareaInput(e: Event) {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: color-mix(in srgb, var(--bg-sidebar) 82%, var(--bg-panel));
-  box-shadow: 0 1px 0 rgba(255,255,255,0.035) inset, var(--shadow-sm);
+  box-shadow: var(--shadow-sm);
 }
 .view-segment {
   display: inline-flex;
@@ -1253,7 +1258,7 @@ function onTextareaInput(e: Event) {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: color-mix(in srgb, var(--bg-sidebar) 82%, var(--bg-panel));
-  box-shadow: 0 1px 0 rgba(255,255,255,0.035) inset, var(--shadow-sm);
+  box-shadow: var(--shadow-sm);
 }
 .view-segment-btn {
   min-width: 44px;
@@ -1326,8 +1331,8 @@ function onTextareaInput(e: Event) {
   align-items: center;
   justify-content: center;
   padding: var(--sp-4);
-  background: color-mix(in srgb, #0f172a 42%, transparent);
-  backdrop-filter: blur(4px);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
 }
 .link-dialog {
   width: min(420px, 100%);
@@ -1396,7 +1401,7 @@ function onTextareaInput(e: Event) {
 }
 .link-dialog-error {
   margin: 0 0 var(--sp-3);
-  color: var(--status-error, #dc2626);
+  color: var(--status-error);
   font-size: var(--text-xs);
 }
 .link-dialog-actions {
@@ -1440,7 +1445,7 @@ function onTextareaInput(e: Event) {
   background:
     radial-gradient(circle at 50% 0, color-mix(in srgb, var(--accent) 8%, transparent), transparent 42%),
     linear-gradient(180deg, color-mix(in srgb, var(--bg-panel) 16%, transparent), transparent 28%),
-    var(--paper-stage, #eceff3);
+    var(--paper-stage);
   min-height: 0;
   min-width: 0;
   position: relative;
@@ -1477,28 +1482,30 @@ function onTextareaInput(e: Event) {
 }
 .editor-textarea {
   display: block;
-  width: min(920px, 100%);
+  max-width: var(--editor-width);
+  width: min(var(--editor-width), 100%);
   min-height: 320px;
   margin: 0 auto;
   padding: 52px 66px 112px;
-  border: 1px solid var(--paper-border, rgba(148, 163, 184, 0.22));
-  border-radius: 18px;
+  border: 1px solid var(--paper-border);
+  border-radius: var(--radius-lg, 12px);
   resize: none;
   overflow-y: hidden;
   overflow-x: hidden;
   overflow-anchor: none;
-  font-size: var(--text-lg);
-  line-height: 2;
+  font-family: var(--editor-font);
+  font-size: var(--editor-size);
+  line-height: var(--editor-lh);
+  letter-spacing: 0.01em;
   color: var(--text);
-  background:
-    linear-gradient(90deg, rgba(239, 68, 68, 0.14) 0 1px, transparent 1px) 46px 0 / 1px 100% no-repeat,
-    repeating-linear-gradient(to bottom, var(--paper-bg) 0, var(--paper-bg) 37px, var(--paper-line) 38px),
-    var(--paper-bg);
+  background: var(--paper-bg);
   outline: none;
-  box-shadow:
-    var(--paper-shadow),
-    0 0 0 1px rgba(255,255,255,0.025) inset;
+  box-shadow: var(--paper-shadow);
   caret-color: var(--accent);
+}
+.editor-textarea::selection {
+  background: var(--accent-subtle);
+  color: var(--text);
 }
 .editor-textarea:focus {
   border-color: color-mix(in srgb, var(--accent) 42%, var(--paper-border));
@@ -1524,17 +1531,16 @@ function onTextareaInput(e: Event) {
   margin: 0;
 }
 .markdown-preview {
-  width: min(920px, 100%);
+  max-width: var(--editor-width);
+  width: min(var(--editor-width), 100%);
   min-height: 100%;
   margin: 0 auto;
   padding: 56px 64px 112px;
-  border: 1px solid var(--paper-border, rgba(148, 163, 184, 0.22));
-  border-radius: 18px;
+  border: 1px solid var(--paper-border);
+  border-radius: var(--radius-lg, 12px);
   background: var(--paper-bg);
   color: var(--text);
-  box-shadow:
-    var(--paper-shadow),
-    0 0 0 1px rgba(255,255,255,0.025) inset;
+  box-shadow: var(--paper-shadow);
 }
 .markdown-preview.empty {
   display: flex;
@@ -1688,11 +1694,9 @@ function onTextareaInput(e: Event) {
   .editor-textarea {
     width: 100%;
     padding: var(--sp-5) var(--sp-4) 104px;
-    font-size: var(--text-base);
-    line-height: 1.9;
-    background:
-      repeating-linear-gradient(to bottom, var(--paper-bg) 0, var(--paper-bg) 35px, var(--paper-line) 36px),
-      var(--paper-bg);
+    font-size: var(--editor-size);
+    line-height: var(--editor-lh);
+    background: var(--paper-bg);
   }
 
   .editor-content.article-content {

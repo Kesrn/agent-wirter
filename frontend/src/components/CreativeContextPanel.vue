@@ -266,8 +266,8 @@ function scrollToProgress(): void {
   min-height: 0;
   overflow-y: auto;
   padding: 18px 15px;
-  border-left: 1px solid #242a35;
-  background: rgba(10, 13, 19, 0.83);
+  border-left: 1px solid var(--border);
+  background: var(--bg-sidebar);
   overscroll-behavior: contain;
 }
 .ccw-context-head {
@@ -279,30 +279,30 @@ function scrollToProgress(): void {
 .ccw-context-head strong {
   font-size: 12px;
   font-weight: 750;
-  color: #e8ecf5;
+  color: var(--text);
 }
 .ccw-context-head span {
-  color: #6f7b8e;
+  color: var(--text-tertiary);
   font-size: 9px;
 }
 .ccw-context-section {
   padding: 13px;
-  border: 1px solid #29313e;
-  border-radius: 13px;
-  background: #12161e;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--bg-hover);
 }
 .ccw-context-section + .ccw-context-section {
   margin-top: 10px;
 }
 .ccw-context-label {
   margin-bottom: 8px;
-  color: #68758a;
+  color: var(--text-tertiary);
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.08em;
 }
 .ccw-context-value {
-  color: #e1e6ef;
+  color: var(--text);
   font-size: 12px;
   font-weight: 650;
   line-height: 1.5;
@@ -310,7 +310,7 @@ function scrollToProgress(): void {
 }
 .ccw-context-note {
   margin-top: 5px;
-  color: #717e91;
+  color: var(--text-secondary);
   font-size: 9px;
   line-height: 1.55;
 }
@@ -319,17 +319,17 @@ function scrollToProgress(): void {
   margin-left: 6px;
   padding: 2px 6px;
   border-radius: 6px;
-  background: rgba(106, 130, 255, 0.14);
-  color: #aab8ff;
+  background: var(--accent-subtle);
+  color: var(--accent);
   font-size: 9px;
 }
 .ccw-conflict-note {
   margin-top: 8px;
   padding: 7px 9px;
-  border: 1px solid rgba(213, 111, 125, 0.42);
-  border-radius: 8px;
-  background: rgba(187, 76, 93, 0.1);
-  color: #d998a2;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--status-error-bg);
+  color: var(--status-error);
   font-size: 9px;
   line-height: 1.5;
 }
@@ -341,19 +341,19 @@ function scrollToProgress(): void {
 .ccw-quick-action {
   min-height: 32px;
   padding: 8px 6px;
-  border: 1px solid #303a49;
-  border-radius: 8px;
-  color: #aeb8c8;
-  background: #171c25;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--text-secondary);
+  background: var(--bg);
   font-size: 9px;
   font-weight: 650;
   cursor: pointer;
   transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
 }
 .ccw-quick-action:hover:not(:disabled) {
-  border-color: #566dde;
-  color: #eef1ff;
-  background: #202944;
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--bg-hover);
 }
 .ccw-quick-action:disabled {
   cursor: not-allowed;
@@ -361,24 +361,21 @@ function scrollToProgress(): void {
 }
 .ccw-quick-action.primary {
   grid-column: 1 / -1;
-  border-color: rgba(107, 132, 255, 0.52);
-  color: #e8ecff;
-  background: linear-gradient(135deg, rgba(82, 104, 222, 0.34), rgba(45, 55, 91, 0.8));
+  border-color: var(--accent);
+  color: var(--text-inverse);
+  background: var(--accent);
 }
 .ccw-quick-action.primary:hover:not(:disabled) {
-  border-color: rgba(115, 136, 255, 0.8);
-  background: linear-gradient(135deg, rgba(82, 104, 222, 0.5), rgba(45, 55, 91, 0.9));
+  opacity: 0.9;
 }
 .ccw-cancel-action {
   grid-column: 1 / -1;
-  border-color: rgba(213, 111, 125, 0.4);
-  color: #dfa4ad;
-  background: #24191e;
+  border-color: var(--status-error);
+  color: var(--status-error);
+  background: var(--status-error-bg);
 }
 .ccw-cancel-action:hover:not(:disabled) {
-  border-color: rgba(213, 111, 125, 0.7);
-  color: #f0c0c7;
-  background: #2e1c22;
+  opacity: 0.9;
 }
 .ccw-context-row {
   display: flex;
@@ -386,19 +383,19 @@ function scrollToProgress(): void {
   justify-content: space-between;
   gap: 8px;
   padding: 7px 0;
-  color: #aab4c3;
+  color: var(--text-secondary);
   font-size: 10px;
 }
 .ccw-context-row + .ccw-context-row {
-  border-top: 1px solid #202631;
+  border-top: 1px solid var(--border);
 }
 .ccw-ok {
   width: 6px;
   height: 6px;
   flex: 0 0 auto;
   border-radius: 50%;
-  background: #5fce91;
-  box-shadow: 0 0 0 3px rgba(95, 206, 145, 0.09);
+  background: var(--status-final);
+  box-shadow: 0 0 0 3px var(--status-final-bg);
 }
 .ccw-flow-step {
   position: relative;
@@ -406,7 +403,7 @@ function scrollToProgress(): void {
   align-items: center;
   gap: 8px;
   padding: 7px 0;
-  color: #7d899b;
+  color: var(--text-tertiary);
   font-size: 9px;
 }
 .ccw-flow-step + .ccw-flow-step::before {
@@ -415,7 +412,7 @@ function scrollToProgress(): void {
   left: 7px;
   width: 1px;
   height: 8px;
-  background: #334052;
+  background: var(--border);
   content: '';
 }
 .ccw-flow-dot {
@@ -425,28 +422,28 @@ function scrollToProgress(): void {
   place-items: center;
   flex: 0 0 auto;
   border-radius: 50%;
-  color: #07121d;
-  background: #59b984;
+  color: var(--text-inverse);
+  background: var(--status-final);
   font-size: 8px;
 }
 .ccw-flow-step.active {
-  color: #e8edf5;
+  color: var(--text);
 }
 .ccw-flow-step.active .ccw-flow-dot {
-  background: #7187ff;
-  box-shadow: 0 0 0 4px rgba(113, 135, 255, 0.12);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-subtle);
 }
 .ccw-flow-step.pending .ccw-flow-dot {
-  color: #5e697a;
-  background: #27303c;
+  color: var(--text-tertiary);
+  background: var(--bg-hover);
 }
 .ccw-flow-error {
   margin-top: 8px;
   padding: 7px 9px;
-  border: 1px solid rgba(213, 111, 125, 0.42);
-  border-radius: 8px;
-  background: rgba(187, 76, 93, 0.1);
-  color: #d998a2;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--status-error-bg);
+  color: var(--status-error);
   font-size: 9px;
   line-height: 1.5;
 }

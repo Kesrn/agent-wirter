@@ -298,7 +298,8 @@ function itemTitle(item: EditableItem, group: EditableGroup): string {
   align-items: center;
   justify-content: center;
   padding: var(--sp-4);
-  background: rgba(0, 0, 0, 0.56);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
 }
 
 .structure-modal {

@@ -116,29 +116,29 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
 <style scoped>
 /* ─── Overlay ─── */
 .diff-overlay {
-  --diff-modal-bg: #f0ede8;
-  --diff-chrome-bg: #e8e4de;
-  --diff-header-bg: #e8e4de;
-  --diff-border: #d5d0c8;
-  --diff-title: #3a3632;
-  --diff-muted: #8a8580;
+  --diff-modal-bg: var(--bg-panel);
+  --diff-chrome-bg: var(--bg-sidebar);
+  --diff-header-bg: var(--bg-panel);
+  --diff-border: var(--border);
+  --diff-title: var(--text);
+  --diff-muted: var(--text-secondary);
   --diff-page-bg: var(--paper-bg);
-  --diff-page-title-bg: linear-gradient(to bottom, #faf8f4, #f5f2ec);
-  --diff-page-title: #6b6560;
-  --diff-text: #2c2825;
-  --diff-line-no: #8e8580;
-  --diff-delete-bg: rgba(220, 38, 38, 0.16);
-  --diff-delete-border: #dc322f;
-  --diff-delete-decoration: rgba(220, 50, 47, 0.58);
-  --diff-insert-bg: rgba(22, 163, 74, 0.16);
-  --diff-insert-border: #28a03c;
-  --diff-replace-bg: rgba(202, 138, 4, 0.18);
-  --diff-replace-border: #c8a014;
-  --diff-empty-bg: rgba(0, 0, 0, 0.04);
+  --diff-page-title-bg: var(--bg-hover);
+  --diff-page-title: var(--text-secondary);
+  --diff-text: var(--text);
+  --diff-line-no: var(--text-tertiary);
+  --diff-delete-bg: var(--diff-del-bg);
+  --diff-delete-border: var(--diff-del-fg);
+  --diff-delete-decoration: var(--diff-del-fg);
+  --diff-insert-bg: var(--diff-ins-bg);
+  --diff-insert-border: var(--diff-ins-fg);
+  --diff-replace-bg: color-mix(in srgb, var(--status-reviewing) 18%, transparent);
+  --diff-replace-border: var(--status-reviewing);
+  --diff-empty-bg: transparent;
   position: fixed;
   inset: 0;
-  background: rgba(30, 30, 40, 0.5);
-  backdrop-filter: blur(2px);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -149,11 +149,12 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   max-width: 1140px;
   max-height: 88vh;
   background: var(--diff-modal-bg);
-  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 16px 56px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-lg);
 }
 
 /* ─── Header ─── */
@@ -208,7 +209,7 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   flex-direction: column;
   background: var(--diff-page-bg);
   border-radius: var(--paper-radius);
-  box-shadow: var(--paper-shadow), 0 0 0 1px rgba(0,0,0,0.03);
+  box-shadow: var(--paper-shadow);
   overflow: hidden;
 }
 .page-title {
@@ -257,12 +258,16 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   border-left-color: var(--diff-delete-border);
 }
 .page-line.line-delete .line-text {
+  color: var(--diff-delete-border);
   text-decoration: line-through;
   text-decoration-color: var(--diff-delete-decoration);
 }
 .page-line.line-insert {
   background: var(--diff-insert-bg);
   border-left-color: var(--diff-insert-border);
+}
+.page-line.line-insert .line-text {
+  color: var(--diff-insert-border);
 }
 .page-line.line-replace {
   background: var(--diff-replace-bg);
@@ -292,33 +297,6 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   word-break: break-all;
   flex: 1;
   min-width: 0;
-}
-
-html[data-theme="dark"] .diff-overlay {
-  --diff-modal-bg: #0d1420;
-  --diff-chrome-bg: #111a29;
-  --diff-header-bg: #172235;
-  --diff-border: #334156;
-  --diff-title: #f1f5f9;
-  --diff-muted: #93a4b8;
-  --diff-page-bg: #121b2b;
-  --diff-page-title-bg: linear-gradient(to bottom, #1e2a3d, #182336);
-  --diff-page-title: #dbe7f5;
-  --diff-text: #eef4ff;
-  --diff-line-no: #a9b8ca;
-  --diff-delete-bg: rgba(248, 113, 113, 0.24);
-  --diff-delete-border: #fb7185;
-  --diff-delete-decoration: rgba(252, 165, 165, 0.86);
-  --diff-insert-bg: rgba(52, 211, 153, 0.22);
-  --diff-insert-border: #34d399;
-  --diff-replace-bg: rgba(251, 191, 36, 0.24);
-  --diff-replace-border: #fbbf24;
-  --diff-empty-bg: rgba(148, 163, 184, 0.09);
-  background: rgba(3, 7, 18, 0.74);
-}
-
-html[data-theme="dark"] .diff-page {
-  box-shadow: 0 22px 55px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(148, 163, 184, 0.2);
 }
 
 /* ─── Responsive ─── */

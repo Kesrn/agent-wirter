@@ -360,13 +360,10 @@ function submitNewUnit(): void {
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid #252b38;
-  border-radius: 20px;
-  background:
-    radial-gradient(circle at 70% -12%, rgba(87, 107, 255, 0.22), transparent 32%),
-    radial-gradient(circle at 16% 18%, rgba(132, 72, 220, 0.1), transparent 28%),
-    #0a0d13;
-  box-shadow: 0 34px 90px rgba(0, 0, 0, 0.46);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-modal);
 }
 
 .ccw-layout {
@@ -383,8 +380,8 @@ function submitNewUnit(): void {
   min-height: 0;
   overflow-y: auto;
   padding: 17px 12px;
-  border-right: 1px solid #242a35;
-  background: rgba(10, 13, 19, 0.83);
+  border-right: 1px solid var(--border);
+  background: var(--bg-sidebar);
   overscroll-behavior: contain;
 }
 .ccw-rail-title {
@@ -392,7 +389,7 @@ function submitNewUnit(): void {
   align-items: center;
   justify-content: space-between;
   padding: 0 8px 12px;
-  color: #7e899b;
+  color: var(--text-tertiary);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -400,16 +397,16 @@ function submitNewUnit(): void {
 .ccw-add-chapter {
   width: 27px;
   height: 27px;
-  border: 1px solid #303848;
-  border-radius: 8px;
-  color: #8d99ae;
-  background: #141922;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--text-secondary);
+  background: var(--bg);
   font-size: 12px;
   cursor: pointer;
 }
 .ccw-add-chapter:hover {
-  border-color: #566dde;
-  color: #eef1ff;
+  border-color: var(--accent);
+  color: var(--text);
 }
 .ccw-new-unit {
   display: flex;
@@ -417,30 +414,30 @@ function submitNewUnit(): void {
   gap: 6px;
   margin-bottom: 10px;
   padding: 11px;
-  border: 1px solid #2b3341;
-  border-radius: 12px;
-  background: #12161e;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--bg-hover);
 }
 .ccw-new-unit label {
-  color: #68758a;
+  color: var(--text-secondary);
   font-size: 9px;
   font-weight: 650;
 }
 .ccw-required {
-  color: #d998a2;
+  color: var(--status-error);
 }
 .ccw-input {
   width: 100%;
   padding: 6px 8px;
-  border: 1px solid #303a49;
-  border-radius: 8px;
-  background: #171c25;
-  color: #e8edf5;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg);
+  color: var(--text);
   font-size: 10px;
   outline: none;
 }
 .ccw-input:focus {
-  border-color: #566dde;
+  border-color: var(--accent);
 }
 .ccw-new-unit-actions {
   display: flex;
@@ -451,25 +448,25 @@ function submitNewUnit(): void {
 .ccw-btn {
   min-height: 26px;
   padding: 0 10px;
-  border: 1px solid #394353;
-  border-radius: 8px;
-  background: #191e27;
-  color: #b7c0cf;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
   font-size: 10px;
   cursor: pointer;
 }
 .ccw-btn:hover:not(:disabled) {
-  border-color: #566dde;
-  color: #eef1ff;
+  border-color: var(--accent);
+  color: var(--text);
 }
 .ccw-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 .ccw-btn-primary {
-  border-color: #7388ff;
-  color: #fff;
-  background: linear-gradient(135deg, #6d83ff, #5568eb);
+  border-color: var(--accent);
+  color: var(--text-inverse);
+  background: var(--accent);
 }
 .ccw-rail-list {
   display: flex;
@@ -482,8 +479,8 @@ function submitNewUnit(): void {
   gap: 8px;
   padding: 12px 10px;
   border: 1px solid transparent;
-  border-radius: 13px;
-  color: #8792a4;
+  border-radius: var(--radius-lg, 12px);
+  color: var(--text-secondary);
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -493,18 +490,18 @@ function submitNewUnit(): void {
   margin-top: 3px;
 }
 .ccw-chapter:hover {
-  border-color: #303848;
-  background: rgba(255, 255, 255, 0.025);
+  border-color: var(--border);
+  background: var(--bg-hover);
 }
 .ccw-chapter.active {
-  border-color: rgba(106, 131, 255, 0.44);
-  color: #f3f5fb;
-  background: linear-gradient(100deg, rgba(71, 91, 196, 0.26), rgba(27, 33, 47, 0.66));
-  box-shadow: inset 3px 0 0 #7388ff, 0 9px 22px rgba(0, 0, 0, 0.14);
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--accent-subtle);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .ccw-chapter-num {
   padding-top: 1px;
-  color: #7388ff;
+  color: var(--accent);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
@@ -526,9 +523,9 @@ function submitNewUnit(): void {
 }
 .ccw-chapter-meta > span {
   padding: 3px 5px;
-  border-radius: 5px;
-  background: rgba(255, 255, 255, 0.035);
-  color: #5f6a7e;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-hover);
+  color: var(--text-tertiary);
   font-size: 9px;
 }
 .ccw-chapter-action {
@@ -536,13 +533,13 @@ function submitNewUnit(): void {
   transition: color 120ms ease, background 120ms ease;
 }
 .ccw-chapter-action:hover {
-  color: #aab8ff;
-  background: rgba(106, 130, 255, 0.14);
+  color: var(--accent);
+  background: var(--accent-subtle);
 }
 .ccw-rail-links {
   margin-top: 20px;
   padding-top: 14px;
-  border-top: 1px solid #222934;
+  border-top: 1px solid var(--border);
 }
 .ccw-rail-link {
   width: 100%;
@@ -550,14 +547,14 @@ function submitNewUnit(): void {
   justify-content: space-between;
   padding: 9px 10px;
   border: 0;
-  color: #7d889b;
+  color: var(--text-tertiary);
   background: transparent;
   text-align: left;
   font-size: 10px;
   cursor: pointer;
 }
 .ccw-rail-link:hover {
-  color: #cbd3e1;
+  color: var(--text-secondary);
 }
 
 /* ─── 中：CreationSurface ─── */
@@ -567,7 +564,7 @@ function submitNewUnit(): void {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: rgba(15, 18, 26, 0.72);
+  background: var(--bg);
 }
 .ccw-main-head {
   display: flex;
@@ -576,7 +573,7 @@ function submitNewUnit(): void {
   gap: 16px;
   min-height: 66px;
   padding: 0 22px;
-  border-bottom: 1px solid #252c38;
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 .ccw-main-title {
@@ -587,14 +584,14 @@ function submitNewUnit(): void {
   overflow: hidden;
   font-size: 14px;
   font-weight: 750;
-  color: #eef1f7;
+  color: var(--text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .ccw-main-title span {
   display: block;
   margin-top: 4px;
-  color: #69758a;
+  color: var(--text-tertiary);
   font-size: 9px;
 }
 .ccw-view-switch {
@@ -602,16 +599,16 @@ function submitNewUnit(): void {
   flex: 0 0 auto;
   gap: 4px;
   padding: 4px;
-  border: 1px solid #2b3341;
-  border-radius: 11px;
-  background: #11151c;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 10px);
+  background: var(--bg);
 }
 .ccw-view-switch button {
   min-height: 28px;
   padding: 7px 12px;
   border: 0;
-  border-radius: 7px;
-  color: #778296;
+  border-radius: var(--radius-sm, 6px);
+  color: var(--text-tertiary);
   background: transparent;
   font-size: 10px;
   font-weight: 650;
@@ -619,9 +616,9 @@ function submitNewUnit(): void {
   transition: color 120ms ease, background 120ms ease, box-shadow 120ms ease;
 }
 .ccw-view-switch button.active {
-  color: #f5f7fc;
-  background: #272e3b;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-sm);
 }
 .ccw-view {
   display: flex;
@@ -662,7 +659,7 @@ function submitNewUnit(): void {
   align-items: center;
   justify-content: center;
   flex: 1;
-  color: #69758a;
+  color: var(--text-tertiary);
   font-size: 12px;
 }
 
@@ -685,7 +682,7 @@ function submitNewUnit(): void {
   }
   .ccw-layout :deep(.ccw-context) {
     grid-column: 1 / -1;
-    border-top: 1px solid #242a35;
+    border-top: 1px solid var(--border);
     border-left: 0;
   }
 }

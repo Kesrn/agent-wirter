@@ -265,21 +265,21 @@ onMounted(() => {
 }
 
 .stats-refresh-btn:hover:not(:disabled) {
-  background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+  background: var(--bg-hover);
   color: var(--accent);
 }
 
 .stats-state {
-  padding: var(--sp-4, 16px);
+  padding: var(--sp-4);
   text-align: center;
   color: var(--text-tertiary);
 }
 
 .stats-error {
-  color: var(--status-error, #ef4444);
+  color: var(--status-error);
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2, 8px);
+  gap: var(--sp-2);
   align-items: center;
 }
 
@@ -287,26 +287,26 @@ onMounted(() => {
   padding: 3px 10px;
   font-size: 11px;
   background: var(--accent);
-  color: var(--text-inverse, #fff);
+  color: var(--text-inverse);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: var(--sp-2, 8px);
-  margin-bottom: var(--sp-3, 12px);
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
 }
 
 .summary-card {
   display: flex;
   flex-direction: column;
-  padding: 6px 8px;
-  background: color-mix(in srgb, var(--bg-panel) 80%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  border-radius: var(--radius-sm, 6px);
+  padding: 8px 10px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 
 .card-label {
@@ -316,6 +316,8 @@ onMounted(() => {
 }
 
 .card-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: 12px;
   font-weight: 650;
   color: var(--text);
@@ -327,9 +329,9 @@ onMounted(() => {
 
 .trend-section {
   position: relative;
-  background: color-mix(in srgb, var(--bg-panel) 90%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 8px;
 }
 
@@ -389,14 +391,17 @@ onMounted(() => {
 .chart-tooltip {
   position: absolute;
   transform: translate(-50%, -100%);
-  background: rgba(17, 24, 39, 0.92);
-  color: #fff;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text);
   padding: 3px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 10px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
   pointer-events: none;
   z-index: 10;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-sm);
 }
 </style>

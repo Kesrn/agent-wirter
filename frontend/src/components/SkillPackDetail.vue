@@ -139,8 +139,8 @@ function sourceMeta(source: Record<string, unknown>): string {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--status-reviewing-bg);
+  color: var(--status-reviewing);
   font-weight: 700;
   flex-shrink: 0;
 }
@@ -175,7 +175,7 @@ function sourceMeta(source: Record<string, unknown>): string {
 }
 
 .skill-pack-warning {
-  color: #92400e;
+  color: var(--status-reviewing);
 }
 
 .skill-pack-sources {
