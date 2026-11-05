@@ -92,9 +92,10 @@ app = FastAPI(
 )
 
 # 中间件顺序很关键：Starlette 里「后添加的在最外层」。
-# 请求 ID 最外层包住 CORS 与请求体限制，保证 413 和其他提前返回也带 X-Request-ID；
-# CORS 包住请求体限制，413 响应仍带 CORS 头。
+# 实际顺序为 CORS → 请求 ID → 请求体限制：CORS 可暴露请求 ID 响应头，
+# 请求 ID 位于请求体限制外侧，因此 413 等提前返回也会带 X-Request-ID。
 app.add_middleware(RequestBodyLimitMiddleware)
+app.add_middleware(RequestIdMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -106,8 +107,6 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-Request-ID"],
 )
-
-app.add_middleware(RequestIdMiddleware)
 
 # 上传的图片等文件统一放到 UPLOAD_DIR。这里不再用 StaticFiles 直接挂载目录：
 # /media 下的文件是项目私有资源，改由 api/media.py 提供，需要登录 + 校验项目所有者。

@@ -160,5 +160,5 @@ def test_main_middleware_order_and_cors_exposure(monkeypatch, tmp_path):
         capture_output=True, text=True, check=True, timeout=60,
     )
     payload = json.loads(result.stdout.strip().splitlines()[-1])
-    assert payload["classes"] == ["RequestIdMiddleware", "CORSMiddleware", "RequestBodyLimitMiddleware"]
+    assert payload["classes"] == ["CORSMiddleware", "RequestIdMiddleware", "RequestBodyLimitMiddleware"]
     assert "X-Request-ID" in payload["expose"]
