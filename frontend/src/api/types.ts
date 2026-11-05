@@ -1353,6 +1353,95 @@ export interface RunCreatedPayload {
   status: string
 }
 
+// ─── Run Trace (F7) ───
+
+export interface RunTraceRun {
+  id: string
+  request_id: string
+  status: string
+  run_type?: string | null
+  mode?: string | null
+  workflow_key?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+  duration_ms?: number | null
+  error_message?: string | null
+}
+
+export interface RunTraceTotals {
+  llm_calls?: number | null
+  input_tokens?: number | null
+  output_tokens?: number | null
+  total_tokens?: number | null
+  cost?: number | null
+  retries?: number | null
+  estimated_calls?: number | null
+  structured_repairs?: number | null
+}
+
+export interface RunTraceFailedStep {
+  step_order: number
+  step_name: string
+  agent_name?: string | null
+  error_message?: string | null
+}
+
+export interface RunTraceStepQuality {
+  stage?: string | null
+  passed?: boolean | null
+  error_codes?: string[] | null
+}
+
+export interface RunTraceStructured {
+  schema?: string | null
+  repairs?: number | null
+  ok?: boolean | null
+}
+
+export interface RunTraceLlmCall {
+  id: string
+  agent_name?: string | null
+  model?: string | null
+  latency_ms?: number | null
+  input_tokens?: number | null
+  output_tokens?: number | null
+  cost?: number | null
+  retries?: number | null
+  usage_estimated?: boolean | null
+  structured?: RunTraceStructured | null
+  error_message?: string | null
+  rendered_prompt_snapshot?: string | null
+  prompt_truncated?: boolean | null
+}
+
+export interface RunTraceStep {
+  step_order: number
+  step_name: string
+  node_key?: string | null
+  agent_name?: string | null
+  status: string
+  started_at?: string | null
+  ended_at?: string | null
+  duration_ms?: number | null
+  retry_count?: number | null
+  max_retry?: number | null
+  error_message?: string | null
+  quality?: RunTraceStepQuality | null
+  llm_calls?: RunTraceLlmCall[] | null
+}
+
+export interface RunTraceResponse {
+  run: RunTraceRun
+  totals?: RunTraceTotals | null
+  failed_step?: RunTraceFailedStep | null
+  truncated?: boolean | null
+  steps: RunTraceStep[]
+}
+
+export interface GetRunTraceOptions {
+  includePrompts?: boolean
+}
+
 export interface GenerationRecord {
   id: string
   projectId: string
