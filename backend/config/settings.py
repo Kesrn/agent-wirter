@@ -107,6 +107,10 @@ class Settings:
     ALLOW_FIRST_USER_BOOTSTRAP: bool = _env_flag("ALLOW_FIRST_USER_BOOTSTRAP", not _IS_PRODUCTION)
     # 章节任务卡确定性规则。工作流 state 的 rules_enabled 可按次覆盖此默认值。
     CHAPTER_RULES_ENABLED: bool = os.getenv("CHAPTER_RULES_ENABLED", "true").strip().lower() == "true"
+    # 人工改动 few-shot 默认关闭；工作流状态 fewshot_enabled 可按次覆盖。
+    FEWSHOT_ENABLED: bool = os.getenv("FEWSHOT_ENABLED", "false").strip().lower() == "true"
+    FEWSHOT_MIN_EDIT_RATIO: float = float(os.getenv("FEWSHOT_MIN_EDIT_RATIO", "0.03"))
+    FEWSHOT_MAX_EDIT_RATIO: float = float(os.getenv("FEWSHOT_MAX_EDIT_RATIO", "0.6"))
 
     # --- JWT ---
     # JWT_SECRET 只用于签发/校验登录 token。

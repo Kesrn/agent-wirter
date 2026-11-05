@@ -126,7 +126,7 @@ from harness.run_manager import (
     build_expert_snapshot, discard_run_artifacts, workflow_to_snapshot,
 )
 from services.ai_run_trace import build_ai_run_trace
-from harness.step_logger import start_step, finish_step, fail_step
+from harness.step_logger import start_step, finish_step, fail_step, record_fewshot_example_ids
 from harness.human_interrupt_service import (
     create_interrupt, resolve_interrupt, get_interrupt_by_run,
     get_interrupt_by_thread_step, get_unresolved_interrupt_by_thread_step,
@@ -4110,6 +4110,10 @@ async def generate_chapter(
                                 if node_name in _CONTINUE_STEP_NODE_MAP and node_name in active_steps:
                                     step = active_steps.pop(node_name)
                                     try:
+                                        if node_name == "chapter_writer" and isinstance(output, dict):
+                                            record_fewshot_example_ids(
+                                                step, output.get("fewshot_example_ids") or [],
+                                            )
                                         await finish_step(db, step, output={})
                                         yield f"event: run_step\ndata: {json.dumps({'run_id': run_id_str, 'step_name': _CONTINUE_STEP_NODE_MAP[node_name][0], 'status': 'SUCCESS'}, ensure_ascii=False)}\n\n"
                                     except Exception:
@@ -4669,6 +4673,10 @@ async def generate_chapter(
                     if node_name in STEP_NODE_MAP and node_name in active_steps:
                         step = active_steps.pop(node_name)
                         try:
+                            if node_name == "chapter_writer" and isinstance(output, dict):
+                                record_fewshot_example_ids(
+                                    step, output.get("fewshot_example_ids") or [],
+                                )
                             output_snapshot: dict = {}
                             if isinstance(output, dict):
                                 if node_name == "chapter_writer":

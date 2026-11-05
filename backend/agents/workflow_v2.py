@@ -128,6 +128,8 @@ class CreativeStateV2(TypedDict, total=False):
     structural_critique: dict     # critic 输出
     edit_report: dict             # editor 输出
     workflow_key: str             # 本次 workflow 标识
+    fewshot_enabled: bool         # 按次覆盖全局人工改动示例开关
+    fewshot_example_ids: list[str]  # 当前写手节点实际使用的人工示例记录
     # ── L-1: task card review ──
     planning_review: bool         # 是否启用任务卡预览（写入 state 供 resume 读取）
     task_card_reviewed: bool      # 任务卡是否已审核
@@ -625,6 +627,25 @@ async def chapter_writer_node(state: CreativeStateV2) -> dict:
             "5. 禁止在正文内部署【增强开始/结束】等规划标记、场景标题和修改说明。"
         )
 
+    fewshot_enabled = state.get("fewshot_enabled")
+    if not isinstance(fewshot_enabled, bool):
+        fewshot_enabled = bool(getattr(settings, "FEWSHOT_ENABLED", False))
+    fewshot_example_ids: list[str] = []
+    if fewshot_enabled:
+        try:
+            fewshot_block, fewshot_example_ids = await _load_writer_edit_examples(state)
+        except Exception:
+            logger.warning("chapter_writer 人工改动示例查询失败，按无示例处理", exc_info=True)
+            fewshot_block, fewshot_example_ids = "", []
+        if fewshot_block:
+            context_marker = f"## 上下文\n{context}"
+            if context_marker in user_prompt:
+                user_prompt = user_prompt.replace(
+                    context_marker,
+                    f"{context_marker}\n\n{fewshot_block}",
+                    1,
+                )
+
     if target_words:
         user_prompt += f"\n\n**目标字数：约{target_words}字，请控制篇幅，并以完整句子自然结束。**"
 
@@ -661,9 +682,58 @@ async def chapter_writer_node(state: CreativeStateV2) -> dict:
     # 如果不是修订模式且不是重试（第一次调用），重置计数器
     if revision_count == 0 and retry_count == 0:
         update["writer_retry_count"] = 0
+    # Always replace the prior writer state value so a disabled/empty retry cannot
+    # leave IDs from an earlier invocation in the checkpoint.
+    update["fewshot_example_ids"] = fewshot_example_ids
     if pack.has_content or pack.warnings:
         update["skill_packs"] = [pack_summary]
     return update
+
+
+async def _load_writer_edit_examples(state: CreativeStateV2) -> tuple[str, list[str]]:
+    """Load project-scoped examples using the same short-lived session pattern as nodes."""
+    from sqlalchemy import select
+
+    from db.session import async_session
+    from models.project import Project
+    from services.edit_examples import load_edit_examples, render_edit_examples_block
+
+    project_id = state.get("project_id")
+    if not project_id:
+        return "", []
+    async with async_session() as db:
+        result = await db.execute(
+            select(Project.owner_id).where(Project.id == project_id)
+        )
+        owner_id = result.scalar_one_or_none()
+        if not owner_id:
+            return "", []
+        examples = await load_edit_examples(
+            db,
+            owner_id=str(owner_id),
+            project_id=str(project_id),
+            mode=state.get("mode"),
+            query_text=_format_task_card(state.get("chapter_task_card", {})),
+            limit=3,
+        )
+        flattened = [
+            (example.generation_record_id, pair)
+            for example in examples
+            for pair in example.pairs
+        ]
+        accepted: list[tuple[str, object]] = []
+        for item in flattened:
+            candidate = render_edit_examples_block([pair for _, pair in (*accepted, item)])
+            current = render_edit_examples_block([pair for _, pair in accepted])
+            if accepted and candidate == current:
+                break
+            if not candidate:
+                break
+            accepted.append(item)
+        block = render_edit_examples_block([pair for _, pair in accepted])
+        await db.commit()
+        used_ids = list(dict.fromkeys(record_id for record_id, _ in accepted))
+        return block, used_ids
 
 
 async def structural_critic_node(state: CreativeStateV2) -> dict:
