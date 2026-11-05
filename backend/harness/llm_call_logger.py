@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.llm_provider import _CALL_METADATA
 from agents.llm_types import LLMResult, TokenUsage
+from agents.structured import current_structured_log_context
 from config.settings import settings
 from models.llm_call_log import LlmCallLog
 
@@ -257,7 +258,7 @@ class LoggedLLMProvider:
         usage: TokenUsage | None,
         retries: int,
         finish_reason: str | None,
-    ) -> None:
+    ) -> str | None:
         """best-effort 写入 llm_call_logs。
 
         日志写入不能影响生成主链路，所以所有异常都被吞掉并写 warning。
@@ -271,6 +272,9 @@ class LoggedLLMProvider:
             request_meta["usage_estimated"] = bool(usage and usage.estimated)
             if finish_reason is not None:
                 request_meta["finish_reason"] = finish_reason
+            structured_context = current_structured_log_context()
+            if structured_context is not None:
+                request_meta["structured"] = structured_context.snapshot()
             # 解析 step_id：不依赖 aupdate_state 注入（on_chain_start 的 aupdate_state
             # 在并行/动态节点下有竞态，节点读到 None）。改为查 run 下最新 RUNNING step。
             step_id = self._step_id
@@ -306,8 +310,35 @@ class LoggedLLMProvider:
             async with log_session_factory() as log_session:
                 log_session.add(log)
                 await log_session.commit()
+            log_id = str(log.id)
+            if structured_context is not None:
+                structured_context.register(log_id, self._update_structured_log_requests)
+            return log_id
         except Exception:
             logger.warning("harness llm_call_log 写入失败 agent=%s", self._agent_name, exc_info=True)
+            return None
+
+    async def _update_structured_log_requests(
+        self,
+        log_ids: list[str],
+        structured: dict[str, Any],
+    ) -> None:
+        """Apply final structured validation state to all calls in its generation."""
+        from db.session import get_engine
+        from sqlalchemy import select as sa_select
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        engine = get_engine()
+        log_session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with log_session_factory() as log_session:
+            rows = await log_session.execute(
+                sa_select(LlmCallLog).where(LlmCallLog.id.in_(log_ids))
+            )
+            for log in rows.scalars():
+                request_meta = dict(log.request or {})
+                request_meta["structured"] = dict(structured)
+                log.request = request_meta
+            await log_session.commit()
 
     async def _resolve_running_step_id(self) -> str | uuid.UUID | None:
         """查 run 下最新 RUNNING 的 step，用于关联 llm_call_log.step_id。

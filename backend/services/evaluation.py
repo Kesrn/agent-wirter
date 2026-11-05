@@ -9,11 +9,13 @@
 from __future__ import annotations
 
 import json
-import re
 import time
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
 from agents.llm_provider import LLMProvider
+from agents.structured import StructuredOutputError, extract_json_object, generate_structured
 from models.evaluation import EvaluationCase
 from models.project import Project
 
@@ -54,30 +56,6 @@ def normalize_rubric(value: Any, project_mode: str) -> dict[str, str]:
     return default_rubric(project_mode)
 
 
-def _json_block(text: str) -> dict[str, Any] | None:
-    """从模型输出中提取 JSON 对象。
-
-    裁判模型有时会把 JSON 包在 Markdown 或解释里，这里只取第一个对象块。
-    """
-    text = (text or "").strip()
-    if not text:
-        return None
-    try:
-        parsed = json.loads(text)
-        return parsed if isinstance(parsed, dict) else None
-    except json.JSONDecodeError:
-        pass
-
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if not match:
-        return None
-    try:
-        parsed = json.loads(match.group())
-        return parsed if isinstance(parsed, dict) else None
-    except json.JSONDecodeError:
-        return None
-
-
 def _number(value: Any) -> float | None:
     try:
         num = float(value)
@@ -86,31 +64,101 @@ def _number(value: Any) -> float | None:
     return max(1.0, min(5.0, num))
 
 
-def parse_judge_response(text: str, rubric: dict[str, str]) -> dict[str, Any]:
+class EvaluationJudgeOutput(BaseModel):
+    """Pydantic contract for the variable-dimension judge response."""
+
+    model_config = ConfigDict(extra="allow")
+
+    overall_score: float | None = None
+    scores: dict[str, float] = Field(default_factory=dict)
+    passed: Any = None
+    feedback: Any = None
+
+    @field_validator("overall_score", mode="before")
+    @classmethod
+    def clamp_overall_score(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        clamped = _number(value)
+        return clamped if clamped is not None else value
+
+    @field_validator("scores", mode="before")
+    @classmethod
+    def clamp_dimension_scores(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        normalized: dict[Any, Any] = {}
+        for key, raw_score in value.items():
+            clamped = _number(raw_score)
+            normalized[key] = clamped if clamped is not None else raw_score
+        return normalized
+
+    @model_validator(mode="after")
+    def require_at_least_one_score(self) -> "EvaluationJudgeOutput":
+        if self.overall_score is None and not self.scores:
+            raise ValueError("overall_score 或至少一个 scores 维度必填")
+        return self
+
+
+def _validate_judge_model(text: str) -> tuple[EvaluationJudgeOutput, dict[str, Any]]:
+    payload = extract_json_object(text)
+    if payload is None:
+        raise StructuredOutputError(
+            "EvaluationJudgeOutput", ["$: 未找到完整 JSON 对象"], text
+        )
+    try:
+        raw = json.loads(payload)
+    except (json.JSONDecodeError, ValueError) as exc:
+        message = exc.msg if isinstance(exc, json.JSONDecodeError) else str(exc)
+        raise StructuredOutputError(
+            "EvaluationJudgeOutput", [f"$: JSON 解析失败：{message}"], text
+        ) from exc
+    if not isinstance(raw, dict):
+        raise StructuredOutputError(
+            "EvaluationJudgeOutput", ["$: JSON 根节点必须是对象"], text
+        )
+    try:
+        return EvaluationJudgeOutput.model_validate(raw), raw
+    except ValidationError as exc:
+        errors = []
+        for error in exc.errors()[:10]:
+            path = ".".join(str(part) for part in error.get("loc", ())) or "$"
+            errors.append(f"{path}: {error.get('msg', '无效值')}")
+        raise StructuredOutputError("EvaluationJudgeOutput", errors, text) from exc
+
+
+def parse_judge_response(
+    text: str | EvaluationJudgeOutput,
+    rubric: dict[str, str],
+) -> dict[str, Any]:
     """把裁判模型输出解析成稳定评测结果。
 
-    即使模型漏掉部分维度，也会用已有 scores 计算 overall，最后兜底为 1.0。
-    这样单个异常输出不会让整批评测崩掉。
+    模型漏掉 overall 时用已有 scores 计算；分数钳制到 1–5，
+    字段结构本身仍须先通过 EvaluationJudgeOutput 校验。
     """
-    parsed = _json_block(text) or {}
-    raw_scores = parsed.get("scores") if isinstance(parsed.get("scores"), dict) else {}
+    if isinstance(text, EvaluationJudgeOutput):
+        model = text
+        parsed = model.model_dump(exclude_none=True)
+    else:
+        model, parsed = _validate_judge_model(text)
+    raw_scores = model.scores
     scores: dict[str, float] = {}
     for key in rubric:
         score = _number(raw_scores.get(key))
         if score is not None:
             scores[key] = score
 
-    overall = _number(parsed.get("overall_score"))
+    overall = _number(model.overall_score)
     if overall is None and scores:
         overall = round(sum(scores.values()) / len(scores), 2)
     if overall is None:
         overall = 1.0
 
-    passed = parsed.get("passed")
+    passed = model.passed
     if not isinstance(passed, bool):
         passed = overall >= 3.5
 
-    feedback = parsed.get("feedback")
+    feedback = model.feedback
     if not isinstance(feedback, str) or not feedback.strip():
         feedback = "评测模型未返回明确反馈。"
 
@@ -195,8 +243,15 @@ async def run_evaluation_case(
         raise ValueError("judge_only 模式需要样本提供候选输出")
 
     judge_system, judge_user = build_judge_prompt(case, rubric, expected, generated_output)
-    judge_text = await provider.generate(judge_system, judge_user, temperature=0.1, max_tokens=1200)
-    parsed = parse_judge_response(judge_text, rubric)
+    judge_result = await generate_structured(
+        provider,
+        EvaluationJudgeOutput,
+        judge_system,
+        judge_user,
+        temperature=0.1,
+        max_tokens=1200,
+    )
+    parsed = parse_judge_response(judge_result.raw_text, rubric)
     parsed["generated_output"] = generated_output
     parsed["latency_ms"] = int((time.perf_counter() - start) * 1000)
     return parsed

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 
 class EditInstructions(BaseModel):
@@ -33,6 +33,13 @@ class StructuralCritique(BaseModel):
     must_keep: list[str] = Field(default_factory=list)
     requires_revision: bool = False
     edit_instructions: EditInstructions = Field(default_factory=EditInstructions)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_aliases(cls, value: Any) -> Any:
+        """Keep the existing case/underscore/legacy-key tolerant input path."""
+        normalized = normalize_critic_payload(value)
+        return normalized if normalized is not None else value
 
 
 def _normalized_field_name(name: Any) -> str:

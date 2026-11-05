@@ -26,13 +26,21 @@ import asyncio
 import json
 import logging
 import re
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
+
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from langgraph.graph import END, StateGraph
 
-from agents.critic_schema import repair_json_user_prompt, validate_critic_payload
+from agents.critic_schema import StructuralCritique
 from agents.guardrail import parse_guardrail_result
 from agents.llm_provider import get_llm_provider
+from agents.structured import (
+    StructuredOutputError,
+    _escape_control_characters,
+    extract_json_object,
+    generate_structured,
+)
 from agents.workflow import (
     CreativeState,
     DEFAULT_CONSISTENCY_PROMPT,
@@ -183,33 +191,7 @@ def _extract_first_json_object(raw: str) -> str | None:
     不能用 ``\{.*\}``：它会把多个对象之间的说明也贪婪地吞进去，而且会误把
     字符串里的花括号当成对象边界。这里按 JSON 字符串的转义规则追踪大括号深度。
     """
-    for start, char in enumerate(raw):
-        if char != "{":
-            continue
-
-        depth = 0
-        in_string = False
-        escaped = False
-        for end in range(start, len(raw)):
-            current = raw[end]
-            if in_string:
-                if escaped:
-                    escaped = False
-                elif current == "\\":
-                    escaped = True
-                elif current == '"':
-                    in_string = False
-                continue
-
-            if current == '"':
-                in_string = True
-            elif current == "{":
-                depth += 1
-            elif current == "}":
-                depth -= 1
-                if depth == 0:
-                    return raw[start:end + 1]
-    return None
+    return extract_json_object(raw)
 
 
 def _escape_control_characters_in_json_strings(payload: str) -> str:
@@ -218,42 +200,7 @@ def _escape_control_characters_in_json_strings(payload: str) -> str:
     JSON 允许 ``\\n``，不允许字符串内的真实换行。该修复只作用于引号内部，
     因而不会改变对象间的正常格式化换行。
     """
-    escaped_chars = {
-        "\b": "\\b",
-        "\f": "\\f",
-        "\n": "\\n",
-        "\r": "\\r",
-        "\t": "\\t",
-    }
-    result: list[str] = []
-    in_string = False
-    escaped = False
-
-    for char in payload:
-        if in_string:
-            if escaped:
-                result.append(char)
-                escaped = False
-                continue
-            if char == "\\":
-                result.append(char)
-                escaped = True
-                continue
-            if char == '"':
-                in_string = False
-                result.append(char)
-                continue
-            if ord(char) < 0x20:
-                result.append(escaped_chars.get(char, f"\\u{ord(char):04x}"))
-                continue
-            result.append(char)
-            continue
-
-        result.append(char)
-        if char == '"':
-            in_string = True
-
-    return "".join(result)
+    return _escape_control_characters(payload)
 
 
 def _parse_json_response(raw: str, fallback: dict) -> dict:
@@ -264,7 +211,7 @@ def _parse_json_response(raw: str, fallback: dict) -> dict:
     仍无法解析时才返回 fallback。
     """
     raw = raw or ""
-    payload = _extract_first_json_object(raw)
+    payload = extract_json_object(raw)
     if not payload:
         logger.warning("v2 JSON parse failed: 未找到完整 JSON 对象")
         return fallback
@@ -277,16 +224,6 @@ def _parse_json_response(raw: str, fallback: dict) -> dict:
         parse_error = e
     else:
         parse_error = ValueError("JSON 根节点不是对象")
-
-    repaired_payload = _escape_control_characters_in_json_strings(payload)
-    if repaired_payload != payload:
-        try:
-            parsed = json.loads(repaired_payload)
-            if isinstance(parsed, dict):
-                logger.info("v2 JSON parse repaired unescaped control characters")
-                return parsed
-        except (json.JSONDecodeError, ValueError) as e:
-            parse_error = e
 
     logger.warning("v2 JSON parse failed: %s", parse_error)
     return fallback
@@ -307,6 +244,39 @@ def _task_card_string_list(value: object) -> list[str]:
             if isinstance(item, (str, int, float)) and str(item).strip()
         ]
     return []
+
+
+class ChapterTaskCardOutput(BaseModel):
+    """宽松的 architect 输出 schema；运行时结构仍由 normalize_task_card 收口。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    chapter_number: Any = None
+    chapter_title: Any = None
+    core_task: Any = None
+    opening_anchor: Any = None
+    scenes: Any = None
+    character_goals: list[str] | None = None
+    information_rules: Any = None
+    tension_design: list[str] | None = None
+    word_budget: Any = None
+    forbidden: list[str] | None = None
+
+    @field_validator("character_goals", "tension_design", "forbidden", mode="before")
+    @classmethod
+    def normalize_string_lists(cls, value: object) -> list[str]:
+        return _task_card_string_list(value)
+
+    @field_validator("information_rules", mode="before")
+    @classmethod
+    def normalize_information_rule_lists(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        for key in ("may_reveal", "hint_only", "forbidden"):
+            if key in normalized:
+                normalized[key] = _task_card_string_list(normalized[key])
+        return normalized
 
 
 def normalize_task_card(card: object) -> dict:
@@ -494,14 +464,29 @@ async def chapter_architect_node(state: CreativeStateV2) -> dict:
     )
 
     try:
-        raw = await asyncio.wait_for(
-            llm.generate(system_prompt, user_prompt, temperature=0.6, max_tokens=4096),
+        structured_result = await asyncio.wait_for(
+            generate_structured(
+                llm,
+                ChapterTaskCardOutput,
+                system_prompt,
+                user_prompt,
+                temperature=0.6,
+                max_tokens=4096,
+            ),
             timeout=180,
         )
     except asyncio.TimeoutError as e:
         logger.warning("chapter_architect LLM 调用超过 180 秒，已取消本次任务卡生成")
         raise TaskCardGenerationError(
             "章节任务卡生成失败：模型服务超过 180 秒没有返回，请稍后重试或切换更快的模型配置。",
+            step_name="plan_chapter",
+            agent_name="chapter_architect",
+            step_order=2,
+        ) from e
+    except StructuredOutputError as e:
+        logger.warning("chapter_architect 返回的任务卡结构无法校验：%s", e)
+        raise TaskCardGenerationError(
+            "章节任务卡生成失败：模型返回的结构化内容无法解析，请重新生成。",
             step_name="plan_chapter",
             agent_name="chapter_architect",
             step_order=2,
@@ -515,7 +500,7 @@ async def chapter_architect_node(state: CreativeStateV2) -> dict:
             step_order=2,
         ) from e
 
-    card = normalize_task_card(_parse_json_response(raw, {}))
+    card = normalize_task_card(structured_result.value.model_dump(exclude_unset=True))
     if not _is_usable_task_card(card):
         logger.warning("chapter_architect 返回的任务卡不完整，拒绝进入人工审核")
         raise TaskCardGenerationError(
@@ -710,7 +695,26 @@ async def structural_critic_node(state: CreativeStateV2) -> dict:
     )
 
     try:
-        raw = await llm.generate(system_prompt, user_prompt, temperature=0.3, max_tokens=2048)
+        structured_result = await generate_structured(
+            llm,
+            StructuralCritique,
+            system_prompt,
+            user_prompt,
+            max_repairs=1,
+            temperature=0.3,
+            max_tokens=2048,
+        )
+    except StructuredOutputError as e:
+        if not e.raw_text.strip():
+            message = "章节审校失败：模型返回空内容，请重新生成。"
+        else:
+            message = "章节审校失败：StructuralCritique JSON 连续两次无法解析或结构不完整，请重新生成。"
+        raise WorkflowGenerationError(
+            message,
+            step_name="critique",
+            agent_name="structural_critic",
+            step_order=5,
+        ) from e
     except Exception as e:
         logger.exception("structural_critic LLM 调用失败: %s", e)
         raise WorkflowGenerationError(
@@ -719,41 +723,8 @@ async def structural_critic_node(state: CreativeStateV2) -> dict:
             agent_name="structural_critic",
             step_order=5,
         ) from e
-    if not raw or not raw.strip():
-        raise WorkflowGenerationError(
-            "章节审校失败：模型返回空内容，请重新生成。",
-            step_name="critique",
-            agent_name="structural_critic",
-            step_order=5,
-        )
 
-    critique_model = validate_critic_payload(_parse_json_response(raw, None))
-    if critique_model is None:
-        try:
-            repaired_raw = await llm.generate(
-                system_prompt,
-                repair_json_user_prompt(raw),
-                temperature=0.0,
-                max_tokens=4096,
-            )
-        except Exception as e:
-            logger.exception("structural_critic JSON 修复调用失败: %s", e)
-            raise WorkflowGenerationError(
-                "章节审校失败：审校结果格式错误，自动修复调用失败，请重新生成。",
-                step_name="critique",
-                agent_name="structural_critic",
-                step_order=5,
-            ) from e
-        critique_model = validate_critic_payload(
-            _parse_json_response(repaired_raw or "", None)
-        )
-        if critique_model is None:
-            raise WorkflowGenerationError(
-                "章节审校失败：StructuralCritique JSON 连续两次无法解析或结构不完整，请重新生成。",
-                step_name="critique",
-                agent_name="structural_critic",
-                step_order=5,
-            )
+    critique_model = structured_result.value
 
     critique = critique_model.model_dump()
 
