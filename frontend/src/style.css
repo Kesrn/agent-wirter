@@ -7,6 +7,7 @@
   --bg-hover: #f0f0ec;
   --bg-active: #e6ebe7;
   --bg-input: #ffffff;
+  --bg-overlay: rgba(20, 24, 28, 0.45);
 
   /* Borders */
   --border: #e6e6e0;
@@ -36,6 +37,7 @@
   --status-running: #2864b0;
   --status-success: #276b49;
   --status-error: #b3382c;
+  --status-error-bg: rgba(192, 70, 58, 0.10);
   --status-pending: #656b74;
 
   /* Severity */
@@ -59,6 +61,7 @@
   --shadow-sm: 0 1px 2px rgba(31, 35, 40, 0.05);
   --shadow: 0 1px 2px rgba(31, 35, 40, 0.05), 0 6px 20px rgba(31, 35, 40, 0.08);
   --shadow-lg: 0 12px 28px rgba(31, 35, 40, 0.12), 0 2px 6px rgba(31, 35, 40, 0.06);
+  --shadow-modal: 0 22px 60px rgba(17, 24, 39, 0.18), 0 4px 12px rgba(17, 24, 39, 0.08);
 
   /* Spacing */
   --sp-1: 4px;
@@ -101,6 +104,17 @@
 
   /* Transitions */
   --transition: 120ms ease;
+
+  /* Compatibility aliases */
+  --text-soft: var(--text-secondary);
+  --text-muted: var(--text-tertiary);
+  --bg-soft: var(--bg-hover);
+  --color-border: var(--border);
+  --color-surface: var(--bg-panel);
+  --color-text-muted: var(--text-tertiary);
+  --color-text-secondary: var(--text-secondary);
+  --color-primary: var(--accent);
+  --color-danger: var(--status-error);
 }
 
 html {
@@ -115,6 +129,7 @@ html {
   --bg-hover: #1b1d22;
   --bg-active: #23262c;
   --bg-input: #121418;
+  --bg-overlay: rgba(0, 0, 0, 0.6);
 
   /* Borders */
   --border: #262a31;
@@ -144,6 +159,7 @@ html {
   --status-running: #7fb0f0;
   --status-success: #5fcf98;
   --status-error: #f0705f;
+  --status-error-bg: rgba(240, 112, 95, 0.14);
   --status-pending: #6b7280;
 
   /* Severity */
@@ -164,6 +180,7 @@ html {
   --shadow-sm: 0 0 0 1px rgba(255, 255, 255, 0.03);
   --shadow: 0 0 0 1px rgba(255, 255, 255, 0.04), 0 10px 30px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 20px 60px rgba(0, 0, 0, 0.55);
+  --shadow-modal: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 20px 60px rgba(0, 0, 0, 0.55);
 
   /* Editor defaults */
   --editor-font: var(--font-serif);
@@ -181,6 +198,17 @@ html {
   --auth-card-bg: rgba(21, 23, 27, 0.96);
   --auth-card-mobile-bg: rgba(21, 23, 27, 0.94);
   --auth-panel-overlay: rgba(14, 15, 18, 0.72);
+
+  /* Compatibility aliases */
+  --text-soft: var(--text-secondary);
+  --text-muted: var(--text-tertiary);
+  --bg-soft: var(--bg-hover);
+  --color-border: var(--border);
+  --color-surface: var(--bg-panel);
+  --color-text-muted: var(--text-tertiary);
+  --color-text-secondary: var(--text-secondary);
+  --color-primary: var(--accent);
+  --color-danger: var(--status-error);
 }
 
 html[data-theme="dark"] {
