@@ -23,11 +23,11 @@ engine 在模块加载时创建并绑定 PG）。之后 main() 的 os.environ �
 用法
 ----
     cd backend
-    venv/bin/python retrieval_eval/run_eval_pg.py --retriever lexical \
+    venv/bin/python retrieval_eval/run_eval_pg.py --retriever lexical --pg-url "$TEST_PG_URL" \
         --db backend/dev-web.sqlite3 --project <pid> \
         --dataset retrieval_eval/datasets/regression_candidates.json \
         --limit 5 --out retrieval_eval/results/lexical_pg_regression_76.json
-    # --pg-url 可显式指定连接串（默认 postgres:postgres@localhost:5432/ai_creative）
+    # 必须通过 --pg-url 或 DATABASE_URL 显式指定 PostgreSQL 测试库。
 
 其余参数与 run_baseline.py 完全一致（透传），退出码也一致。
 """
@@ -41,9 +41,6 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
-DEFAULT_PG_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_creative"
-
-
 def main() -> int:
     argv = sys.argv[1:]
     pg_url = os.environ.get("DATABASE_URL", "")
@@ -55,7 +52,8 @@ def main() -> int:
         pg_url = argv[idx + 1]
         del argv[idx:idx + 2]
     if not pg_url:
-        pg_url = DEFAULT_PG_URL
+        print("[error] 必须通过 --pg-url 或 DATABASE_URL 显式指定 PostgreSQL 测试库", file=sys.stderr)
+        return 2
     if not pg_url.startswith("postgresql"):
         print(f"[error] DATABASE_URL 必须是 PostgreSQL 连接串: {pg_url}", file=sys.stderr)
         return 2

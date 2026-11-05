@@ -15,10 +15,13 @@ if [[ "$MODE" != "--exclude-pg" && "$MODE" != "--pg-only" ]]; then
   exit 2
 fi
 
+TEST_PG_HOST="${TEST_PG_HOST:-127.0.0.1}"
+TEST_PG_PORT="${TEST_PG_PORT:-5432}"
 if [[ "$MODE" == "--pg-only" ]]; then
-  PG_DATABASE_URL="${DATABASE_URL:-postgresql+asyncpg://runner@127.0.0.1:5432/ai_creative}"
-else
-  PG_DATABASE_URL=""
+  if [[ ! "$TEST_PG_PORT" =~ ^[0-9]+$ || "$TEST_PG_PORT" == "5432" ]]; then
+    echo "PG 测试必须使用 TEST_PG_PORT 指定的非 5432 临时实例" >&2
+    exit 2
+  fi
 fi
 
 passed_files=0
@@ -29,16 +32,19 @@ total_skipped=0
 while IFS= read -r test_file; do
   name="$(basename "$test_file")"
   is_pg=0
+  is_pg_only_file=0
   [[ "$name" == *_pg.py || "$name" == *postgres*.py ]] && is_pg=1
+  [[ "$name" == *_pg.py || "$name" == *postgres*.py ]] && is_pg_only_file=1
+  [[ "$name" == "test_retrieval_index_worker.py" ]] && is_pg=1
   if [[ "$MODE" == "--pg-only" && "$is_pg" -ne 1 ]]; then
     continue
   fi
-  if [[ "$MODE" == "--exclude-pg" && "$is_pg" -eq 1 ]]; then
+  if [[ "$MODE" == "--exclude-pg" && "$is_pg_only_file" -eq 1 ]]; then
     continue
   fi
 
   if [[ "$MODE" == "--pg-only" ]]; then
-    database_url="$PG_DATABASE_URL"
+    database_url="sqlite+aiosqlite:///$TEMP_ROOT/${name%.py}.sqlite3"
     run_pg_tests_env=RUN_PG_TESTS=1
   else
     database_url="sqlite+aiosqlite:///$TEMP_ROOT/${name%.py}.sqlite3"
@@ -56,6 +62,8 @@ while IFS= read -r test_file; do
     APP_ENV=development \
     JWT_SECRET='p2-ci-test-only-secret-not-real-00000000000000000000' \
     DATABASE_URL="$database_url" \
+    TEST_PG_HOST="$TEST_PG_HOST" \
+    TEST_PG_PORT="$TEST_PG_PORT" \
     CHECKPOINTER_BACKEND=memory \
     LLM_PROVIDER=mock \
     EMBEDDING_PROVIDER=mock \

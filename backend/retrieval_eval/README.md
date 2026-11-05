@@ -342,9 +342,9 @@ cd backend
 # 自定义查询列表（JSON 数组或 {"queries": [...]}，每条含 query / query_id / category / notes）
 ./venv/bin/python retrieval_eval/shadow_compare.py --queries q.json
 
-# 旧链路指向其他库（如生产 PG，schema 通常比 dev sqlite 新）
+# 旧链路指向隔离测试 PG（不要指向本机业务库）
 ./venv/bin/python retrieval_eval/shadow_compare.py \
-    --old-db-url postgresql+asyncpg://postgres:postgres@localhost:5432/ai_creative
+    --old-db-url "$OLD_PG_TEST_URL"
 ```
 
 参数：
@@ -525,12 +525,12 @@ SQLite 同语料对照 → 跑完清理。
 
 ```bash
 cd backend
-./venv/bin/python retrieval_eval/verify_pg_vector.py                          # 默认 500 条
-./venv/bin/python retrieval_eval/verify_pg_vector.py --n-chunks 200 --limit 5 \
+./venv/bin/python retrieval_eval/verify_pg_vector.py --pg-url "$TEST_PG_URL"  # 默认 500 条
+./venv/bin/python retrieval_eval/verify_pg_vector.py --pg-url "$TEST_PG_URL" --n-chunks 200 --limit 5 \
     --out retrieval_eval/results/pg_vector_verify.json
 ```
 
-参数：`--pg-url`（默认 postgres:postgres@localhost:5432/ai_creative）、`--sqlite`
+参数：`--pg-url`（必填，使用隔离测试库）、`--sqlite`
 （只读源库）、`--source-project`（默认库中第一个项目）、`--n-chunks`（默认 500）、
 `--limit`（top-k）、`--queries`（可选，默认 8 条基于导入窗口真实内容的冒烟查询）、
 `--out`。

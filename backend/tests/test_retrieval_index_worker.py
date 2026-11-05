@@ -4,8 +4,7 @@ SQLite 内存库覆盖 worker 全逻辑（同源合并策略 / 原子领取 / �
 stale 校验 / 运行入口），其中成功路径走真实索引构建（ProjectSourceChunk →
 build_source_index → 双写 retrieval_chunks + FTS 表）。
 
-本地 PostgreSQL 可达时真实执行 7 项 PG 验收用例（skipif 条件是 "PG 不可达"，
-非默认跳过）：
+显式设置 ``RUN_PG_TESTS=1`` 时，真实执行 PG 验收用例；默认始终跳过 PG 路径：
   1. 定稿 → outbox → Worker → active → 检索命中
   2. 连续定稿两次只命中新版（指针切换 + 旧块删除）
   3. v1 processing 时产生 v2（合并策略 → 新增 pending → v2 生效）
@@ -20,6 +19,8 @@ build_source_index → 双写 retrieval_chunks + FTS 表）。
 
 import asyncio
 import os
+import re
+import subprocess
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -65,7 +66,10 @@ from services.retrieval_index_worker import (
     run_worker_loop,
 )
 
-PG_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_creative"
+TEST_PG_HOST = os.environ.get("TEST_PG_HOST", "localhost")
+TEST_PG_PORT = os.environ.get("TEST_PG_PORT", "5432")
+DB_NAME = f"ai_creative_retrieval_test_{uuid.uuid4().hex[:8]}"
+PG_URL = f"postgresql+asyncpg://{TEST_PG_HOST}:{TEST_PG_PORT}/{DB_NAME}"
 
 # 检索命中词（与 test_retrieval_retriever 同款种子，确保分词稳定）
 _VOCAB_WORDS = ("莫凡", "雷系", "玫炎")
@@ -75,26 +79,10 @@ CONTENT_V1 = "第一章 觉醒\n莫凡觉醒了雷系，玫炎燃烧如炬，这
 CONTENT_V2 = "第一章 觉醒\n莫凡觉醒了火系，玫炎燃烧如炬，这是全书核心设定。"
 
 
-def _pg_reachable() -> bool:
-    """PG 可达性探测（skipif 条件用，采集阶段同步执行）。"""
-    try:
-        async def _probe() -> bool:
-            engine = create_async_engine(PG_URL)
-            try:
-                async with engine.connect() as conn:
-                    await conn.execute(text("SELECT 1"))
-                return True
-            except Exception:
-                return False
-            finally:
-                await engine.dispose()
-        return asyncio.run(_probe())
-    except Exception:
-        return False
-
-
-PG_REACHABLE = _pg_reachable()
-pg_required = pytest.mark.skipif(not PG_REACHABLE, reason="本地 PostgreSQL 不可达")
+pg_required = pytest.mark.skipif(
+    os.environ.get("RUN_PG_TESTS") != "1",
+    reason="PG 集成测试需 RUN_PG_TESTS=1",
+)
 
 
 @pytest_asyncio.fixture
@@ -124,37 +112,47 @@ def _clean_caches():
 
 @pytest_asyncio.fixture
 async def pg():
-    """本地 PG 引擎 + session 工厂 + 会话；不可达则跳过（skipif 条件的兜底）。"""
+    """只在随机测试库中运行 PG 集成用例。"""
+    subprocess.run(
+        ["createdb", "-h", TEST_PG_HOST, "-p", TEST_PG_PORT, DB_NAME],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     engine = create_async_engine(PG_URL)
     try:
         async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-    except Exception as exc:  # noqa: BLE001 — 本地 PG 未启动时跳过
-        await engine.dispose()
-        pytest.skip(f"本地 PostgreSQL 不可达，跳过 PG 集成用例: {exc}")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await ensure_fts_table(conn)
-        # 与 alembic 031 / setup_pg.py 同契约的 FTS DDL（幂等）
-        for table in ("retrieval_chunks_fts", "retrieval_chunks"):
+            connected_db = (await conn.execute(text("SELECT current_database()"))).scalar_one()
+            if not re.fullmatch(r"ai_creative_retrieval_test_[0-9a-f]{8}", connected_db):
+                pytest.fail(f"拒绝在非测试数据库运行 PG 用例: {connected_db}")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            await ensure_fts_table(conn)
+            # 与 alembic 031 / setup_pg.py 同契约的 FTS DDL（幂等）
+            for table in ("retrieval_chunks_fts", "retrieval_chunks"):
+                await conn.execute(text(
+                    "ALTER TABLE %s ADD COLUMN IF NOT EXISTS search_tsv tsvector "
+                    "GENERATED ALWAYS AS (to_tsvector('simple', search_text)) STORED" % table
+                ))
             await conn.execute(text(
-                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS search_tsv tsvector "
-                "GENERATED ALWAYS AS (to_tsvector('simple', search_text)) STORED" % table
+                "CREATE INDEX IF NOT EXISTS ix_retrieval_chunks_fts_search_tsv "
+                "ON retrieval_chunks_fts USING GIN (search_tsv)"
             ))
-        await conn.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_retrieval_chunks_fts_search_tsv "
-            "ON retrieval_chunks_fts USING GIN (search_tsv)"
-        ))
-        await conn.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_retrieval_chunks_search_tsv "
-            "ON retrieval_chunks USING GIN (search_tsv)"
-        ))
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    try:
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_retrieval_chunks_search_tsv "
+                "ON retrieval_chunks USING GIN (search_tsv)"
+            ))
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as session:
             yield engine, factory, session
     finally:
         await engine.dispose()
+        subprocess.run(
+            ["dropdb", "--if-exists", "-h", TEST_PG_HOST, "-p", TEST_PG_PORT, DB_NAME],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
 
 
 def _pid() -> str:
@@ -665,7 +663,7 @@ def test_worker_main_rejects_sqlite(monkeypatch, capsys):
     assert "SQLite" in capsys.readouterr().err
 
 
-# ── PG 验收用例（本地 PG 可达时真实执行） ─────────────────
+# ── PG 验收用例（仅 RUN_PG_TESTS=1 时执行） ────────────────
 
 @pg_required
 @pytest.mark.asyncio
