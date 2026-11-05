@@ -95,9 +95,12 @@ onMounted(() => {
 <template>
   <div class="edit-stats-panel">
     <div class="stats-header">
-      <span class="stats-title">人工改动统计</span>
-      <button class="stats-refresh-btn" type="button" :disabled="loading" @click="loadData">
-        刷新
+      <div class="stats-header-left">
+        <span class="stats-title">人工改动统计</span>
+        <div class="stats-subtitle">统计的是 AI 稿被采用后你又改了多少；还没改的章节按 0 计，不代表满意。</div>
+      </div>
+      <button class="stats-refresh-btn stats-reload-btn" type="button" :disabled="loading" @click="loadData">
+        重新加载
       </button>
     </div>
 
@@ -204,7 +207,8 @@ onMounted(() => {
             :style="{ left: `${tooltipX}px`, top: `${Math.max(0, tooltipY - 28)}px` }"
           >
             <span v-if="hoveredItem.chapter_sequence_number">第 {{ hoveredItem.chapter_sequence_number }} 章 · </span>
-            <span>改动 {{ formatPercent(hoveredItem.edit_ratio) }}</span>
+            <span v-if="hoveredItem.edited === false || hoveredItem.edit_ratio === 0">未改动</span>
+            <span v-else>改动 {{ formatPercent(hoveredItem.edit_ratio) }}</span>
           </div>
         </div>
       </div>
@@ -225,8 +229,21 @@ onMounted(() => {
 .stats-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: var(--sp-2, 8px);
   margin-bottom: var(--sp-2, 8px);
+}
+
+.stats-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stats-subtitle {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.4;
 }
 
 .stats-title {

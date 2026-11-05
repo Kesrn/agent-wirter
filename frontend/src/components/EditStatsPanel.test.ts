@@ -27,7 +27,7 @@ describe('EditStatsPanel', () => {
     vi.clearAllMocks()
   })
 
-  it('renders loading state while fetching stats', async () => {
+  it('renders explanation subtitle and loading state while fetching stats', async () => {
     let resolvePromise: (val: EditStatsResponse) => void
     const pendingPromise = new Promise<EditStatsResponse>((resolve) => {
       resolvePromise = resolve
@@ -38,6 +38,9 @@ describe('EditStatsPanel', () => {
       props: { projectId: 'project-1' },
     })
 
+    expect(wrapper.find('.stats-subtitle').text()).toBe(
+      '统计的是 AI 稿被采用后你又改了多少；还没改的章节按 0 计，不代表满意。'
+    )
     expect(wrapper.find('.stats-loading').exists()).toBe(true)
     expect(wrapper.text()).toContain('加载统计数据中...')
 
@@ -97,6 +100,40 @@ describe('EditStatsPanel', () => {
     expect(wrapper.text()).toContain('还没有已采用的生成记录')
   })
 
+  it('triggers reload when clicking the reload button', async () => {
+    vi.mocked(api.getEditStats).mockResolvedValue({
+      limit: 20,
+      offset: 0,
+      summary: {
+        count: 0,
+        edited_count: 0,
+        mean_edit_ratio: null,
+        median_edit_ratio: null,
+        p90_edit_ratio: null,
+        total_changed_chars: 0,
+        total_original_chars: 0,
+      },
+      items: [],
+    })
+
+    const wrapper = mount(EditStatsPanel, {
+      props: { projectId: 'project-1' },
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(api.getEditStats).toHaveBeenCalledTimes(1)
+
+    const reloadBtn = wrapper.find('.stats-reload-btn')
+    expect(reloadBtn.exists()).toBe(true)
+    expect(reloadBtn.text()).toBe('重新加载')
+
+    await reloadBtn.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(api.getEditStats).toHaveBeenCalledTimes(2)
+  })
+
   it('renders empty state when summary.count === 0', async () => {
     vi.mocked(api.getEditStats).mockResolvedValue({
       limit: 20,
@@ -123,7 +160,7 @@ describe('EditStatsPanel', () => {
     expect(wrapper.text()).toContain('还没有已采用的生成记录')
   })
 
-  it('renders summary cards and trend chart when data is present', async () => {
+  it('renders summary cards and trend chart with hover tooltip for edited and unedited items', async () => {
     vi.mocked(api.getEditStats).mockResolvedValue({
       limit: 20,
       offset: 0,
@@ -146,16 +183,18 @@ describe('EditStatsPanel', () => {
           edit_ratio: 0.15,
           changed_chars: 45,
           original_chars: 300,
+          edited: true,
         },
         {
           generation_record_id: 'rec-1',
           chapter_id: 'chap-1',
           chapter_sequence_number: 1,
           applied_at: '2026-11-04T11:00:00Z',
-          final_chars: 220,
-          edit_ratio: 0.10,
-          changed_chars: 20,
+          final_chars: 200,
+          edit_ratio: 0,
+          changed_chars: 0,
           original_chars: 200,
+          edited: false,
         },
       ],
     })
@@ -175,23 +214,29 @@ describe('EditStatsPanel', () => {
     expect(wrapper.text()).toContain('25%')   // p90_edit_ratio
     expect(wrapper.text()).toContain('320 / 2500')
 
-    // SVG chart
+    // SVG chart (rec-1 was older, rec-2 newer -> trendItems is [rec-1, rec-2])
     const dots = wrapper.findAll('.chart-dot')
     expect(dots.length).toBe(2)
     expect(wrapper.find('.chart-line').exists()).toBe(true)
 
-    // Hover dot
+    // Hover unedited dot (rec-1)
     await dots[0].trigger('mouseenter')
     await wrapper.vm.$nextTick()
     expect(wrapper.find('.chart-tooltip').exists()).toBe(true)
-    expect(wrapper.find('.chart-tooltip').text()).toContain('第 1 章 · 改动 10%')
+    expect(wrapper.find('.chart-tooltip').text()).toContain('第 1 章 · 未改动')
 
-    await dots[0].trigger('mouseleave')
+    // Hover edited dot (rec-2)
+    await dots[1].trigger('mouseenter')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.chart-tooltip').exists()).toBe(true)
+    expect(wrapper.find('.chart-tooltip').text()).toContain('第 2 章 · 改动 15%')
+
+    await dots[1].trigger('mouseleave')
     await wrapper.vm.$nextTick()
     expect(wrapper.find('.chart-tooltip').exists()).toBe(false)
   })
 
-  it('handles 1 item safely without crashing', async () => {
+  it('handles 1 item safely without crashing and supports missing optional fields', async () => {
     vi.mocked(api.getEditStats).mockResolvedValue({
       limit: 20,
       offset: 0,
@@ -207,13 +252,17 @@ describe('EditStatsPanel', () => {
       items: [
         {
           generation_record_id: 'rec-only',
-          chapter_id: 'chap-1',
-          chapter_sequence_number: 1,
+          chapter_id: null,
+          chapter_sequence_number: null,
+          run_id: null,
+          mode: null,
+          similarity: null,
           applied_at: '2026-11-04T10:00:00Z',
           final_chars: 500,
           edit_ratio: 0,
           changed_chars: 0,
           original_chars: 500,
+          edited: false,
         },
       ],
     })
@@ -226,7 +275,11 @@ describe('EditStatsPanel', () => {
 
     const dots = wrapper.findAll('.chart-dot')
     expect(dots.length).toBe(1)
-    // Polyline should not render for 1 item
     expect(wrapper.find('.chart-line').exists()).toBe(false)
+
+    // Hover item without chapter_sequence_number
+    await dots[0].trigger('mouseenter')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.chart-tooltip').text()).toBe('未改动')
   })
 })

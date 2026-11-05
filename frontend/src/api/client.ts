@@ -30,7 +30,7 @@ import {
   type EvaluationDatasetCreatePayload, type EvaluationDatasetUpdatePayload,
   type EvaluationCaseCreatePayload, type EvaluationCaseUpdatePayload, type EvaluationRunCreatePayload,
   type ClarificationState, type ClarificationAnswerRequest,
-  type EditStatsResponse, type EditStatsParams, type GenerationOriginalResponse,
+  type EditStatsResponse, type EditStatsParams, type GenerationOriginalResponse, type HumanEditMetrics,
 } from './types'
 import { getAuthToken, handleUnauthorized } from '../utils/authSession'
 
@@ -862,7 +862,9 @@ export const api = {
   diffGenerationRecord: (projectId: string, generationId: string, data: GenerationRecordDiffRequest) =>
     request<GenerationRecordDiffResponse>(`/projects/${projectId}/generations/${generationId}/diff`, { method: 'POST', body: JSON.stringify(data) }),
   getGenerationOriginal: (recordId: string) =>
-    request<GenerationOriginalResponse>(`/generation-records/${recordId}/original`),
+    request<GenerationOriginalResponse>(`/generation-records/${encodeURIComponent(recordId)}/original`),
+  refreshEditMetrics: (recordId: string) =>
+    request<HumanEditMetrics>(`/generation-records/${encodeURIComponent(recordId)}/refresh-edit-metrics`, { method: 'POST' }),
   getEditStats: (projectId: string, params?: EditStatsParams) => {
     const query = new URLSearchParams()
     if (params?.limit !== undefined) query.set('limit', String(params.limit))

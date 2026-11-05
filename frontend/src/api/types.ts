@@ -913,12 +913,14 @@ export interface ProgressPayload {
 export interface HumanEditMetrics {
   method?: string
   edited: boolean
+  anchor_version_id?: string | null
+  human_version_id?: string | null
   original_chars: number
   final_chars: number
   changed_chars: number
   changed_original_chars?: number
   inserted_chars?: number
-  similarity?: number
+  similarity?: number | null
   edit_ratio: number
   computed_at?: string
 }
@@ -926,8 +928,6 @@ export interface HumanEditMetrics {
 /** Payload for done SSE event */
 export interface DonePayload {
   message: string
-  generation_record_id?: string
-  human_edit_metrics?: HumanEditMetrics | null
 }
 
 /** Payload for error SSE event */
@@ -1408,6 +1408,7 @@ export interface EditStatsItem {
   changed_chars: number
   edit_ratio: number
   similarity?: number | null
+  edited?: boolean
 }
 
 export interface EditStatsResponse {

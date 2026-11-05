@@ -419,4 +419,47 @@ describe('api generation routes', () => {
     vi.unstubAllGlobals()
     resetUnauthorizedFlag()
   })
+
+  it('calls POST /generation-records/{id}/refresh-edit-metrics and handles 401', async () => {
+    const mockMetrics = {
+      edited: true,
+      original_chars: 100,
+      final_chars: 120,
+      changed_chars: 20,
+      edit_ratio: 0.2,
+    }
+
+    vi.mocked(fetch).mockImplementation(async () =>
+      new Response(JSON.stringify(mockMetrics), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+
+    const res = await api.refreshEditMetrics('rec-99')
+    expect(res).toEqual(mockMetrics)
+    const fetchMock = vi.mocked(fetch)
+    const lastCall = fetchMock.mock.calls[fetchMock.mock.calls.length - 1]
+    expect(String(lastCall[0])).toContain('/generation-records/rec-99/refresh-edit-metrics')
+    expect(lastCall[1]?.method).toBe('POST')
+
+    // 401 unauthorized
+    resetUnauthorizedFlag()
+    const redirectMock = vi.fn()
+    vi.stubGlobal('window', {
+      location: {
+        set href(val: string) { redirectMock(val) },
+      },
+    })
+    vi.mocked(fetch).mockImplementation(async () =>
+      new Response(JSON.stringify({ detail: 'unauthorized' }), { status: 401 }),
+    )
+
+    await expect(api.refreshEditMetrics('rec-99')).rejects.toMatchObject({
+      status: 401,
+    })
+    expect(redirectMock).toHaveBeenCalledWith('/login')
+    vi.unstubAllGlobals()
+    resetUnauthorizedFlag()
+  })
 })

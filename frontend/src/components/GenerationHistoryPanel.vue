@@ -183,6 +183,7 @@ watch(
             v-if="record.status === 'applied' && record.humanEditMetrics"
             class="generation-edit-metric"
             :class="{ 'metric-clean': record.humanEditMetrics.edited === false }"
+            title="采用后你到目前为止改动的比例，随编辑自动更新；刚采用还没改过时显示‘未改动’"
           >
             {{ record.humanEditMetrics.edited === false ? '未改动' : `改动 ${Math.round(record.humanEditMetrics.edit_ratio * 100)}%` }}
           </span>
