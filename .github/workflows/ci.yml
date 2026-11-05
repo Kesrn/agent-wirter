@@ -1,0 +1,137 @@
+name: Backend and Frontend CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+      - hardening/**
+      - frontend/**
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+      - name: Install locked backend dependencies
+        run: uv pip sync --python "$(which python)" backend/requirements-dev.lock
+      - name: Run backend tests one file at a time
+        working-directory: backend
+        run: bash scripts/run_tests_per_file.sh --exclude-pg
+
+  backend-pg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: ai_creative
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U runner -d ai_creative"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://runner@127.0.0.1:5432/ai_creative
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      - name: Install locked backend dependencies
+        run: uv pip sync --python "$(which python)" backend/requirements-dev.lock
+      - name: Run PostgreSQL tests one file at a time
+        working-directory: backend
+        run: bash scripts/run_tests_per_file.sh --pg-only
+      - name: Check PostgreSQL schema parity
+        working-directory: backend
+        env:
+          APP_ENV: development
+          PYTHON_DOTENV_DISABLED: "1"
+          JWT_SECRET: p2-ci-test-only-secret-not-real-00000000000000000000
+        run: >-
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP" TMPDIR="$RUNNER_TEMP"
+          PYTHON_DOTENV_DISABLED=1 APP_ENV=development
+          JWT_SECRET=p2-ci-test-only-secret-not-real-00000000000000000000
+          DATABASE_URL="$DATABASE_URL" python scripts/check_schema_parity.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Run tests
+        working-directory: frontend
+        run: npm run test
+      - name: Build web frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Build desktop frontend
+        working-directory: frontend
+        run: npm run build:desktop
+      - name: Ensure npm lockfiles are unchanged
+        run: git diff --exit-code -- frontend/package.json frontend/package-lock.json
+
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+      - name: Audit runtime dependencies
+        run: uvx --from pip-audit pip-audit -r backend/requirements.lock --no-deps --disable-pip
+      - name: Audit development dependencies
+        run: uvx --from pip-audit pip-audit -r backend/requirements-dev.lock --no-deps --disable-pip
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Audit production frontend dependencies
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
