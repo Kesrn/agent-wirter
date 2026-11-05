@@ -29,6 +29,7 @@ class AiRun(UUIDMixin, TimestampMixin, Base):
     run_type: Mapped[str] = mapped_column(String(50), nullable=False)
     mode: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default=RunStatus.CREATED)
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     current_step: Mapped[str | None] = mapped_column(String(100), nullable=True)
     user_goal: Mapped[str | None] = mapped_column(Text, nullable=True)
 

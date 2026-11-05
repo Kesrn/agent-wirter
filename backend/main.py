@@ -25,6 +25,7 @@ from harness.run_manager import discard_incomplete_runs
 from api.routes import router
 from api.auth import router as auth_router
 from api.body_limit import RequestBodyLimitMiddleware
+from api.request_id import RequestIdMiddleware
 from api.media import router as media_router
 from api.llm_settings import router as llm_settings_router
 from observability.langfuse import log_langfuse_startup_status
@@ -91,8 +92,8 @@ app = FastAPI(
 )
 
 # 中间件顺序很关键：Starlette 里「后添加的在最外层」。
-# 先加请求体大小限制、再加 CORS，CORS 才在外层，413 响应也会带上 CORS 头，
-# 浏览器 JS 才能读到状态码（否则 fetch 只能看到网络错误）。
+# 请求 ID 最外层包住 CORS 与请求体限制，保证 413 和其他提前返回也带 X-Request-ID；
+# CORS 包住请求体限制，413 响应仍带 CORS 头。
 app.add_middleware(RequestBodyLimitMiddleware)
 
 app.add_middleware(
@@ -103,7 +104,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
+
+app.add_middleware(RequestIdMiddleware)
 
 # 上传的图片等文件统一放到 UPLOAD_DIR。这里不再用 StaticFiles 直接挂载目录：
 # /media 下的文件是项目私有资源，改由 api/media.py 提供，需要登录 + 校验项目所有者。

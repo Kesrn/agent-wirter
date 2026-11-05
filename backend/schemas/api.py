@@ -1259,6 +1259,78 @@ class AiRunContextResponse(BaseModel):
     calls: list[AiRunContextCallResponse]
 
 
+class AiRunTraceRunResponse(BaseModel):
+    id: uuid.UUID
+    request_id: str | None = None
+    status: str
+    run_type: str
+    mode: str
+    workflow_key: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    duration_ms: int | None = None
+    error_message: str | None = None
+
+
+class AiRunTraceTotalsResponse(BaseModel):
+    llm_calls: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    cost: float
+    retries: int
+    estimated_calls: int
+    structured_repairs: int
+
+
+class AiRunTraceFailedStepResponse(BaseModel):
+    step_order: int
+    step_name: str
+    agent_name: str | None = None
+    error_message: str | None = None
+
+
+class AiRunTraceLlmCallResponse(BaseModel):
+    id: uuid.UUID
+    agent_name: str | None = None
+    model: str | None = None
+    latency_ms: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    cost: float | None = None
+    retries: int = 0
+    usage_estimated: bool = False
+    structured: dict | None = None
+    error_message: str | None = None
+    rendered_prompt_snapshot: str | None = None
+    prompt_truncated: bool | None = None
+
+
+class AiRunTraceStepResponse(BaseModel):
+    step_order: int
+    step_name: str
+    node_key: str | None = None
+    agent_name: str | None = None
+    status: str
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    duration_ms: int | None = None
+    retry_count: int
+    max_retry: int
+    error_message: str | None = None
+    quality: dict | None = None
+    llm_calls: list[AiRunTraceLlmCallResponse]
+
+
+class AiRunTraceResponse(BaseModel):
+    run: AiRunTraceRunResponse
+    totals: AiRunTraceTotalsResponse
+    failed_step: AiRunTraceFailedStepResponse | None = None
+    steps: list[AiRunTraceStepResponse]
+    truncated: bool = False
+
+
 # ==================== Human Interrupt ====================
 
 class HumanDecisionRequest(BaseModel):

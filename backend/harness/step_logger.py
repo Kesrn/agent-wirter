@@ -8,6 +8,7 @@ step_name 不同 → 幂等键不同 → 可并存。
 from __future__ import annotations
 
 import uuid
+from contextvars import ContextVar, Token
 from datetime import datetime, timezone
 from typing import Any
 
@@ -16,6 +17,33 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.ai_run_step import AiRunStep
 from models.harness_enums import RunStepStatus
+
+
+current_step_id_var: ContextVar[str | None] = ContextVar("current_ai_run_step_id", default=None)
+
+
+def _activate_step_context(step: AiRunStep) -> None:
+    step_id = str(step.id)
+    if current_step_id_var.get() == step_id:
+        return
+    token = current_step_id_var.set(step_id)
+    # This is request/task-local execution state, not an ORM column. It lets the
+    # matching finish/fail callback restore the exact previous ContextVar value.
+    step.__dict__["_step_context_token"] = token
+
+
+def _reset_step_context(step: AiRunStep) -> None:
+    token: Token[str | None] | None = step.__dict__.pop("_step_context_token", None)
+    if token is not None:
+        try:
+            current_step_id_var.reset(token)
+        except ValueError:
+            # A callback can be delivered from a copied task context. Never leave
+            # this step as the current value in that context.
+            if current_step_id_var.get() == str(step.id):
+                current_step_id_var.set(None)
+    elif current_step_id_var.get() == str(step.id):
+        current_step_id_var.set(None)
 
 
 def _idempotency_key(run_id: str | uuid.UUID, step_name: str, revision_round: int) -> str:
@@ -49,6 +77,7 @@ async def start_step(
     )
     found = existing.scalar_one_or_none()
     if found is not None:
+        _activate_step_context(found)
         return found
 
     step = AiRunStep(
@@ -64,6 +93,7 @@ async def start_step(
     )
     db.add(step)
     await db.flush()
+    _activate_step_context(step)
     return step
 
 
@@ -71,20 +101,26 @@ async def finish_step(
     db: AsyncSession, step: AiRunStep, *, output: dict[str, Any] | None = None
 ) -> None:
     """把 step 标记为 SUCCESS，并保存节点输出摘要。"""
-    step.status = RunStepStatus.SUCCESS
-    step.output = output
-    step.ended_at = datetime.now(timezone.utc)
-    await db.flush()
+    try:
+        step.status = RunStepStatus.SUCCESS
+        step.output = output
+        step.ended_at = datetime.now(timezone.utc)
+        await db.flush()
+    finally:
+        _reset_step_context(step)
 
 
 async def fail_step(
     db: AsyncSession, step: AiRunStep, *, error_message: str
 ) -> None:
     """把 step 标记为 FAILED，并保存错误信息。"""
-    step.status = RunStepStatus.FAILED
-    step.error_message = error_message
-    step.ended_at = datetime.now(timezone.utc)
-    await db.flush()
+    try:
+        step.status = RunStepStatus.FAILED
+        step.error_message = error_message
+        step.ended_at = datetime.now(timezone.utc)
+        await db.flush()
+    finally:
+        _reset_step_context(step)
 
 
 async def wait_human_step(
@@ -94,6 +130,9 @@ async def wait_human_step(
 
     用于 human_review、task_card_review、human_clarification 等暂停点。
     """
-    step.status = RunStepStatus.WAITING_HUMAN
-    step.output = payload
-    await db.flush()
+    try:
+        step.status = RunStepStatus.WAITING_HUMAN
+        step.output = payload
+        await db.flush()
+    finally:
+        _reset_step_context(step)

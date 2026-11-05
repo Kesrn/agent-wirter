@@ -101,6 +101,7 @@ from schemas.api import (
     KnowledgeSearchRequest, KnowledgeAskRequest,
     EvaluationRunCreate, EvaluationRunResponse, EvaluationResultResponse,
     AiRunResponse, AiRunListItemResponse, AiRunStepResponse, AiRunContextResponse, AiRunContextCallResponse,
+    AiRunTraceResponse,
     HumanDecisionRequest, HumanDecisionResponse,
     ClarificationAnswerRequest, ClarificationResponse,
     WritingMemoryStagingResponse,
@@ -124,6 +125,7 @@ from harness.run_manager import (
     create_run, mark_running, mark_waiting_human, mark_completed, mark_failed, mark_cancelled,
     build_expert_snapshot, discard_run_artifacts, workflow_to_snapshot,
 )
+from services.ai_run_trace import build_ai_run_trace
 from harness.step_logger import start_step, finish_step, fail_step
 from harness.human_interrupt_service import (
     create_interrupt, resolve_interrupt, get_interrupt_by_run,
@@ -5228,6 +5230,43 @@ async def get_ai_run_context(
         status=run.status,
         workflow_key=run.workflow_key,
         calls=calls,
+    )
+
+
+@router.get("/ai-runs/{run_id}/trace", response_model=AiRunTraceResponse)
+async def get_ai_run_trace(
+    run_id: str,
+    include_prompts: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """返回一次 Run 的限量汇总追踪；默认不暴露 prompt 快照。"""
+    rid = _to_uuid(run_id)
+    run_result = await db.execute(select(AiRun).where(AiRun.id == rid))
+    run = run_result.scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run 不存在")
+    await _verify_project_owner(run.project_id, user.id, db)
+
+    steps_result = await db.execute(
+        select(AiRunStep)
+        .where(AiRunStep.run_id == rid)
+        .order_by(
+            AiRunStep.step_order,
+            AiRunStep.started_at.nulls_last(),
+            AiRunStep.created_at,
+        )
+    )
+    logs_result = await db.execute(
+        select(LlmCallLog)
+        .where(LlmCallLog.run_id == rid)
+        .order_by(LlmCallLog.created_at, LlmCallLog.id)
+    )
+    return build_ai_run_trace(
+        run,
+        list(steps_result.scalars().all()),
+        list(logs_result.scalars().all()),
+        include_prompts=include_prompts,
     )
 
 

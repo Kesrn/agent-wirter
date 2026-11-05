@@ -193,3 +193,86 @@ async def test_logged_provider_prompt_snapshot_no_truncation(async_db):
     assert "short sys" in log.rendered_prompt_snapshot
     assert "short usr" in log.rendered_prompt_snapshot
     assert log.request is None or log.request.get("prompt_snapshot_truncated") is not True
+
+
+@pytest.mark.asyncio
+async def test_logged_provider_records_request_id(async_db):
+    from api.request_id import request_id_var
+    from harness.llm_call_logger import LoggedLLMProvider
+
+    token = request_id_var.set("trace-request-789")
+    try:
+        await LoggedLLMProvider(
+            _StubProvider(), run_id=uuid.uuid4(), agent_name="writer", provider_name="stub",
+        ).generate("sys", "usr")
+    finally:
+        request_id_var.reset(token)
+
+    log = (await async_db.execute(select(LlmCallLog))).scalar_one()
+    assert log.request["request_id"] == "trace-request-789"
+
+
+@pytest.mark.asyncio
+async def test_parallel_node_calls_use_their_own_step_context(async_db):
+    from harness.llm_call_logger import LoggedLLMProvider
+    from harness.step_logger import current_step_id_var
+    from models.ai_run import AiRun
+    from models.ai_run_step import AiRunStep
+
+    run = AiRun(
+        project_id=uuid.uuid4(), run_type="CHAPTER_DRAFT", mode="full_pipeline", status="RUNNING",
+    )
+    steps = [
+        AiRunStep(run_id=run.id, step_order=1, step_name="critic_parallel", agent_name="critic", status="RUNNING"),
+        AiRunStep(run_id=run.id, step_order=2, step_name="consistency_parallel", agent_name="critic", status="RUNNING"),
+    ]
+    async_db.add(run)
+    await async_db.flush()
+    for step in steps:
+        step.run_id = run.id
+    async_db.add_all(steps)
+    await async_db.commit()
+
+    async def call(step_id, marker):
+        token = current_step_id_var.set(str(step_id))
+        try:
+            provider = LoggedLLMProvider(
+                _StubProvider(),
+                run_id=run.id,
+                step_id=uuid.uuid4(),  # 必须优先使用当前并行任务的上下文 ID。
+                agent_name="critic",
+                provider_name="stub",
+            )
+            await provider.generate("sys", marker)
+        finally:
+            current_step_id_var.reset(token)
+
+    await asyncio.gather(call(steps[0].id, "parallel-left"), call(steps[1].id, "parallel-right"))
+    logs = list((await async_db.execute(select(LlmCallLog).where(LlmCallLog.run_id == run.id))).scalars())
+    by_marker = {"parallel-left": None, "parallel-right": None}
+    for log in logs:
+        for marker in by_marker:
+            if marker in log.rendered_prompt_snapshot:
+                by_marker[marker] = str(log.step_id)
+    assert by_marker == {
+        "parallel-left": str(steps[0].id),
+        "parallel-right": str(steps[1].id),
+    }
+
+
+@pytest.mark.asyncio
+async def test_logger_falls_back_to_running_step_heuristic(async_db, monkeypatch):
+    from harness.llm_call_logger import LoggedLLMProvider
+
+    expected_step = uuid.uuid4()
+    provider = LoggedLLMProvider(
+        _StubProvider(), run_id=uuid.uuid4(), step_id=None, agent_name="critic", provider_name="stub",
+    )
+
+    async def resolve():
+        return str(expected_step)
+
+    monkeypatch.setattr(provider, "_resolve_running_step_id", resolve)
+    await provider.generate("sys", "fallback-call")
+    log = (await async_db.execute(select(LlmCallLog))).scalar_one()
+    assert str(log.step_id) == str(expected_step)
