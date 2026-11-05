@@ -350,10 +350,17 @@ async def _ensure_incremental_columns(conn):
         "superseded_by_execution_id": "CHAR(36)",
         "human_edit_metrics": "JSON",
     })
+    # 038：请求号关联。新库由 metadata 建列，旧 SQLite 库需补列。
+    await add_missing_columns("ai_runs", {
+        "request_id": "VARCHAR(64)",
+    })
     # 036：索引与列分别补齐（列存在但索引缺失的库也必须建索引）
     await conn.execute(text(
         "CREATE INDEX IF NOT EXISTS ix_generation_records_superseded_by "
         "ON generation_records (superseded_by_execution_id)"
+    ))
+    await conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_ai_runs_request_id ON ai_runs (request_id)"
     ))
 
 

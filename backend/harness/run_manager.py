@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.request_id import request_id_var
 from models.ai_run import AiRun
 from models.harness_enums import RunStatus
 from models.llm_call_log import LlmCallLog
@@ -77,6 +78,7 @@ async def create_run(
         run_type=run_type,
         mode=mode,
         status=RunStatus.CREATED,
+        request_id=request_id_var.get(),
         user_goal=user_goal,
         model_config_snapshot=sanitize_model_config_snapshot(model_config_snapshot),
         thread_id=thread_id,

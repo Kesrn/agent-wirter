@@ -21,7 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agents.llm_provider import _CALL_METADATA
 from agents.llm_types import LLMResult, TokenUsage
 from agents.structured import current_structured_log_context
+from api.request_id import request_id_var
 from config.settings import settings
+from harness.step_logger import current_step_id_var
 from models.llm_call_log import LlmCallLog
 
 logger = logging.getLogger(__name__)
@@ -270,14 +272,18 @@ class LoggedLLMProvider:
             request_meta: dict[str, Any] = {"prompt_snapshot_truncated": True} if truncated else {}
             request_meta["retries"] = retries
             request_meta["usage_estimated"] = bool(usage and usage.estimated)
+            request_id = request_id_var.get()
+            if request_id:
+                request_meta["request_id"] = request_id
             if finish_reason is not None:
                 request_meta["finish_reason"] = finish_reason
             structured_context = current_structured_log_context()
             if structured_context is not None:
                 request_meta["structured"] = structured_context.snapshot()
+                request_meta["structured_context_id"] = structured_context.context_id
             # 解析 step_id：不依赖 aupdate_state 注入（on_chain_start 的 aupdate_state
             # 在并行/动态节点下有竞态，节点读到 None）。改为查 run 下最新 RUNNING step。
-            step_id = self._step_id
+            step_id = current_step_id_var.get() or self._step_id
             if step_id is None and self._run_id is not None:
                 step_id = await self._resolve_running_step_id()
             log = LlmCallLog(

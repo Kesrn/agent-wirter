@@ -56,6 +56,24 @@ async def test_create_run_defaults(async_db):
 
 
 @pytest.mark.asyncio
+async def test_create_run_captures_current_request_id(async_db):
+    from api.request_id import request_id_var
+    from harness.run_manager import create_run
+
+    token = request_id_var.set("request-run-123")
+    try:
+        run = await create_run(
+            async_db,
+            project_id=uuid.uuid4(),
+            run_type="CHAPTER_DRAFT",
+            mode="full_pipeline",
+        )
+    finally:
+        request_id_var.reset(token)
+    assert run.request_id == "request-run-123"
+
+
+@pytest.mark.asyncio
 async def test_run_lifecycle_transitions(async_db):
     from harness.run_manager import create_run, mark_running, mark_waiting_human, mark_completed, mark_failed, mark_cancelled
     from models.harness_enums import RunStatus
@@ -130,6 +148,27 @@ async def test_step_start_finish_fail(async_db):
     assert step2.status == RunStepStatus.FAILED
     assert step2.error_message == "LLM 空返回"
     assert step2.ended_at is not None
+
+
+@pytest.mark.asyncio
+async def test_step_logger_sets_and_resets_current_step_context(async_db):
+    from harness.run_manager import create_run
+    from harness.step_logger import current_step_id_var, fail_step, finish_step, start_step
+
+    run = await create_run(async_db, project_id=uuid.uuid4(), run_type="CHAPTER_DRAFT", mode="full_pipeline")
+    success = await start_step(
+        async_db, run_id=run.id, step_order=1, step_name="first", agent_name="writer",
+    )
+    assert current_step_id_var.get() == str(success.id)
+    await finish_step(async_db, success)
+    assert current_step_id_var.get() is None
+
+    failed = await start_step(
+        async_db, run_id=run.id, step_order=2, step_name="second", agent_name="critic",
+    )
+    assert current_step_id_var.get() == str(failed.id)
+    await fail_step(async_db, failed, error_message="test failure")
+    assert current_step_id_var.get() is None
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, TypeVar
@@ -46,6 +47,7 @@ class StructuredLogContext:
     """Mutable trace shared with LoggedLLMProvider until validation finishes."""
 
     schema_name: str
+    context_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     repairs: int = 0
     ok: bool = False
     _logs: list[tuple[str, StructuredLogUpdater]] = field(default_factory=list)

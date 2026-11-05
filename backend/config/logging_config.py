@@ -13,6 +13,8 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from api.request_id import request_id_var
+
 
 _SK_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9._-]{8,}")
 _BEARER_TOKEN_RE = re.compile(
@@ -49,6 +51,14 @@ class SensitiveDataFilter(logging.Filter):
         return True
 
 
+class RequestIdFilter(logging.Filter):
+    """为每条日志填入当前请求号；非请求上下文使用 ``-``。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = request_id_var.get() or "-"
+        return True
+
+
 def setup_logging(log_level: str = "INFO", log_file: str = "", max_bytes: int = 10 * 1024 * 1024, backup_count: int = 5, sql_echo: bool = False) -> None:
     """配置全局日志系统，应在应用启动时调用一次。
 
@@ -69,7 +79,7 @@ def setup_logging(log_level: str = "INFO", log_file: str = "", max_bytes: int = 
     if not any(isinstance(h, logging.StreamHandler) and h.stream is sys.stderr for h in root_logger.handlers):
         console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s")
+            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s [request_id=%(request_id)s] - %(message)s")
         )
         root_logger.addHandler(console_handler)
 
@@ -84,11 +94,13 @@ def setup_logging(log_level: str = "INFO", log_file: str = "", max_bytes: int = 
             encoding="utf-8",
         )
         file_handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s")
+            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s [request_id=%(request_id)s] - %(message)s")
         )
         root_logger.addHandler(file_handler)
 
     for handler in root_logger.handlers:
+        if not any(isinstance(item, RequestIdFilter) for item in handler.filters):
+            handler.addFilter(RequestIdFilter())
         if not any(isinstance(item, SensitiveDataFilter) for item in handler.filters):
             handler.addFilter(SensitiveDataFilter())
 
