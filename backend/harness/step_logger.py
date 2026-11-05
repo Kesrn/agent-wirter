@@ -22,6 +22,15 @@ from models.harness_enums import RunStepStatus
 current_step_id_var: ContextVar[str | None] = ContextVar("current_ai_run_step_id", default=None)
 
 
+def record_fewshot_example_ids(step: AiRunStep, example_ids: list[str]) -> None:
+    """Add used human-example IDs to the traceable step input snapshot."""
+    if not example_ids:
+        return
+    snapshot = dict(step.input or {})
+    snapshot["fewshot_example_ids"] = [str(example_id) for example_id in example_ids]
+    step.input = snapshot
+
+
 def _activate_step_context(step: AiRunStep) -> None:
     step_id = str(step.id)
     if current_step_id_var.get() == step_id:
