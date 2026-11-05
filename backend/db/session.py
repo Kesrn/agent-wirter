@@ -7,6 +7,7 @@ FastAPI 路由使用 get_db 作为依赖注入，每个请求拿到一个独立 
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy import event, text
+from pathlib import Path
 
 from config.settings import settings
 
@@ -88,19 +89,48 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db():
-    """初始化数据库：创建所有表。
+    """初始化数据库：桌面 SQLite 可建表，服务器数据库由 Alembic 管理。
 
     Alembic 是正式迁移方案，但桌面端/演示环境需要“开箱即用”，所以这里会根据
-    SQLAlchemy metadata 创建缺失表。SQLite 桌面端还会走 _ensure_incremental_columns，
-    让已安装用户的数据文件能跟随小版本新增字段继续使用。
+    AUTO_CREATE_TABLES 决定是否按 SQLAlchemy metadata 创建缺失表。SQLite 桌面端
+    默认仍会创建缺失表并走 _ensure_incremental_columns，兼容既有用户数据文件。
+    PostgreSQL 默认不自动建表，而是要求数据库已升级到 Alembic head。
     """
     from models.base import Base
     from models import project, chapter, document, expert, world_entry, character, character_relation, character_event, outline, hidden_thread, user, llm_config, chapter_version, document_version, generation_record, chapter_review_note, evaluation, project_source, project_source_chunk, project_knowledge_fact, extraction_pipeline, split_generation, structured_knowledge, knowledge_qa_session, knowledge_qa_message, retrieval_index, retrieval_vector, retrieval_index_job, chat_conversation, change_set  # noqa: F401
+
+    if not settings.AUTO_CREATE_TABLES:
+        await _verify_alembic_head()
+        return
 
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_incremental_columns(conn)
         await _validate_sqlite_schema(conn)
+
+
+async def _get_database_alembic_heads() -> set[str]:
+    """Read the applied Alembic revisions from the configured database."""
+    async with _engine.connect() as conn:
+        result = await conn.execute(text("SELECT version_num FROM alembic_version"))
+        return {str(row[0]) for row in result.fetchall()}
+
+
+async def _verify_alembic_head() -> None:
+    """Fail startup unless the configured database is at every script head."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    expected_heads = set(ScriptDirectory.from_config(config).get_heads())
+    try:
+        database_heads = await _get_database_alembic_heads()
+    except Exception:
+        database_heads = set()
+    if database_heads != expected_heads:
+        raise RuntimeError(
+            "数据库未处于 Alembic head；请先执行 `alembic upgrade head`"
+        )
 
 
 async def _ensure_incremental_columns(conn):

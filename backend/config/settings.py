@@ -81,6 +81,14 @@ class Settings:
     # Web/服务端默认使用 PostgreSQL asyncpg；Electron 桌面端会在 desktop_server.py
     # 启动前覆盖为 sqlite+aiosqlite:///<用户数据目录>/ai_creative.sqlite3。
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_creative")
+    # 桌面 SQLite 默认允许开箱建表；服务器 PostgreSQL 默认只允许 Alembic 管理 schema。
+    AUTO_CREATE_TABLES: bool = _env_flag(
+        "AUTO_CREATE_TABLES",
+        os.getenv(
+            "DATABASE_URL",
+            "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_creative",
+        ).split(":", 1)[0].startswith("sqlite"),
+    )
 
     # --- LLM ---
     # 全局默认 LLM 配置。用户在设置页保存的 LLMConfig 优先级更高；
