@@ -90,6 +90,77 @@ def test_compute_uses_paragraph_fast_path_for_thirty_thousand_chars():
     assert elapsed < 2.0
 
 
+def _long_sentence_set(marker, fill, count=300, width=100):
+    sentences = []
+    for index in range(count):
+        label = f"{marker}{index:04d}"
+        body = fill * (width - len(label) - 1)
+        sentences.append(f"{label}{body}。")
+    return sentences
+
+
+def test_compute_single_paragraph_ten_percent_change_under_two_seconds():
+    import time
+    from services.edit_metrics_service import compute_edit_metrics
+
+    original_sentences = _long_sentence_set("原", "甲")
+    edited_sentences = list(original_sentences)
+    for index in range(0, 300, 10):
+        edited_sentences[index] = _long_sentence_set("新", "乙", count=1)[0].replace("0000", f"{index:04d}")
+    original = "".join(original_sentences)
+    final = "".join(edited_sentences)
+
+    started = time.perf_counter()
+    result = compute_edit_metrics(original, final, anchor_version_id="a", human_version_id="h")
+    elapsed = time.perf_counter() - started
+
+    assert "\n" not in original and "\n" not in final
+    assert len(original) == len(final) == 30_000
+    assert 0.09 <= result["edit_ratio"] <= 0.11
+    assert result["approximate"] is False
+    assert elapsed < 2.0
+
+
+def test_compute_full_rewrite_with_different_paragraph_segmentation_under_two_seconds():
+    import time
+    from services.edit_metrics_service import compute_edit_metrics
+
+    original = "\n".join(_long_sentence_set("原", "甲", count=300, width=100))
+    final = "\n".join(_long_sentence_set("新", "乙", count=100, width=300))
+
+    started = time.perf_counter()
+    result = compute_edit_metrics(original, final, anchor_version_id="a", human_version_id="h")
+    elapsed = time.perf_counter() - started
+
+    assert len(original.replace("\n", "")) == len(final.replace("\n", "")) == 30_000
+    assert result["edit_ratio"] == 1.0
+    assert result["approximate"] is True
+    assert result["changed_chars"] == 30_000
+    assert result["changed_original_chars"] == 30_000
+    assert result["inserted_chars"] == 0
+    assert elapsed < 2.0
+
+
+def test_compute_full_rewrite_as_one_paragraph_without_newlines_under_two_seconds():
+    import time
+    from services.edit_metrics_service import compute_edit_metrics
+
+    original = "甲" * 30_000
+    final = "乙" * 30_000
+
+    started = time.perf_counter()
+    result = compute_edit_metrics(original, final, anchor_version_id="a", human_version_id="h")
+    elapsed = time.perf_counter() - started
+
+    assert "\n" not in original and "\n" not in final
+    assert result["approximate"] is True
+    assert result["edit_ratio"] == 1.0
+    assert result["changed_chars"] == result["original_chars"] == 30_000
+    assert result["changed_original_chars"] == 30_000
+    assert result["inserted_chars"] == 0
+    assert elapsed < 2.0
+
+
 def _version(chapter_id, number, content, source="manual", *, run_id=None, rollback_from=None):
     return ChapterVersion(
         chapter_id=chapter_id,
@@ -297,6 +368,38 @@ def test_ensure_fresh_metrics_computation_failure_keeps_old_cache(db_factory, mo
             monkeypatch.setattr(edit_metrics_service, "compute_edit_metrics", explode)
             await edit_metrics_service.ensure_fresh_metrics(db, [record])
             assert record.human_edit_metrics == old
+
+    asyncio.run(run())
+
+
+def test_ensure_fresh_metrics_computes_in_worker_thread(db_factory, monkeypatch):
+    import threading
+    from services import edit_metrics_service
+
+    compute_threads = []
+
+    def capture_thread(*args, **kwargs):
+        compute_threads.append(threading.get_ident())
+        return {"method": "difflib-v1", "approximate": False}
+
+    monkeypatch.setattr(edit_metrics_service, "compute_edit_metrics", capture_thread)
+
+    async def run():
+        loop_thread = threading.get_ident()
+        async with db_factory() as db:
+            project, chapter = await _chapter(db)
+            anchor = _version(chapter.id, 1, "AI原稿", "ai_approve", run_id="11111111-1111-1111-1111-111111111111")
+            manual = _version(chapter.id, 2, "人工修改", "manual")
+            db.add_all([anchor, manual])
+            await db.flush()
+            record = _record(project, chapter, anchor)
+            db.add(record)
+            await db.flush()
+
+            await edit_metrics_service.ensure_fresh_metrics(db, [record])
+
+        assert compute_threads
+        assert compute_threads[0] != loop_thread
 
     asyncio.run(run())
 

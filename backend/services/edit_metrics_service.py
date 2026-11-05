@@ -6,7 +6,9 @@ the applied timestamp, so metric refreshes explicitly preserve it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
@@ -21,12 +23,23 @@ from models.generation_record import GenerationRecord
 from services.chapter_quality import calculate_edit_change_metrics, count_non_space_chars, normalize_for_comparison
 
 logger = logging.getLogger(__name__)
+MAX_EXACT_DIFF_CHARS = 1500
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[。！？；\n])")
 
 
 def _paragraphs(text: str) -> list[str]:
     # Keep paragraph boundaries as alignment hints, but strip all whitespace from
     # each paragraph because whitespace is not part of the published metric.
     return [normalize_for_comparison(part) for part in (text or "").splitlines() if normalize_for_comparison(part)]
+
+
+def _sentence_units(text: str) -> list[str]:
+    """Split a changed paragraph block into punctuation/newline aligned units."""
+    return [
+        normalized
+        for part in _SENTENCE_BOUNDARY.split(text or "")
+        if (normalized := normalize_for_comparison(part))
+    ]
 
 
 def compute_edit_metrics(
@@ -47,25 +60,50 @@ def compute_edit_metrics(
     if normalized_original == normalized_final:
         changed_chars = changed_original_chars = inserted_chars = 0
         similarity = 1.0
+        approximate = False
     else:
         source_paragraphs = _paragraphs(original)
         final_paragraphs = _paragraphs(final)
         paragraph_matcher = SequenceMatcher(None, source_paragraphs, final_paragraphs, autojunk=False)
         changed_chars = changed_original_chars = inserted_chars = 0
         matching_chars = 0.0
+        approximate = False
         for tag, i1, i2, j1, j2 in paragraph_matcher.get_opcodes():
-            old_block = "".join(source_paragraphs[i1:i2])
-            new_block = "".join(final_paragraphs[j1:j2])
+            # Keep paragraph boundaries as sentence-alignment hints, then normalize
+            # them away before counting or doing exact character comparisons.
+            old_block = "\n".join(source_paragraphs[i1:i2])
+            new_block = "\n".join(final_paragraphs[j1:j2])
             if tag == "equal":
-                matching_chars += len(old_block)
+                matching_chars += len(normalize_for_comparison(old_block))
                 continue
-            block_similarity, block_changed, block_original, block_inserted = calculate_edit_change_metrics(
-                old_block, new_block,
-            )
-            changed_chars += block_changed
-            changed_original_chars += block_original
-            inserted_chars += block_inserted
-            matching_chars += block_similarity * (len(old_block) + len(new_block)) / 2
+            old_units = _sentence_units(old_block)
+            new_units = _sentence_units(new_block)
+            sentence_matcher = SequenceMatcher(None, old_units, new_units, autojunk=True)
+            for sentence_tag, si1, si2, sj1, sj2 in sentence_matcher.get_opcodes():
+                old_chunk = "".join(old_units[si1:si2])
+                new_chunk = "".join(new_units[sj1:sj2])
+                if sentence_tag == "equal":
+                    matching_chars += len(old_chunk)
+                    continue
+
+                old_len, new_len = len(old_chunk), len(new_chunk)
+                if max(old_len, new_len) <= MAX_EXACT_DIFF_CHARS:
+                    block_similarity, block_changed, block_original, block_inserted = calculate_edit_change_metrics(
+                        old_chunk, new_chunk,
+                    )
+                    matching_chars += block_similarity * (old_len + new_len) / 2
+                else:
+                    # A conservative bounded-cost fallback for whole-chapter rewrites
+                    # or a single oversized sentence. Do not run quadratic character
+                    # matching on these blocks.
+                    block_changed = max(old_len, new_len)
+                    block_original = old_len
+                    block_inserted = max(0, new_len - old_len)
+                    approximate = True
+
+                changed_chars += block_changed
+                changed_original_chars += block_original
+                inserted_chars += block_inserted
         denominator = len(normalized_original) + len(normalized_final)
         similarity = (2 * matching_chars / denominator) if denominator else 1.0
 
@@ -82,6 +120,7 @@ def compute_edit_metrics(
         "inserted_chars": inserted_chars,
         "similarity": round(max(0.0, min(1.0, similarity)), 4),
         "edit_ratio": round(edit_ratio, 4),
+        "approximate": approximate,
         "computed_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -264,7 +303,8 @@ async def ensure_fresh_metrics(
             original = content_by_id[anchor.id]
             final = content_by_id[human.id] if human is not None else original
             applied_at = record.updated_at
-            record.human_edit_metrics = compute_edit_metrics(
+            record.human_edit_metrics = await asyncio.to_thread(
+                compute_edit_metrics,
                 original,
                 final,
                 anchor_version_id=anchor.id,

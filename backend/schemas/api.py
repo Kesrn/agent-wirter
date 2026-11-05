@@ -793,6 +793,7 @@ class DocumentVersionDiffResponse(BaseModel):
 # --- AI 生成历史 ---
 class HumanEditMetricsResponse(BaseModel):
     method: str
+    approximate: bool = False
     edited: bool
     anchor_version_id: str
     human_version_id: str | None
