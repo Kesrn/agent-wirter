@@ -205,10 +205,12 @@ onMounted(() => {
             v-if="hoveredItem"
             class="chart-tooltip"
             :style="{ left: `${tooltipX}px`, top: `${Math.max(0, tooltipY - 28)}px` }"
+            :title="hoveredItem.approximate ? '改动较大，按保守估算' : undefined"
           >
             <span v-if="hoveredItem.chapter_sequence_number">第 {{ hoveredItem.chapter_sequence_number }} 章 · </span>
             <span v-if="hoveredItem.edited === false || hoveredItem.edit_ratio === 0">未改动</span>
-            <span v-else>改动 {{ formatPercent(hoveredItem.edit_ratio) }}</span>
+            <span v-else>改动{{ hoveredItem.approximate ? '约 ' : ' ' }}{{ formatPercent(hoveredItem.edit_ratio) }}</span>
+            <span v-if="hoveredItem.approximate">（改动较大，按保守估算）</span>
           </div>
         </div>
       </div>

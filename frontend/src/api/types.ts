@@ -912,6 +912,7 @@ export interface ProgressPayload {
 
 export interface HumanEditMetrics {
   method?: string
+  approximate?: boolean
   edited: boolean
   anchor_version_id?: string | null
   human_version_id?: string | null
@@ -1357,7 +1358,7 @@ export interface RunCreatedPayload {
 
 export interface RunTraceRun {
   id: string
-  request_id: string
+  request_id?: string | null
   status: string
   run_type?: string | null
   mode?: string | null
@@ -1405,6 +1406,7 @@ export interface RunTraceLlmCall {
   latency_ms?: number | null
   input_tokens?: number | null
   output_tokens?: number | null
+  total_tokens?: number | null
   cost?: number | null
   retries?: number | null
   usage_estimated?: boolean | null
@@ -1498,6 +1500,11 @@ export interface EditStatsItem {
   edit_ratio: number
   similarity?: number | null
   edited?: boolean
+  approximate?: boolean
+}
+
+export interface GenerationRecordEditMetricsRefreshResponse {
+  human_edit_metrics: HumanEditMetrics | null
 }
 
 export interface EditStatsResponse {

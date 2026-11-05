@@ -23,24 +23,33 @@ const is404 = ref(false)
 
 const includePrompts = ref(false)
 const showPromptConfirm = ref(false)
-const copied = ref(false)
+type CopyStatus = 'idle' | 'copied' | 'failed'
+const copyStatus = ref<CopyStatus>('idle')
+let copyTimeout: ReturnType<typeof setTimeout> | null = null
 const expandedSteps = ref<Set<number>>(new Set())
 
 const closeBtnRef = ref<HTMLButtonElement | null>(null)
 let previousFocusedElement: HTMLElement | null = null
+let latestRequestId = 0
 
-async function loadTrace(withPrompts: boolean) {
+async function loadTrace(withPrompts: boolean, rollbackPromptState?: boolean) {
   if (!props.runId) return
+  const currentRequestId = ++latestRequestId
   loading.value = true
   error.value = ''
   is404.value = false
   try {
     const data = await api.getRunTrace(props.runId, { includePrompts: withPrompts })
+    if (currentRequestId !== latestRequestId) return
     trace.value = data
     if (data.failed_step) {
       expandedSteps.value.add(data.failed_step.step_order)
     }
   } catch (e: unknown) {
+    if (currentRequestId !== latestRequestId) return
+    if (rollbackPromptState !== undefined) {
+      includePrompts.value = rollbackPromptState
+    }
     if (e instanceof ApiError && e.status === 404) {
       is404.value = true
       error.value = '找不到这次运行的追踪'
@@ -50,7 +59,9 @@ async function loadTrace(withPrompts: boolean) {
       error.value = '加载追踪数据失败'
     }
   } finally {
-    loading.value = false
+    if (currentRequestId === latestRequestId) {
+      loading.value = false
+    }
   }
 }
 
@@ -77,8 +88,9 @@ function toggleStep(stepOrder: number) {
 
 function handlePromptToggleClick() {
   if (includePrompts.value) {
+    const previous = includePrompts.value
     includePrompts.value = false
-    loadTrace(false)
+    loadTrace(false, previous)
   } else {
     showPromptConfirm.value = true
   }
@@ -86,8 +98,9 @@ function handlePromptToggleClick() {
 
 function confirmIncludePrompts() {
   showPromptConfirm.value = false
+  const previous = includePrompts.value
   includePrompts.value = true
-  loadTrace(true)
+  loadTrace(true, previous)
 }
 
 function cancelIncludePrompts() {
@@ -96,18 +109,19 @@ function cancelIncludePrompts() {
 
 async function copyRequestId() {
   if (!trace.value?.run.request_id) return
+  if (copyTimeout) clearTimeout(copyTimeout)
   try {
-    if (navigator?.clipboard?.writeText) {
-      await navigator.clipboard.writeText(trace.value.run.request_id)
+    if (!navigator?.clipboard?.writeText) {
+      throw new Error('Clipboard API unavailable')
     }
-    copied.value = true
-    setTimeout(() => {
-      copied.value = false
-    }, 2000)
+    await navigator.clipboard.writeText(trace.value.run.request_id)
+    copyStatus.value = 'copied'
   } catch {
-    // Graceful fallback
-    copied.value = false
+    copyStatus.value = 'failed'
   }
+  copyTimeout = setTimeout(() => {
+    copyStatus.value = 'idle'
+  }, 2500)
 }
 
 const totalDurationMs = computed(() => {
@@ -201,6 +215,14 @@ onBeforeUnmount(() => {
 
       <!-- Loaded Content -->
       <div v-else-if="trace" class="trace-body">
+        <!-- Reload Error Banner (visible when data already exists) -->
+        <div v-if="error" class="trace-alert trace-alert-danger trace-reload-error" role="alert">
+          <div class="reload-error-content">
+            <span class="error-msg">{{ error }}</span>
+            <button type="button" class="btn-retry" @click="loadTrace(includePrompts)">重试</button>
+          </div>
+        </div>
+
         <!-- Truncated Banner -->
         <div v-if="trace.truncated" class="trace-alert trace-alert-warning" role="alert">
           <span class="alert-icon">⚠️</span>
@@ -265,7 +287,7 @@ onBeforeUnmount(() => {
               class="btn-copy-req"
               @click="copyRequestId"
             >
-              {{ copied ? '已复制' : '复制' }}
+              {{ copyStatus === 'copied' ? '已复制' : copyStatus === 'failed' ? '复制失败，请手动选择' : '复制' }}
             </button>
           </div>
         </div>
@@ -562,6 +584,18 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--status-error, #ef4444) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--status-error, #ef4444) 35%, transparent);
   color: var(--status-error, #dc2626);
+}
+
+.trace-reload-error {
+  margin-bottom: 2px;
+}
+
+.reload-error-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 12px;
 }
 
 .failed-banner-content {

@@ -184,6 +184,7 @@ describe('EditStatsPanel', () => {
           changed_chars: 45,
           original_chars: 300,
           edited: true,
+          approximate: true,
         },
         {
           generation_record_id: 'rec-1',
@@ -225,11 +226,12 @@ describe('EditStatsPanel', () => {
     expect(wrapper.find('.chart-tooltip').exists()).toBe(true)
     expect(wrapper.find('.chart-tooltip').text()).toContain('第 1 章 · 未改动')
 
-    // Hover edited dot (rec-2)
+    // Hover edited dot (rec-2, approximate=true)
     await dots[1].trigger('mouseenter')
     await wrapper.vm.$nextTick()
     expect(wrapper.find('.chart-tooltip').exists()).toBe(true)
-    expect(wrapper.find('.chart-tooltip').text()).toContain('第 2 章 · 改动 15%')
+    expect(wrapper.find('.chart-tooltip').text()).toContain('第 2 章 · 改动约 15%')
+    expect(wrapper.find('.chart-tooltip').text()).toContain('改动较大，按保守估算')
 
     await dots[1].trigger('mouseleave')
     await wrapper.vm.$nextTick()
