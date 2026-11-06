@@ -1,0 +1,95 @@
+name: Build Windows Desktop EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - ".github/workflows/build-windows-desktop.yml"
+
+jobs:
+  build-windows-exe:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Create backend virtualenv
+        run: python -m venv backend\venv
+
+      - name: Install backend dependencies
+        run: |
+          backend\venv\Scripts\python.exe -m pip install --upgrade pip
+          backend\venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+          backend\venv\Scripts\python.exe -m pip install "pyinstaller>=6.0.0"
+
+      - name: Generate desktop assets
+        working-directory: frontend
+        run: npm run assets:desktop
+
+      - name: Build embedded backend
+        working-directory: frontend
+        run: npm run backend:build
+
+      # 打包后 FTS5 自动化验收（文档 RAG增强评估_小说检索方法论引入.md §6）：
+      # 检索索引依赖 SQLite FTS5，打包产物（PyInstaller 捆绑运行时）必须实际执行
+      # CREATE VIRTUAL TABLE ... USING fts5 建表 + 中文插入/检索/bm25 排序断言。
+      # 直接对 npm run backend:build 产出的实际后端可执行文件（frontend\backend-dist\
+      # ai-creative-backend.exe，由 build-backend.mjs 以 --name ai-creative-backend
+      # 打到 frontend\backend-dist）运行 --verify-fts5 自检：desktop_server.py 内联
+      # 等价断言（建表/中文插入/MATCH/bm25），退出码 0 = 通过，非 0 = 构建失败。
+      - name: Smoke-test packaged SQLite FTS5 support
+        run: |
+          if (-not (Test-Path 'frontend\backend-dist\ai-creative-backend.exe')) {
+            throw 'backend:build 产物未找到: frontend\backend-dist\ai-creative-backend.exe'
+          }
+          frontend\backend-dist\ai-creative-backend.exe --verify-fts5
+
+      - name: Build desktop frontend
+        working-directory: frontend
+        run: npm run build:desktop
+
+      - name: Build Windows installer
+        working-directory: frontend
+        run: npx electron-builder --win
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-creative-platform-windows-exe
+          path: |
+            frontend/release/*.exe
+            frontend/release/*.blockmap
+            frontend/release/builder-*.yml
+          if-no-files-found: error
+
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-creative-platform-windows-build-diagnostics
+          path: |
+            frontend/release/**
+            frontend/.pyinstaller-build/**
+            frontend/.pyinstaller-spec/**
+          if-no-files-found: ignore

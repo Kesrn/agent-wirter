@@ -1,29 +1,45 @@
 import {
   API_BASE_URL,
   type ApiProject, type ApiChapter, type ApiDocument, type ApiDocumentVersion, type ApiExpert, type ApiWorldEntry, type ApiCharacter,
-  type ApiCharacterRelation, type ApiOutline, type ApiHiddenThread,
-  type ProjectCreatePayload, type ChapterCreatePayload, type DocumentCreatePayload, type DocumentUpdatePayload, type ExpertCreatePayload,
+  type ApiCharacterRelation, type ApiCharacterEvent, type ApiOutline, type ApiHiddenThread, type ApiStoryArc,
+  type ApiCharacterArcResponse,
+  type ProjectCreatePayload, type ProjectUpdatePayload, type ChapterCreatePayload, type DocumentCreatePayload, type DocumentUpdatePayload, type ExpertCreatePayload,
   type WorldEntryCreatePayload, type WorldEntryUpdatePayload,
-  type CharacterCreatePayload, type CharacterUpdatePayload,
-  type CharacterRelationCreatePayload, type CharacterRelationUpdatePayload,
+  type CharacterCreatePayload, type CharacterUpdatePayload, type CharacterMergePayload,
+  type CharacterRelationCreatePayload, type CharacterRelationUpdatePayload, type CharacterEventUpsertPayload,
   type OutlineCreatePayload, type OutlineUpdatePayload,
   type HiddenThreadCreatePayload, type HiddenThreadUpdatePayload,
+  type StoryArcCreatePayload, type StoryArcUpdatePayload,
   type GenerateRequest, type SSEEnvelope,
   type ExpertUpdatePayload, type ProjectMode,
-  type LLMConfigCreatePayload, type ModelListRequest,
+  type LLMConfigCreatePayload, type LLMConfigUpdatePayload, type ModelListRequest,
   type LLMConfigResponse, type LLMStatusResponse, type ModelInfo,
   type LoginRequest, type LoginResponse, type MeResponse,
-  type RegisterRequest, type RegisterResponse,
+  type RegisterRequest, type RegisterResponse, type AuthConfigResponse,
   type ProjectImageUploadResponse,
   type TxtImportResponse, type ChapterStructureExtractRequest, type ChapterStructureExtractResponse,
   type ApiChapterVersion, type ChapterVersionDiffRequest, type ChapterVersionDiffResponse,
   type DocumentVersionDiffRequest, type DocumentVersionDiffResponse,
   type ApiGenerationRecordListItem, type ApiGenerationRecord,
+  type ApiRunListItem, type ApiRun, type ApiRunStep,
+  type ApiRunContext,
+  type ApiWritingMemoryStaging,
   type GenerationRecordUpdatePayload, type GenerationRecordDiffRequest, type GenerationRecordDiffResponse,
+  type ChapterReviewNote, type ChapterReviewNoteCreatePayload, type ChapterReviewNoteUpdatePayload,
+  type ApiEvaluationDataset, type ApiEvaluationCase, type ApiEvaluationRun,
+  type EvaluationDatasetCreatePayload, type EvaluationDatasetUpdatePayload,
+  type EvaluationCaseCreatePayload, type EvaluationCaseUpdatePayload, type EvaluationRunCreatePayload,
+  type ClarificationState, type ClarificationAnswerRequest,
+  type EditStatsResponse, type EditStatsParams, type GenerationOriginalResponse,
+  type GenerationRecordEditMetricsRefreshResponse,
+  type RunTraceResponse, type GetRunTraceOptions,
 } from './types'
+import { getAuthToken, handleUnauthorized } from '../utils/authSession'
+
+export { handleUnauthorized } from '../utils/authSession'
 
 function getToken(): string | null {
-  return localStorage.getItem('ai_write_token')
+  return getAuthToken()
 }
 
 function authHeaders(): Record<string, string> {
@@ -47,14 +63,29 @@ function formAuthHeaders(): Record<string, string> {
   return headers
 }
 
+export function parseRetryAfter(res: Response): number | undefined {
+  const header = res.headers.get('Retry-After')
+  if (!header) return undefined
+  const trimmed = header.trim()
+  if (!/^\d+$/.test(trimmed)) return undefined
+  const seconds = parseInt(trimmed, 10)
+  return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : undefined
+}
+
 /** Parse backend error body into a user-friendly Chinese message */
-function parseApiError(status: number, body: string): string {
+export function parseApiError(status: number, body: string, retryAfterSeconds?: number): string {
+  if (status === 429 && retryAfterSeconds !== undefined) {
+    return `操作过于频繁，请 ${retryAfterSeconds} 秒后重试`
+  }
+
   const statusMap: Record<number, string> = {
     400: '请求参数有误',
     401: '登录已失效，请重新登录',
     403: '没有操作权限',
     404: '资源不存在',
+    413: '上传内容过大',
     422: '输入内容不符合要求',
+    429: '操作过于频繁，请稍后再试',
     500: '服务器异常，请稍后重试',
   }
 
@@ -88,26 +119,32 @@ function parseApiError(status: number, body: string): string {
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  retryAfterSeconds?: number
+  constructor(status: number, message: string, retryAfterSeconds?: number) {
     super(message)
     this.status = status
+    this.retryAfterSeconds = retryAfterSeconds
     this.name = 'ApiError'
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export interface ApiRequestOptions extends RequestInit {
+  skipAuthRedirect?: boolean
+}
+
+async function request<T>(path: string, init?: ApiRequestOptions): Promise<T> {
+  const { skipAuthRedirect, ...fetchInit } = init ?? {}
   const res = await fetch(`${API_BASE_URL}${path}`, {
     headers: authHeaders(),
-    ...init,
+    ...fetchInit,
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    if (res.status === 401) {
-      localStorage.removeItem('ai_write_token')
-      localStorage.removeItem('ai_write_logged_in')
-      window.location.href = '/login'
+    const retryAfter = parseRetryAfter(res)
+    if (res.status === 401 && !skipAuthRedirect) {
+      handleUnauthorized()
     }
-    throw new ApiError(res.status, parseApiError(res.status, body))
+    throw new ApiError(res.status, parseApiError(res.status, body, retryAfter), retryAfter)
   }
   if (res.status === 204 || res.headers.get('content-length') === '0') {
     return undefined as T
@@ -163,19 +200,94 @@ function sseHeaders(): Record<string, string> {
   return headers
 }
 
+// 抽取任务控制相关类型
+export type ExtractionStatus = {
+  job_id: string | null; status: string; total_chapters: number;
+  extracted_count: number; validated_count: number;
+  merged_count: number; failed_count: number; pending_count: number;
+  error_message: string | null;
+  provider: string | null; is_mock: boolean; last_run_outcome: string;
+  current_chapter_no: number | null; last_error: string | null;
+  paused_at: string | null; cancelled_at: string | null;
+  last_run_started_at: string | null; last_run_finished_at: string | null;
+}
+
+export type ExtractionFailure = {
+  chapter_no: number; chapter_title: string | null;
+  status: string; retry_count: number;
+  error_message: string | null; updated_at: string | null;
+}
+
+export type CharacterAppearanceItem = {
+  chapter_no: number; chapter_title: string | null;
+  summary: string | null; evidence_text: string;
+  importance: number; confidence: number;
+}
+
 export const api = {
   // ─── Auth ───
   login: (data: LoginRequest) =>
-    request<LoginResponse>('/auth/login', { method: 'POST', body: JSON.stringify(data) }),
+    request<LoginResponse>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      skipAuthRedirect: true,
+    }),
   register: (data: RegisterRequest) =>
-    request<RegisterResponse>('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
+    request<RegisterResponse>('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      skipAuthRedirect: true,
+    }),
+  getAuthConfig: async (options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<AuthConfigResponse> => {
+    const timeoutMs = options?.timeoutMs ?? 3000
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    const externalSignal = options?.signal
+    const onAbort = () => controller.abort()
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        controller.abort()
+      } else {
+        externalSignal.addEventListener('abort', onAbort, { once: true })
+      }
+    }
+    try {
+      return await request<AuthConfigResponse>('/auth/config', {
+        method: 'GET',
+        skipAuthRedirect: true,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+      if (externalSignal) {
+        externalSignal.removeEventListener('abort', onAbort)
+      }
+    }
+  },
   me: () => request<MeResponse>('/auth/me'),
+  logout: async () => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 2000)
+    try {
+      await fetch(`${API_BASE_URL}/auth/logout`, {
+        method: 'POST',
+        headers: authHeaders(),
+        signal: controller.signal,
+      })
+    } catch {
+      // Best-effort
+    } finally {
+      clearTimeout(timer)
+    }
+  },
 
   // ─── Projects ───
   listProjects: () => request<ApiProject[]>('/projects'),
   getProject: (id: string) => request<ApiProject>(`/projects/${id}`),
   createProject: (data: ProjectCreatePayload) =>
     request<ApiProject>('/projects', { method: 'POST', body: JSON.stringify(data) }),
+  updateProject: (id: string, data: ProjectUpdatePayload) =>
+    request<ApiProject>(`/projects/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteProject: (id: string) =>
     request<void>(`/projects/${id}`, { method: 'DELETE' }),
   importTxtProject: async (data: { file: File; title?: string; description?: string; target_words?: number }) => {
@@ -193,11 +305,10 @@ export const api = {
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       if (res.status === 401) {
-        localStorage.removeItem('ai_write_token')
-        localStorage.removeItem('ai_write_logged_in')
-        window.location.href = '/login'
+        handleUnauthorized()
       }
-      throw new ApiError(res.status, parseApiError(res.status, body))
+      const retryAfter = parseRetryAfter(res)
+      throw new ApiError(res.status, parseApiError(res.status, body, retryAfter), retryAfter)
     }
     return res.json() as Promise<TxtImportResponse>
   },
@@ -210,11 +321,14 @@ export const api = {
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       if (res.status === 401) {
-        localStorage.removeItem('ai_write_token')
-        localStorage.removeItem('ai_write_logged_in')
-        window.location.href = '/login'
+        handleUnauthorized()
       }
-      throw new ApiError(res.status, parseApiError(res.status, body))
+      const retryAfter = parseRetryAfter(res)
+      let msg = parseApiError(res.status, body, retryAfter)
+      if (res.status === 413 && msg === '上传内容过大') {
+        msg = '图片过大'
+      }
+      throw new ApiError(res.status, msg, retryAfter)
     }
     return res.json() as Promise<ProjectImageUploadResponse>
   },
@@ -225,10 +339,20 @@ export const api = {
     request<ApiChapter>(`/projects/${projectId}/chapters`, { method: 'POST', body: JSON.stringify(data) }),
   updateChapter: (projectId: string, sequenceNumber: number, data: { title?: string; content?: string; outline?: string; status?: string }) =>
     request<ApiChapter>(`/projects/${projectId}/chapters/${sequenceNumber}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  finalizeChapter: (projectId: string, sequenceNumber: number, data: { content?: string }) =>
+    request<ApiChapter>(`/projects/${projectId}/chapters/${sequenceNumber}/finalize`, { method: 'POST', body: JSON.stringify(data) }),
   deleteChapter: (projectId: string, sequenceNumber: number) =>
     request<{ ok: boolean }>(`/projects/${projectId}/chapters/${sequenceNumber}`, { method: 'DELETE' }),
   extractChapterStructure: (projectId: string, sequenceNumber: number, data: ChapterStructureExtractRequest) =>
     request<ChapterStructureExtractResponse>(`/projects/${projectId}/chapters/${sequenceNumber}/extract-structure`, { method: 'POST', body: JSON.stringify(data) }),
+  listChapterReviewNotes: (projectId: string, sequenceNumber: number) =>
+    request<ChapterReviewNote[]>(`/projects/${projectId}/chapters/${sequenceNumber}/review-notes`),
+  createChapterReviewNote: (projectId: string, sequenceNumber: number, data: ChapterReviewNoteCreatePayload) =>
+    request<ChapterReviewNote>(`/projects/${projectId}/chapters/${sequenceNumber}/review-notes`, { method: 'POST', body: JSON.stringify(data) }),
+  updateChapterReviewNote: (projectId: string, sequenceNumber: number, noteId: string, data: ChapterReviewNoteUpdatePayload) =>
+    request<ChapterReviewNote>(`/projects/${projectId}/chapters/${sequenceNumber}/review-notes/${noteId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteChapterReviewNote: (projectId: string, sequenceNumber: number, noteId: string) =>
+    request<void>(`/projects/${projectId}/chapters/${sequenceNumber}/review-notes/${noteId}`, { method: 'DELETE' }),
 
   // ─── Documents ───
   listDocuments: (projectId: string) => request<ApiDocument[]>(`/projects/${projectId}/documents`),
@@ -245,6 +369,8 @@ export const api = {
     request<ApiExpert>(`/projects/${projectId}/experts`, { method: 'POST', body: JSON.stringify(data) }),
   updateExpert: (projectId: string, expertId: string, data: ExpertUpdatePayload) =>
     request<ApiExpert>(`/projects/${projectId}/experts/${expertId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  syncV2Experts: (projectId: string) =>
+    request<{ created: number; deprecated_marked: number; skipped: number }>(`/projects/${projectId}/experts/sync-v2`, { method: 'POST' }),
 
   // ─── World Entries ───
   listWorldEntries: (projectId: string) => request<ApiWorldEntry[]>(`/projects/${projectId}/world-entries`),
@@ -261,8 +387,25 @@ export const api = {
     request<ApiCharacter>(`/projects/${projectId}/characters`, { method: 'POST', body: JSON.stringify(data) }),
   updateCharacter: (projectId: string, characterId: string, data: CharacterUpdatePayload) =>
     request<ApiCharacter>(`/projects/${projectId}/characters/${characterId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  mergeCharacter: (projectId: string, characterId: string, data: CharacterMergePayload) =>
+    request<ApiCharacter>(`/projects/${projectId}/characters/${characterId}/merge`, { method: 'POST', body: JSON.stringify(data) }),
   deleteCharacter: (projectId: string, characterId: string) =>
     request<void>(`/projects/${projectId}/characters/${characterId}`, { method: 'DELETE' }),
+  listCharacterEvents: (projectId: string, params?: { character_id?: string; sequence_number?: number }) => {
+    const search = new URLSearchParams()
+    if (params?.character_id) search.set('character_id', params.character_id)
+    if (params?.sequence_number) search.set('sequence_number', String(params.sequence_number))
+    const suffix = search.toString() ? `?${search.toString()}` : ''
+    return request<ApiCharacterEvent[]>(`/projects/${projectId}/character-events${suffix}`)
+  },
+  upsertCharacterEvent: (projectId: string, characterId: string, sequenceNumber: number, data: CharacterEventUpsertPayload) =>
+    request<ApiCharacterEvent>(`/projects/${projectId}/characters/${characterId}/chapter-events/${sequenceNumber}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCharacterEvent: (projectId: string, characterId: string, sequenceNumber: number) =>
+    request<void>(`/projects/${projectId}/characters/${characterId}/chapter-events/${sequenceNumber}`, { method: 'DELETE' }),
+
+  // ─── Character Arc (K-5) ───
+  getCharacterArc: (projectId: string, characterId: string, toChapter?: number) =>
+    request<ApiCharacterArcResponse>(`/projects/${projectId}/characters/${characterId}/arc${toChapter ? `?to_chapter=${toChapter}` : ''}`),
 
   // ─── Character Relations ───
   listCharacterRelations: (projectId: string) => request<ApiCharacterRelation[]>(`/projects/${projectId}/character-relations`),
@@ -291,30 +434,53 @@ export const api = {
   deleteHiddenThread: (projectId: string, threadId: string) =>
     request<void>(`/projects/${projectId}/hidden-threads/${threadId}`, { method: 'DELETE' }),
 
+  // ─── Story Arcs ───
+  listStoryArcs: (projectId: string) => request<ApiStoryArc[]>(`/projects/${projectId}/story-arcs`),
+  createStoryArc: (projectId: string, data: StoryArcCreatePayload) =>
+    request<ApiStoryArc>(`/projects/${projectId}/story-arcs`, { method: 'POST', body: JSON.stringify(data) }),
+  updateStoryArc: (projectId: string, arcId: string, data: StoryArcUpdatePayload) =>
+    request<ApiStoryArc>(`/projects/${projectId}/story-arcs/${arcId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteStoryArc: (projectId: string, arcId: string) =>
+    request<void>(`/projects/${projectId}/story-arcs/${arcId}`, { method: 'DELETE' }),
+
   // ─── SSE ───
   resumeGeneration: (
     projectId: string,
     threadId: string,
-    action: 'approve' | 'reject' | 'review' | 'revise',
+    action: 'approve' | 'finalize' | 'reject' | 'review' | 'revise' | 'approve_task_card' | 'reject_task_card' | 'refresh_task_card' | 'refresh_task_card_context' | 'submit_clarification' | 'skip_clarification',
     onEvent: (envelope: SSEEnvelope) => void,
     feedback?: string,
     signal?: AbortSignal,
     mode: ProjectMode = 'novel',
+    taskCard?: string,
+    body?: Record<string, unknown>,
   ) => {
     const params = new URLSearchParams({ thread_id: threadId, action })
-    if (feedback) params.set('feedback', feedback)
+    const requestBody: Record<string, unknown> = body ? { ...body } : {}
+    if (feedback) requestBody.feedback = feedback
+    if (taskCard) requestBody.task_card = taskCard
     const unitPath = mode === 'article' ? 'documents' : 'chapters'
     const url = `${API_BASE_URL}/projects/${projectId}/${unitPath}/resume?${params.toString()}`
-    return fetch(url, {
+    const fetchOpts: RequestInit = {
       method: 'POST',
       headers: sseHeaders(),
       signal,
-    }).then(async (res) => {
+    }
+    if (Object.keys(requestBody).length) {
+      fetchOpts.body = JSON.stringify(requestBody)
+      fetchOpts.headers = { ...fetchOpts.headers, 'Content-Type': 'application/json' }
+    }
+    return fetch(url, fetchOpts).then(async (res) => {
       if (!res.ok) {
+        if (res.status === 401) {
+          handleUnauthorized()
+        }
         const text = await res.text().catch(() => '')
-        throw new ApiError(res.status, parseApiError(res.status, text))
+        const retryAfter = parseRetryAfter(res)
+        throw new ApiError(res.status, parseApiError(res.status, text, retryAfter), retryAfter)
       }
-      return parseSSEStream(res.body!.getReader(), onEvent)
+      if (!res.body) throw new ApiError(502, '服务未返回生成流，请重试')
+      return parseSSEStream(res.body.getReader(), onEvent)
     })
   },
 
@@ -333,8 +499,12 @@ export const api = {
       signal,
     }).then(async (res) => {
       if (!res.ok) {
+        if (res.status === 401) {
+          handleUnauthorized()
+        }
         const text = await res.text().catch(() => '')
-        throw new ApiError(res.status, parseApiError(res.status, text))
+        const retryAfter = parseRetryAfter(res)
+        throw new ApiError(res.status, parseApiError(res.status, text, retryAfter), retryAfter)
       }
       return parseSSEStream(res.body!.getReader(), onEvent)
     })
@@ -356,8 +526,12 @@ export const api = {
       signal,
     }).then(async (res) => {
       if (!res.ok) {
+        if (res.status === 401) {
+          handleUnauthorized()
+        }
         const text = await res.text().catch(() => '')
-        throw new ApiError(res.status, parseApiError(res.status, text))
+        const retryAfter = parseRetryAfter(res)
+        throw new ApiError(res.status, parseApiError(res.status, text, retryAfter), retryAfter)
       }
       return parseSSEStream(res.body!.getReader(), onEvent)
     })
@@ -370,6 +544,287 @@ export const api = {
     request<ApiChapterVersion>(`/projects/${projectId}/chapters/${sequenceNumber}/versions/${versionId}`),
   diffChapterVersions: (projectId: string, sequenceNumber: number, data: ChapterVersionDiffRequest) =>
     request<ChapterVersionDiffResponse>(`/projects/${projectId}/chapters/${sequenceNumber}/versions/diff`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // ─── Chapter Context Stats ───
+  getChapterContext: (projectId: string, sequenceNumber: number) =>
+    request<{
+      stats: { characters: number; events: number; hidden_threads: number; world_entries: number; sources: number }
+      chapter_goal: { outline: string; light_line: string }
+    }>(`/projects/${projectId}/chapters/${sequenceNumber}/context`),
+
+  // ─── Chapter Directions ───
+  getChapterDirections: (projectId: string, sequenceNumber: number, selectedIds?: {
+    selected_outline_ids?: string[]
+    selected_character_ids?: string[]
+    selected_world_entry_ids?: string[]
+    selected_hidden_thread_ids?: string[]
+  }) =>
+    request<{
+      options: Array<{ id: string; title: string; description: string; risk: string }>
+    }>(`/projects/${projectId}/chapters/${sequenceNumber}/directions`, {
+      method: 'POST',
+      body: JSON.stringify(selectedIds ?? {}),
+    }),
+
+  // ─── Knowledge Library ───
+  listKnowledgeSources: (projectId: string, params?: {
+    source_type?: string; q?: string; sort?: string
+  }) => {
+    const qs = new URLSearchParams()
+    if (params?.source_type) qs.set('source_type', params.source_type)
+    if (params?.q) qs.set('q', params.q)
+    if (params?.sort) qs.set('sort', params.sort)
+    const query = qs.toString()
+	    return request<Array<{
+	      id: string; project_id: string; title: string; source_type: string
+	      content_preview: string; content_truncated: boolean
+	      summary: string | null; key_facts: string[] | null
+	      constraints: string[] | null; characters: string[] | null; keywords: string[] | null
+	      tags: string[] | null; always_inject: boolean; chunk_count: number; token_count: number
+	      created_at: string; updated_at: string
+    }>>(`/projects/${projectId}/knowledge/sources${query ? `?${query}` : ''}`)
+  },
+
+  getKnowledgeSource: (projectId: string, sourceId: string) =>
+    request<{
+      id: string; project_id: string; title: string; source_type: string
+      content: string; summary: string | null; key_facts: string[] | null
+      constraints: string[] | null; characters: string[] | null; keywords: string[] | null
+      tags: string[] | null; always_inject: boolean; chunk_count: number; token_count: number
+      created_at: string; updated_at: string
+    }>(`/projects/${projectId}/knowledge/sources/${sourceId}`),
+
+  createKnowledgeSource: (projectId: string, data: {
+    title: string; source_type?: string; content?: string
+    tags?: string[]; always_inject?: boolean
+  }) =>
+    request<{ id: string }>(`/projects/${projectId}/knowledge/sources`, {
+      method: 'POST', body: JSON.stringify(data),
+    }),
+
+  updateKnowledgeSource: (projectId: string, sourceId: string, data: {
+    title?: string; source_type?: string; content?: string
+    tags?: string[]; always_inject?: boolean
+  }) =>
+    request<{ id: string }>(`/projects/${projectId}/knowledge/sources/${sourceId}`, {
+      method: 'PATCH', body: JSON.stringify(data),
+    }),
+
+  deleteKnowledgeSource: (projectId: string, sourceId: string) =>
+    request<void>(`/projects/${projectId}/knowledge/sources/${sourceId}`, { method: 'DELETE' }),
+
+  reindexSource: (projectId: string, sourceId: string) =>
+    request<{ source_id: string; chunk_count: number; fact_count: number }>(
+      `/projects/${projectId}/knowledge/sources/${sourceId}/reindex`, { method: 'POST' },
+    ),
+
+  rebuildFacts: (projectId: string, sourceId?: string | null) =>
+    request<{ source_count: number; chunk_count: number; fact_count: number }>(
+      `/projects/${projectId}/knowledge/facts/rebuild`,
+      { method: 'POST', body: JSON.stringify({ source_id: sourceId ?? null, fact_types: ['character_system'] }) },
+    ),
+
+  listFacts: (projectId: string, params?: { subject?: string; object?: string; limit?: number }) =>
+    request<{ items: any[]; total: number }>(
+      `/projects/${projectId}/knowledge/facts` + (params ? '?' + new URLSearchParams(
+        Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]) as any
+      ).toString() : ''),
+    ),
+
+  summarizeSource: (projectId: string, sourceId: string) =>
+    request<{ source_id: string; chunk_count: number; summary: string; key_facts: string[] }>(
+      `/projects/${projectId}/knowledge/sources/${sourceId}/summarize`, { method: 'POST' },
+    ),
+
+  listKnowledgeChunks: (projectId: string, sourceId: string, params?: { offset?: number; limit?: number }) => {
+    const qs = new URLSearchParams()
+    if (params?.offset !== undefined) qs.set('offset', String(params.offset))
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit))
+    const query = qs.toString()
+    return request<Array<{
+      id: string; source_id: string; chunk_index: number
+      content: string; summary: string | null; facts: string[] | null
+      constraints: string[] | null; keywords: string[] | null; token_count: number
+      created_at: string
+    }>>(`/projects/${projectId}/knowledge/sources/${sourceId}/chunks${query ? `?${query}` : ''}`)
+  },
+
+  listKnowledgeSessions: (projectId: string) =>
+    request<Array<{
+      id: string; project_id: string; title: string; summary: string | null
+      message_count: number; created_at: string; updated_at: string
+    }>>(`/projects/${projectId}/knowledge/sessions`),
+
+  createKnowledgeSession: (projectId: string) =>
+    request<{
+      id: string; project_id: string; title: string; summary: string | null
+      message_count: number; created_at: string; updated_at: string
+    }>(`/projects/${projectId}/knowledge/sessions`, { method: 'POST' }),
+
+  updateKnowledgeSession: (projectId: string, sessionId: string, data: { title?: string }) =>
+    request<{
+      id: string; project_id: string; title: string; summary: string | null
+      message_count: number; created_at: string; updated_at: string
+    }>(`/projects/${projectId}/knowledge/sessions/${sessionId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
+  deleteKnowledgeSession: (projectId: string, sessionId: string) =>
+    request<void>(`/projects/${projectId}/knowledge/sessions/${sessionId}`, {
+      method: 'DELETE',
+    }),
+
+  listKnowledgeSessionMessages: (projectId: string, sessionId: string) =>
+    request<Array<{
+      id: string; session_id: string; role: string; content: string
+      citations: Array<{
+        source_kind: string; source_id: string; chunk_id: string | null
+        title: string; snippet: string; evidence_type?: string; matched_query?: string; score?: number
+      }> | null
+      created_at: string
+    }>>(`/projects/${projectId}/knowledge/sessions/${sessionId}/messages`),
+
+  searchKnowledge: (projectId: string, query: string) =>
+    request<{ results: Array<{
+      source_kind: string; source_id: string; chunk_id: string
+      title: string; snippet: string; score: number
+    }> }>(`/projects/${projectId}/knowledge/search`, {
+      method: 'POST', body: JSON.stringify({ query }),
+    }),
+
+  askKnowledge: (projectId: string, data: {
+    question: string; conversation_id?: string; chapter_num?: number; include_structured?: boolean
+    include_web?: boolean
+  }) =>
+    request<{
+      answer: string; citations: Array<{
+        source_kind: string; source_id: string; chunk_id: string | null
+        title: string; snippet: string
+        url?: string; evidence_type?: string; matched_query?: string; score?: number
+      }>; conversation_id: string; conversation_summary_updated: boolean
+      query_plan?: { intent: string; entities: string[]; search_queries: string[] }
+      retrieval_stats?: { structured_hits: number; chunk_hits: number; web_hits?: number }
+    }>(`/projects/${projectId}/knowledge/ask`, {
+      method: 'POST', body: JSON.stringify(data),
+    }),
+
+  uploadKnowledgeFile: async (projectId: string, formData: FormData) => {
+    const res = await fetch(`${API_BASE_URL}/projects/${projectId}/knowledge/upload`, {
+      method: 'POST',
+      headers: formAuthHeaders(),
+      body: formData,
+    })
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      if (res.status === 401) {
+        handleUnauthorized()
+      }
+      const retryAfter = parseRetryAfter(res)
+      throw new ApiError(res.status, parseApiError(res.status, body, retryAfter), retryAfter)
+    }
+    return res.json() as Promise<{ id: string; title: string; chunk_count: number }>
+  },
+
+  // ─── Novel Extraction Pipeline ───
+
+  // 抽取任务状态（含控制字段）
+  // ExtractionStatus / ExtractionFailure 类型定义在下面，API 方法引用
+  splitChapters: (projectId: string, sourceId: string) =>
+    request<{ project_id: string; source_id: string; chapter_count: number; split_type: string }>(
+      `/projects/${projectId}/knowledge/sources/${sourceId}/split-chapters`, { method: 'POST' },
+    ),
+
+  startExtraction: (projectId: string, sourceId: string, params: {
+    genre?: string; canon_level?: string; origin?: string;
+    chapter_no_start?: number; chapter_no_end?: number;
+    max_chapters_per_run?: number; force_reextract?: boolean;
+  }) =>
+    request<ExtractionStatus>(`/projects/${projectId}/knowledge/sources/${sourceId}/extract`, {
+      method: 'POST', body: JSON.stringify(params),
+    }),
+
+  getExtractionStatus: (projectId: string, sourceId: string) =>
+    request<{
+      job_id: string | null; status: string; total_chapters: number;
+      extracted_count: number; validated_count: number;
+      merged_count: number; failed_count: number; pending_count: number;
+      error_message: string | null;
+      provider: string | null; is_mock: boolean; last_run_outcome: string;
+      current_chapter_no: number | null; last_error: string | null;
+      paused_at: string | null; cancelled_at: string | null;
+      last_run_started_at: string | null; last_run_finished_at: string | null;
+    }>(`/projects/${projectId}/knowledge/sources/${sourceId}/extract/status`),
+
+  resetExtraction: (projectId: string, sourceId: string) =>
+    request<{
+      status: string; deleted_jobs: number; deleted_staging: number;
+      deleted_characters: number; deleted_abilities: number;
+      deleted_events: number; deleted_world_rules: number;
+    }>(`/projects/${projectId}/knowledge/sources/${sourceId}/extract/reset`, { method: 'POST' }),
+
+  pauseExtraction: (projectId: string, sourceId: string) =>
+    request<ExtractionStatus>(`/projects/${projectId}/knowledge/sources/${sourceId}/extract/pause`, { method: 'POST' }),
+
+  cancelExtraction: (projectId: string, sourceId: string) =>
+    request<ExtractionStatus>(`/projects/${projectId}/knowledge/sources/${sourceId}/extract/cancel`, { method: 'POST' }),
+
+  listExtractionFailures: (projectId: string, sourceId: string) =>
+    request<{ items: ExtractionFailure[]; total: number }>(`/projects/${projectId}/knowledge/sources/${sourceId}/extract/failures`),
+
+  retryExtractionChapter: (projectId: string, sourceId: string, chapterNo: number) =>
+    request<{ chapter_no: number; chapter_status: string; job_status: string; job_id: string; error_message: string | null }>(
+      `/projects/${projectId}/knowledge/sources/${sourceId}/extract/retry-chapter`,
+      { method: 'POST', body: JSON.stringify({ chapter_no: chapterNo, force_reextract: true }) },
+    ),
+
+  structuredQA: (projectId: string, question: string, conversationId?: string) =>
+    request<{
+      answer: string; citations: any[]; query_plan: any;
+      retrieval_stats: any; conversation_id: string;
+    }>(`/projects/${projectId}/knowledge/structured-qa`, {
+      method: 'POST', body: JSON.stringify({
+        question, conversation_id: conversationId ?? null,
+      }),
+    }),
+
+  // 结构化知识表查询（人物/能力/事件/世界规则）
+  listStructuredKnowledge: <T = any>(projectId: string, table: 'character_profile' | 'ability_profile' | 'event_timeline' | 'world_rule', params?: {
+    limit?: number; offset?: number;
+  }) => {
+    const query = params
+      ? '?' + new URLSearchParams(
+          Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]) as any
+        ).toString()
+      : ''
+    return request<{ items: T[]; total: number }>(
+      `/projects/${projectId}/knowledge/structured/${table}${query}`,
+    )
+  },
+
+  // 结构化知识表新增（手动修正）
+  createStructuredRecord: (projectId: string, table: string, body: Record<string, any>) =>
+    request<{ id: string; origin: string; canon_level: string; source_priority: number; evidence: string[] }>(
+      `/projects/${projectId}/knowledge/structured/${table}`, { method: 'POST', body: JSON.stringify(body) },
+    ),
+
+  // 结构化知识表编辑（手动修正，保留原 evidence）
+  updateStructuredRecord: (projectId: string, table: string, recordId: string, body: Record<string, any>) =>
+    request<{ id: string; origin: string; canon_level: string; source_priority: number; previous_origin: string; evidence: string[] }>(
+      `/projects/${projectId}/knowledge/structured/${table}/${recordId}`, { method: 'PATCH', body: JSON.stringify(body) },
+    ),
+
+  // 结构化知识表删除
+  deleteStructuredRecord: (projectId: string, table: string, recordId: string) =>
+    request<{ id: string; deleted: boolean; table: string }>(
+      `/projects/${projectId}/knowledge/structured/${table}/${recordId}`, { method: 'DELETE' },
+    ),
+
+  // 人物出场记录
+  listCharacterAppearances: (projectId: string, characterId: string, limit = 50, offset = 0) =>
+    request<{ items: CharacterAppearanceItem[]; total: number; offset: number; limit: number }>(
+      `/projects/${projectId}/knowledge/structured/characters/${characterId}/appearances?limit=${limit}&offset=${offset}`,
+    ),
 
   // ─── Document Versions ───
   listDocumentVersions: (projectId: string, documentId: string) =>
@@ -388,15 +843,94 @@ export const api = {
     request<ApiGenerationRecordListItem[]>(`/projects/${projectId}/documents/${documentId}/generations`),
   getGenerationRecord: (projectId: string, generationId: string) =>
     request<ApiGenerationRecord>(`/projects/${projectId}/generations/${generationId}`),
+  // ==================== AI Runs ====================
+  getRun: (runId: string) =>
+    request<ApiRun>(`/ai-runs/${runId}`),
+  getRunSteps: (runId: string) =>
+    request<ApiRunStep[]>(`/ai-runs/${runId}/steps`),
+  getRunContext: (runId: string) =>
+    request<ApiRunContext>(`/ai-runs/${runId}/context`),
+  getRunTrace: (runId: string, options?: GetRunTraceOptions) => {
+    const query = new URLSearchParams()
+    if (options?.includePrompts) {
+      query.set('include_prompts', 'true')
+    } else {
+      query.set('include_prompts', 'false')
+    }
+    const qs = query.toString()
+    return request<RunTraceResponse>(`/ai-runs/${encodeURIComponent(runId)}/trace${qs ? `?${qs}` : ''}`)
+  },
+  listProjectRuns: (projectId: string, limit?: number) =>
+    request<ApiRunListItem[]>(`/projects/${projectId}/ai-runs${limit ? `?limit=${limit}` : ''}`),
+  // ─── Clarification Loop (生成前澄清) ───
+  // @deprecated N-1: M-3 后澄清链路统一走 resume action=submit_clarification/skip_clarification。
+  // 以下两个 wrapper 仅供历史 run 查询保留，不再用于主流程，待旧 run 过期后移除。
+  getClarification: (runId: string) =>
+    request<ClarificationState>(`/ai-runs/${runId}/clarification`),
+  submitClarificationAnswers: (runId: string, data: ClarificationAnswerRequest) =>
+    request<ClarificationState>(`/ai-runs/${runId}/clarification-answers`, { method: 'POST', body: JSON.stringify(data) }),
   updateGenerationRecord: (projectId: string, generationId: string, data: GenerationRecordUpdatePayload) =>
     request<ApiGenerationRecord>(`/projects/${projectId}/generations/${generationId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   diffGenerationRecord: (projectId: string, generationId: string, data: GenerationRecordDiffRequest) =>
     request<GenerationRecordDiffResponse>(`/projects/${projectId}/generations/${generationId}/diff`, { method: 'POST', body: JSON.stringify(data) }),
+  getGenerationOriginal: (recordId: string) =>
+    request<GenerationOriginalResponse>(`/generation-records/${encodeURIComponent(recordId)}/original`),
+  refreshEditMetrics: (recordId: string) =>
+    request<GenerationRecordEditMetricsRefreshResponse>(`/generation-records/${encodeURIComponent(recordId)}/refresh-edit-metrics`, { method: 'POST' }),
+  getEditStats: (projectId: string, params?: EditStatsParams) => {
+    const query = new URLSearchParams()
+    if (params?.limit !== undefined) query.set('limit', String(params.limit))
+    if (params?.offset !== undefined) query.set('offset', String(params.offset))
+    if (params?.chapter_id) query.set('chapter_id', params.chapter_id)
+    if (params?.since) query.set('since', params.since)
+    if (params?.until) query.set('until', params.until)
+    const qs = query.toString()
+    return request<EditStatsResponse>(`/projects/${projectId}/edit-stats${qs ? `?${qs}` : ''}`)
+  },
+
+  // ==================== 写作记忆 staging ====================
+  listMemoryStaging: (projectId: string, status?: string) =>
+    request<ApiWritingMemoryStaging[]>(`/projects/${projectId}/memory-staging${status ? `?status=${status}` : ''}`),
+  confirmMemoryStaging: (projectId: string, stagingId: string) =>
+    request<ApiWritingMemoryStaging>(`/projects/${projectId}/memory-staging/${stagingId}/confirm`, { method: 'POST' }),
+  rejectMemoryStaging: (projectId: string, stagingId: string) =>
+    request<ApiWritingMemoryStaging>(`/projects/${projectId}/memory-staging/${stagingId}/reject`, { method: 'POST' }),
+
+  // ─── Evaluation datasets ───
+  listEvaluationDatasets: (projectId: string) =>
+    request<ApiEvaluationDataset[]>(`/projects/${projectId}/eval-datasets`),
+  createEvaluationDataset: (projectId: string, data: EvaluationDatasetCreatePayload) =>
+    request<ApiEvaluationDataset>(`/projects/${projectId}/eval-datasets`, { method: 'POST', body: JSON.stringify(data) }),
+  updateEvaluationDataset: (projectId: string, datasetId: string, data: EvaluationDatasetUpdatePayload) =>
+    request<ApiEvaluationDataset>(`/projects/${projectId}/eval-datasets/${datasetId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteEvaluationDataset: (projectId: string, datasetId: string) =>
+    request<void>(`/projects/${projectId}/eval-datasets/${datasetId}`, { method: 'DELETE' }),
+  listEvaluationCases: (projectId: string, datasetId: string) =>
+    request<ApiEvaluationCase[]>(`/projects/${projectId}/eval-datasets/${datasetId}/cases`),
+  createEvaluationCase: (projectId: string, datasetId: string, data: EvaluationCaseCreatePayload) =>
+    request<ApiEvaluationCase>(`/projects/${projectId}/eval-datasets/${datasetId}/cases`, { method: 'POST', body: JSON.stringify(data) }),
+  updateEvaluationCase: (projectId: string, datasetId: string, caseId: string, data: EvaluationCaseUpdatePayload) =>
+    request<ApiEvaluationCase>(`/projects/${projectId}/eval-datasets/${datasetId}/cases/${caseId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteEvaluationCase: (projectId: string, datasetId: string, caseId: string) =>
+    request<void>(`/projects/${projectId}/eval-datasets/${datasetId}/cases/${caseId}`, { method: 'DELETE' }),
+  listEvaluationRuns: (projectId: string, datasetId: string) =>
+    request<ApiEvaluationRun[]>(`/projects/${projectId}/eval-datasets/${datasetId}/runs`),
+  getEvaluationRun: (projectId: string, datasetId: string, runId: string) =>
+    request<ApiEvaluationRun>(`/projects/${projectId}/eval-datasets/${datasetId}/runs/${runId}`),
+  runEvaluationDataset: (projectId: string, datasetId: string, data: EvaluationRunCreatePayload) =>
+    request<ApiEvaluationRun>(`/projects/${projectId}/eval-datasets/${datasetId}/runs`, { method: 'POST', body: JSON.stringify(data) }),
 
   // ─── LLM Settings ───
   getLLMConfig: () => request<LLMConfigResponse>('/llm-settings'),
-  updateLLMConfig: (data: LLMConfigCreatePayload) =>
-    request<LLMConfigResponse>('/llm-settings', { method: 'PUT', body: JSON.stringify(data) }),
+  listLLMConfigs: () => request<LLMConfigResponse[]>('/llm-settings/configs'),
+  createLLMConfig: (data: LLMConfigCreatePayload) =>
+    request<LLMConfigResponse>('/llm-settings/configs', { method: 'POST', body: JSON.stringify(data) }),
+  updateLLMConfig: (configId: string, data: LLMConfigUpdatePayload) =>
+    request<LLMConfigResponse>(`/llm-settings/configs/${configId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  activateLLMConfig: (configId: string) =>
+    request<LLMConfigResponse>(`/llm-settings/configs/${configId}/activate`, { method: 'POST' }),
+  deleteLLMConfig: (configId: string) =>
+    request<void>(`/llm-settings/configs/${configId}`, { method: 'DELETE' }),
   fetchModels: (data: ModelListRequest) =>
     request<ModelInfo[]>('/llm-settings/models', { method: 'POST', body: JSON.stringify(data) }),
   getLLMStatus: () => request<LLMStatusResponse>('/llm-settings/status'),

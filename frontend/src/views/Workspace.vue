@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
-import { useProjectStore, useChapterStore, useDocumentStore, useRelationStore, useWorldEntryStore, useCharacterStore, useOutlineStore, useHiddenThreadStore, useExpertStore, useUiStore, friendlyError } from '../stores'
-import { API_BASE_URL, type OutlineItem, type HiddenThread, type Character, type WorldEntry, type WritingUnit, type StructureExtractPayload } from '../api/types'
+import { useProjectStore, useChapterStore, useDocumentStore, useRelationStore, useWorldEntryStore, useCharacterStore, useCharacterEventStore, useOutlineStore, useHiddenThreadStore, useStoryArcStore, useExpertStore, useUiStore, friendlyError } from '../stores'
+import { API_BASE_URL, type OutlineItem, type HiddenThread, type StoryArc, type Character, type WorldEntry, type WritingUnit, type StructureExtractPayload } from '../api/types'
 import { api } from '../api/client'
 import WritingEditor from '../components/WritingEditor.vue'
+import ChapterConfig from "../components/ChapterConfig.vue"
 import AgentPanel from '../components/AgentPanel.vue'
+import ConversationCreativeWorkspace from '../components/ConversationCreativeWorkspace.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import StructureExtractPreview from '../components/StructureExtractPreview.vue'
+import BaseSelect from '../components/BaseSelect.vue'
 import { displayChapterNumber, stripChapterNumber } from '../utils/chapterTitle'
+import { performLogout, getAuthToken, handleUnauthorized } from '../utils/authSession'
 
 const route = useRoute()
 const router = useRouter()
@@ -18,12 +22,30 @@ const documentStore = useDocumentStore()
 const relationStore = useRelationStore()
 const worldEntryStore = useWorldEntryStore()
 const characterStore = useCharacterStore()
+const characterEventStore = useCharacterEventStore()
 const outlineStore = useOutlineStore()
 const hiddenThreadStore = useHiddenThreadStore()
+const storyArcStore = useStoryArcStore()
 const expertStore = useExpertStore()
 const ui = useUiStore()
 
 const agentPanelRef = ref<InstanceType<typeof AgentPanel> | null>(null)
+const creativeShellRef = ref<InstanceType<typeof ConversationCreativeWorkspace> | null>(null)
+
+// 新版对话式创作壳层 / 经典三栏工作台切换：默认 creative，localStorage 持久化，可随时回退 legacy
+const SHELL_MODE_KEY = 'workspace_shell_mode'
+const shellMode = ref<'creative' | 'legacy'>(loadShellMode())
+function loadShellMode(): 'creative' | 'legacy' {
+  try {
+    const v = localStorage.getItem(SHELL_MODE_KEY)
+    if (v === 'creative' || v === 'legacy') return v
+  } catch { /* 隐私模式 */ }
+  return 'creative'
+}
+function toggleShellMode() {
+  shellMode.value = shellMode.value === 'creative' ? 'legacy' : 'creative'
+  try { localStorage.setItem(SHELL_MODE_KEY, shellMode.value) } catch { /* ignore */ }
+}
 
 const projectId = computed(() => route.params.id as string)
 const currentProject = computed(() => projectStore.projects.find(p => p.id === projectId.value))
@@ -32,15 +54,45 @@ const unitLabel = computed(() => projectMode.value === 'article' ? '稿件' : '�
 const switchProjectLabel = computed(() => projectMode.value === 'article' ? '切换项目' : '切换小说')
 const unitSequenceLabel = computed(() => `${unitLabel.value}序号`)
 const unitSummaryLabel = computed(() => projectMode.value === 'article' ? '内容摘要' : '章节大纲/摘要')
-const outlineLabel = computed(() => projectMode.value === 'article' ? '内容结构' : '大纲')
+const outlineLabel = computed(() => projectMode.value === 'article' ? '内容结构' : '章节大纲')
 const outlineAddLabel = computed(() => projectMode.value === 'article' ? '添加选题规划' : `添加${unitLabel.value}大纲`)
 const outlineTitleLabel = computed(() => projectMode.value === 'article' ? '选题标题' : '大纲标题')
 const turningPointLabel = computed(() => projectMode.value === 'article' ? '核心角度' : '转折点')
 const hiddenThreadLabel = computed(() => projectMode.value === 'article' ? '内容策略' : '暗线')
 const characterLabel = computed(() => projectMode.value === 'article' ? '受众画像' : '角色')
 const worldLabel = computed(() => projectMode.value === 'article' ? '品牌/产品资料' : '世界观')
+
+// K-3: 伏笔状态标签映射
+const threadStatusLabel = (s: string) => ({
+  PLANNED: '计划', PLANTED: '已埋', ACTIVE: '进行',
+  REVEALED: '揭示', RESOLVED: '已回收', DROPPED: '废弃',
+} as Record<string, string>)[s] ?? s
 const worldEntryLabel = computed(() => projectMode.value === 'article' ? '资料' : '设定')
-const searchPlaceholder = computed(() => projectMode.value === 'article' ? '搜索稿件正文、受众、资料' : '搜索章节正文、角色、设定')
+const characterLibraryLabel = computed(() => characterLabel.value)
+const worldLibraryLabel = computed(() => worldLabel.value)
+const showArticleLibraries = computed(() => projectMode.value === 'article')
+const searchPlaceholder = computed(() => projectMode.value === 'article' ? '搜索稿件正文、受众、资料' : '搜索章节正文、章节资料')
+const characterRoleOptions = computed(() => [
+  { value: 'protagonist', label: projectMode.value === 'article' ? '核心受众' : '主角' },
+  { value: 'antagonist', label: projectMode.value === 'article' ? '反对人群' : '反派' },
+  { value: 'supporting', label: projectMode.value === 'article' ? '影响者' : '配角' },
+  { value: 'minor', label: projectMode.value === 'article' ? '泛受众' : '路人' },
+])
+const characterScopeOptions = computed(() => [
+  { value: 'core', label: projectMode.value === 'article' ? '核心画像' : '主角团' },
+  { value: 'recurring', label: projectMode.value === 'article' ? '常用画像' : '常驻角色' },
+  { value: 'chapter', label: projectMode.value === 'article' ? '单篇画像' : '章节角色' },
+  { value: 'cameo', label: projectMode.value === 'article' ? '轻量画像' : '客串角色' },
+])
+const worldScopeOptions = computed(() => [
+  { value: 'global', label: projectMode.value === 'article' ? '全局资料' : '全局设定' },
+  { value: 'chapter', label: projectMode.value === 'article' ? '单篇资料' : '章节设定' },
+])
+const confidenceOptions = [
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+]
 const isGenerating = computed(() => expertStore.getState(projectId.value).isGenerating)
 const sidebarOpen = ref(true)
 const agentOpen = ref(true)
@@ -50,13 +102,24 @@ const projectsLoading = ref(false)
 // Mobile: which panel to show
 const mobilePanel = ref<'editor' | 'units' | 'characters' | 'world' | 'agent'>('editor')
 
+watch(projectMode, (mode) => {
+  if (mode === 'novel') {
+    if (activeTab.value !== 'units') activeTab.value = 'units'
+    if (mobilePanel.value === 'characters' || mobilePanel.value === 'world') {
+      mobilePanel.value = 'units'
+    }
+  }
+})
+
 watch(projectId, (id) => {
   projectStore.setCurrent(id)
   worldEntryStore.loadWorldEntries(id)
   characterStore.loadCharacters(id)
+  characterEventStore.loadCharacterEvents(id).catch(() => {})
   relationStore.loadRelations(id)
   outlineStore.loadOutlines(id)
   hiddenThreadStore.loadHiddenThreads(id)
+  storyArcStore.loadStoryArcs(id)
 }, { immediate: true })
 
 async function ensureProjectsLoaded() {
@@ -84,10 +147,32 @@ watch([projectId, currentProject], ([id, project]) => {
 const writingUnits = computed(() => projectMode.value === 'article' ? documentStore.documentsForProject(projectId.value) : chapterStore.chaptersForProject(projectId.value))
 const currentWritingUnit = computed(() => projectMode.value === 'article' ? documentStore.currentDocumentForProject(projectId.value) : chapterStore.currentChapterForProject(projectId.value))
 const currentUnitNum = computed(() => projectMode.value === 'article' ? documentStore.currentDocumentPosition : chapterStore.currentChapterNum)
-const characters = computed(() => characterStore.charactersForProject(projectId.value))
+const characters = computed(() => {
+  const order = { core: 0, recurring: 1, chapter: 2, cameo: 3 }
+  return [...characterStore.charactersForProject(projectId.value)]
+    .sort((a, b) => order[a.scope_type] - order[b.scope_type] || a.name.localeCompare(b.name))
+})
 const outline = computed(() => outlineStore.entriesForProject(projectId.value))
-const worldEntries = computed(() => worldEntryStore.entriesForProject(projectId.value))
+const worldEntries = computed(() => {
+  const order = { global: 0, chapter: 1 }
+  return [...worldEntryStore.entriesForProject(projectId.value)]
+    .sort((a, b) => order[a.scope_type] - order[b.scope_type] || a.category.localeCompare(b.category))
+})
 const hiddenThreads = computed(() => hiddenThreadStore.threadsForProject(projectId.value))
+const projectArcs = computed(() => storyArcStore.arcsForProject(projectId.value))
+const showChapterConfigModal = ref(false)
+const configChapterNum = ref(0)
+const configChapterTitle = ref('')
+
+function openChapterConfig(ch: any) {
+  configChapterNum.value = unitPosition(ch)
+  configChapterTitle.value = unitDisplayTitle(ch)
+  showChapterConfigModal.value = true
+}
+
+function closeChapterConfig() {
+  showChapterConfigModal.value = false
+}
 
 type SearchTab = 'units' | 'outline' | 'characters' | 'world'
 type SearchResult = {
@@ -198,40 +283,43 @@ const projectSearchResults = computed<SearchResult[]>(() => {
         label: item.title,
         detail: titleMatched ? `${unitOrdinalNumberText(item.chapter_num)} · ${outlineLabel.value}` : `${outlineLabel.value} · ${summarySnippet ?? turningPointSnippet}`,
         badge: outlineLabel.value,
-        tab: 'outline',
+        tab: projectMode.value === 'novel' ? 'units' : 'outline',
+        unitNum: projectMode.value === 'novel' ? item.chapter_num : undefined,
       })
     }
   }
 
-  for (const char of characters.value) {
-    const nameMatched = matchesSearch(char.name, query)
-    const factionSnippet = searchSnippet(char.faction, query)
-    const profileSnippet = searchSnippet(char.profile, query)
-    if (nameMatched || factionSnippet || profileSnippet) {
-      results.push({
-        id: `character-${char.id}`,
-        targetId: `character-${char.id}`,
-        label: char.name,
-        detail: nameMatched ? (char.faction || `${characterLabel.value}档案`) : `${characterLabel.value} · ${factionSnippet ?? profileSnippet}`,
-        badge: characterLabel.value,
-        tab: 'characters',
-      })
+  if (projectMode.value === 'article') {
+    for (const char of characters.value) {
+      const nameMatched = matchesSearch(char.name, query)
+      const factionSnippet = searchSnippet(char.faction, query)
+      const profileSnippet = searchSnippet(char.profile, query)
+      if (nameMatched || factionSnippet || profileSnippet) {
+        results.push({
+          id: `character-${char.id}`,
+          targetId: `character-${char.id}`,
+          label: char.name,
+          detail: nameMatched ? (char.faction || `${characterLabel.value}档案`) : `${characterLabel.value} · ${factionSnippet ?? profileSnippet}`,
+          badge: characterLabel.value,
+          tab: 'characters',
+        })
+      }
     }
-  }
 
-  for (const entry of worldEntries.value) {
-    const titleMatched = matchesSearch(entry.title, query)
-    const categorySnippet = searchSnippet(entry.category, query)
-    const contentSnippet = searchSnippet(entry.content, query)
-    if (titleMatched || categorySnippet || contentSnippet) {
-      results.push({
-        id: `world-${entry.id}`,
-        targetId: `world-${entry.id}`,
-        label: entry.title,
-        detail: titleMatched ? (entry.category || `${worldLabel.value}${worldEntryLabel.value}`) : `${worldLabel.value} · ${categorySnippet ?? contentSnippet}`,
-        badge: worldEntryLabel.value,
-        tab: 'world',
-      })
+    for (const entry of worldEntries.value) {
+      const titleMatched = matchesSearch(entry.title, query)
+      const categorySnippet = searchSnippet(entry.category, query)
+      const contentSnippet = searchSnippet(entry.content, query)
+      if (titleMatched || categorySnippet || contentSnippet) {
+        results.push({
+          id: `world-${entry.id}`,
+          targetId: `world-${entry.id}`,
+          label: entry.title,
+          detail: titleMatched ? (entry.category || `${worldLabel.value}${worldEntryLabel.value}`) : `${worldLabel.value} · ${categorySnippet ?? contentSnippet}`,
+          badge: worldEntryLabel.value,
+          tab: 'world',
+        })
+      }
     }
   }
 
@@ -245,7 +333,8 @@ const projectSearchResults = computed<SearchResult[]>(() => {
         label: thread.name,
         detail: nameMatched ? hiddenThreadLabel.value : `${hiddenThreadLabel.value} · ${descriptionSnippet}`,
         badge: hiddenThreadLabel.value,
-        tab: 'outline',
+        tab: projectMode.value === 'novel' ? 'units' : 'outline',
+        unitNum: projectMode.value === 'novel' ? thread.chapter_nums?.[0] : undefined,
       })
     }
   }
@@ -285,6 +374,14 @@ function openSearchResult(result: SearchResult) {
 
   if (typeof result.unitNum === 'number') {
     selectWritingUnit(result.unitNum)
+    if (projectMode.value === 'novel' && result.id.startsWith('outline-')) {
+      const unit = writingUnits.value.find(item => unitPosition(item) === result.unitNum)
+      if (unit) openChapterConfig(unit)
+    }
+    if (projectMode.value === 'novel' && result.id.startsWith('hidden-')) {
+      const unit = writingUnits.value.find(item => unitPosition(item) === result.unitNum)
+      if (unit) openChapterConfig(unit)
+    }
   }
 
   searchOpen.value = false
@@ -313,7 +410,29 @@ onUnmounted(() => {
 
 function cancelGenerationAndProceed(callback: () => void) {
   agentPanelRef.value?.cancelStream()
+  creativeShellRef.value?.cancelGeneration()
   callback()
+}
+
+/** 新版壳层左侧“＋新增章节/稿件”入口：复用现有 store 创建接口，业务逻辑留在 Workspace */
+async function handleCreativeCreateUnit(payload: { title: string; position: number; summary?: string }) {
+  try {
+    const ch = projectMode.value === 'article'
+      ? await documentStore.createDocumentRemote(projectId.value, {
+          title: payload.title,
+          position: payload.position,
+        })
+      : await chapterStore.createChapterRemote(projectId.value, {
+          title: payload.title,
+          chapter_num: payload.position,
+          summary: payload.summary,
+        })
+    if (ch) selectWritingUnit(unitPosition(ch))
+    ui.showToast(`${unitLabel.value}创建成功`, 'success')
+  } catch (e: unknown) {
+    const msg = friendlyError(e, `创建${unitLabel.value}失败`)
+    ui.showToast(msg, 'error')
+  }
 }
 
 function confirmLeaveIfGenerating(callback: () => void) {
@@ -327,8 +446,7 @@ function confirmLeaveIfGenerating(callback: () => void) {
 onBeforeRouteLeave(() => {
   if (isGenerating.value) {
     showConfirm(`当前正在${projectMode.value === 'article' ? '生成内容' : '生成小说'}，退出将取消生成，是否继续？`, () => {
-      agentPanelRef.value?.cancelStream()
-      router.push('/projects')
+      cancelGenerationAndProceed(() => router.push('/projects'))
     }, '继续退出', true)
     return false
   }
@@ -348,10 +466,8 @@ function handleSwitchProject() {
 
 // Navigation
 function handleLogout() {
-  confirmLeaveIfGenerating(() => {
-    localStorage.removeItem('ai_write_logged_in')
-    localStorage.removeItem('ai_write_token')
-    router.push('/login')
+  confirmLeaveIfGenerating(async () => {
+    await performLogout()
   })
 }
 
@@ -360,7 +476,7 @@ const showExportMenu = ref(false)
 const exporting = ref(false)
 
 function getAuthHeaders(): Record<string, string> {
-  const token = localStorage.getItem('ai_write_token')
+  const token = getAuthToken()
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
   return headers
@@ -378,6 +494,9 @@ async function exportFromBackend(format: 'txt' | 'md') {
       { headers: getAuthHeaders() },
     )
     if (!res.ok) {
+      if (res.status === 401) {
+        handleUnauthorized()
+      }
       const text = await res.text().catch(() => '')
       let msg = `导出失败 (${res.status})`
       try {
@@ -422,65 +541,122 @@ const extractingStructure = ref(false)
 const applyingStructure = ref(false)
 const showStructurePreview = ref(false)
 const structurePayload = ref<StructureExtractPayload | null>(null)
+const extractingChapterId = ref<string | null>(null)
+const structureTargetChapterNum = ref<number | null>(null)
 
-const canExtractStructure = computed(() => {
-  const unit = currentWritingUnit.value
-  return projectMode.value === 'novel' && !!unit && !!unit.draft?.trim() && !extractingStructure.value && !applyingStructure.value
-})
-
-async function extractCurrentChapterStructure() {
-  const unit = currentWritingUnit.value
-  if (projectMode.value !== 'novel' || !unit) {
-    ui.showToast('请先选择一个小说章节', 'error')
-    return
-  }
-  if (!unit.draft.trim()) {
-    ui.showToast('当前章节正文为空，无法提炼', 'error')
+async function extractChapterMemory(unit: WritingUnit) {
+  if (projectMode.value !== 'novel') {
     return
   }
 
   extractingStructure.value = true
+  extractingChapterId.value = unit.id
   try {
-    const result = await api.extractChapterStructure(projectId.value, unitPosition(unit), {
+    // 当前正在编辑的章节先保存，确保提炼到的就是用户眼前这版正文；
+    // 点击其他章节则直接用该章已落库的正文，不会切走当前编辑器。
+    let targetUnit = unit
+    if (unitPosition(unit) === currentUnitNum.value) {
+      await chapterStore.saveCurrentChapter(projectId.value)
+      targetUnit = currentWritingUnit.value ?? unit
+    }
+    if (!targetUnit.draft.trim()) {
+      ui.showToast('本章正文为空，无法提炼', 'error')
+      return
+    }
+
+    const sequenceNumber = unitPosition(targetUnit)
+    const result = await api.extractChapterStructure(projectId.value, sequenceNumber, {
       mode: 'preview',
-      targets: ['outlines', 'characters', 'world_entries', 'hidden_threads', 'character_relations'],
+      targets: ['outlines', 'characters', 'world_entries', 'hidden_threads', 'character_relations', 'character_events'],
       include_existing_context: true,
     })
     structurePayload.value = result.extraction
+    structureTargetChapterNum.value = sequenceNumber
     showStructurePreview.value = true
   } catch (e: unknown) {
-    ui.showToast(friendlyError(e, '结构提炼失败'), 'error')
+    ui.showToast(structureExtractionError(e), 'error')
   } finally {
     extractingStructure.value = false
+    extractingChapterId.value = null
   }
 }
 
+function structureExtractionError(e: unknown) {
+  const message = friendlyError(e, '结构提炼失败')
+  if (message.includes('API Key') || message.includes('模型配置')) {
+    return '章节记忆更新失败：模型配置不可用，请到设置里重新保存 API Key 后再试'
+  }
+  if (message.includes('模型服务') || message.includes('服务器异常') || message.includes('Internal Server Error')) {
+    return '章节记忆更新失败：模型服务暂时不可用，请检查模型配置或稍后重试'
+  }
+  return `章节记忆更新失败：${message}`
+}
+
 async function applyExtractedStructure(payload: StructureExtractPayload) {
-  const unit = currentWritingUnit.value
-  if (!unit) return
+  const sequenceNumber = structureTargetChapterNum.value
+  if (!sequenceNumber) return
 
   applyingStructure.value = true
   try {
-    const result = await api.extractChapterStructure(projectId.value, unitPosition(unit), {
+    const result = await api.extractChapterStructure(projectId.value, sequenceNumber, {
       mode: 'apply',
       extraction: payload,
     })
     await Promise.all([
       outlineStore.loadOutlines(projectId.value),
       characterStore.loadCharacters(projectId.value),
+      characterEventStore.loadCharacterEvents(projectId.value),
       worldEntryStore.loadWorldEntries(projectId.value),
       hiddenThreadStore.loadHiddenThreads(projectId.value),
+      storyArcStore.loadStoryArcs(projectId.value),
       relationStore.loadRelations(projectId.value),
     ])
     showStructurePreview.value = false
     structurePayload.value = null
-    const count = Object.values(result.applied?.counts ?? {}).reduce((sum, value) => sum + value, 0)
-    ui.showToast(`已写入 ${count} 项结构资料`, 'success')
+    structureTargetChapterNum.value = null
+    ui.showToast(`本章记忆已写入：${formatStructureCounts(result.applied?.counts)}`, 'success')
   } catch (e: unknown) {
-    ui.showToast(friendlyError(e, '写入结构资料失败'), 'error')
+    ui.showToast(friendlyError(e, '写入章节记忆失败'), 'error')
   } finally {
     applyingStructure.value = false
   }
+}
+
+function formatStructureCounts(counts: Record<string, number> | undefined) {
+  const labels: Record<string, string> = {
+    outlines: '大纲',
+    characters: '角色',
+    world_entries: '世界观',
+    hidden_threads: '暗线',
+    character_relations: '关系',
+    character_events: '事件',
+  }
+  const parts = Object.entries(counts ?? {})
+    .filter(([, value]) => value > 0)
+    .map(([key, value]) => `${labels[key] ?? key} ${value}`)
+  return parts.length ? parts.join('、') : '无新增条目'
+}
+
+function characterRecentEvents(char: Character) {
+  return characterEventStore.eventsForCharacter(projectId.value, char.id).slice(-3).reverse()
+}
+
+function appearanceTypeLabel(type: string) {
+  return ({ appeared: '出场', mentioned: '提及', absent: '未出场' } as Record<string, string>)[type] ?? type
+}
+
+function characterScopeLabel(scope: string) {
+  return (projectMode.value === 'article'
+    ? { core: '核心画像', recurring: '常用画像', chapter: '单篇画像', cameo: '轻量画像' }
+    : { core: '主角团', recurring: '常驻角色', chapter: '章节角色', cameo: '客串角色' }
+  )[scope as 'core' | 'recurring' | 'chapter' | 'cameo'] ?? scope
+}
+
+function worldScopeLabel(scope: string) {
+  return (projectMode.value === 'article'
+    ? { global: '全局资料', chapter: '单篇资料' }
+    : { global: '全局设定', chapter: '章节设定' }
+  )[scope as 'global' | 'chapter'] ?? scope
 }
 
 // New writing unit form
@@ -739,10 +915,57 @@ async function deleteHiddenThreadConfirm(ht: HiddenThread) {
   }
 }
 
+// ─── Story Arc CRUD ───
+const showNewArcForm = ref(false)
+const newArcType = ref<'VOLUME' | 'ACT' | 'ARC'>('VOLUME')
+const newArcName = ref('')
+const newArcGoal = ref('')
+const newArcConflict = ref('')
+const newArcStart = ref<number | null>(null)
+const newArcEnd = ref<number | null>(null)
+const newArcError = ref('')
+
+async function submitNewArc() {
+  if (!newArcName.value.trim()) {
+    newArcError.value = '长线名称不能为空'
+    return
+  }
+  try {
+    await storyArcStore.createStoryArcItem(projectId.value, {
+      arc_type: newArcType.value,
+      name: newArcName.value.trim(),
+      goal: newArcGoal.value.trim() || undefined,
+      main_conflict: newArcConflict.value.trim() || undefined,
+      start_chapter: newArcStart.value ?? undefined,
+      end_chapter: newArcEnd.value ?? undefined,
+    })
+    showNewArcForm.value = false
+    newArcName.value = ''
+    newArcGoal.value = ''
+    newArcConflict.value = ''
+    newArcStart.value = null
+    newArcEnd.value = null
+    ui.showToast('长线结构创建成功', 'success')
+  } catch (e: unknown) {
+    newArcError.value = friendlyError(e, '创建长线结构失败')
+    ui.showToast(friendlyError(e, '创建长线结构失败'), 'error')
+  }
+}
+
+async function deleteArcConfirm(arc: StoryArc) {
+  try {
+    await storyArcStore.deleteStoryArcItem(projectId.value, arc.id)
+    ui.showToast('长线结构已删除', 'success')
+  } catch (e: unknown) {
+    ui.showToast(friendlyError(e, '删除长线结构失败'), 'error')
+  }
+}
+
 // ─── Character CRUD ───
 const showNewCharacter = ref(false)
 const newCharName = ref('')
 const newCharRoleType = ref<'protagonist' | 'antagonist' | 'supporting' | 'minor'>('supporting')
+const newCharScopeType = ref<'core' | 'recurring' | 'chapter' | 'cameo'>('recurring')
 const newCharProfile = ref('')
 const newCharFaction = ref('')
 const newCharError = ref('')
@@ -750,12 +973,14 @@ const newCharError = ref('')
 const editingCharId = ref<string | null>(null)
 const editCharName = ref('')
 const editCharRoleType = ref<'protagonist' | 'antagonist' | 'supporting' | 'minor'>('supporting')
+const editCharScopeType = ref<'core' | 'recurring' | 'chapter' | 'cameo'>('recurring')
 const editCharProfile = ref('')
 const editCharFaction = ref('')
 
 function openNewCharacterForm() {
   newCharName.value = ''
   newCharRoleType.value = 'supporting'
+  newCharScopeType.value = 'recurring'
   newCharProfile.value = ''
   newCharFaction.value = ''
   newCharError.value = ''
@@ -771,6 +996,7 @@ async function submitNewCharacter() {
     await characterStore.addCharacter(projectId.value, {
       name: newCharName.value.trim(),
       role_type: newCharRoleType.value,
+      scope_type: newCharScopeType.value,
       profile: newCharProfile.value.trim(),
       faction: newCharFaction.value.trim(),
     })
@@ -787,6 +1013,7 @@ function startEditCharacter(char: Character) {
   editingCharId.value = char.id
   editCharName.value = char.name
   editCharRoleType.value = char.role_type
+  editCharScopeType.value = char.scope_type
   editCharProfile.value = char.profile ?? ''
   editCharFaction.value = char.faction ?? ''
 }
@@ -801,6 +1028,7 @@ async function saveEditCharacter(char: Character) {
     await characterStore.updateCharacter(projectId.value, char.id, {
       name: editCharName.value.trim(),
       role_type: editCharRoleType.value,
+      scope_type: editCharScopeType.value,
       profile: editCharProfile.value.trim(),
       faction: editCharFaction.value.trim(),
     })
@@ -827,6 +1055,7 @@ async function deleteCharacterConfirm(char: Character) {
 const showNewWorldEntry = ref(false)
 const newWETitle = ref('')
 const newWECategory = ref('')
+const newWEScopeType = ref<'global' | 'chapter'>('global')
 const newWEContent = ref('')
 const newWEConfidence = ref<'low' | 'medium' | 'high'>('medium')
 const newWEError = ref('')
@@ -834,12 +1063,14 @@ const newWEError = ref('')
 const editingWEId = ref<string | null>(null)
 const editWETitle = ref('')
 const editWECategory = ref('')
+const editWEScopeType = ref<'global' | 'chapter'>('global')
 const editWEContent = ref('')
 const editWEConfidence = ref<'low' | 'medium' | 'high'>('medium')
 
 function openNewWorldEntryForm() {
   newWETitle.value = ''
   newWECategory.value = ''
+  newWEScopeType.value = 'global'
   newWEContent.value = ''
   newWEConfidence.value = 'medium'
   newWEError.value = ''
@@ -855,6 +1086,7 @@ async function submitNewWorldEntry() {
     await worldEntryStore.addWorldEntry(projectId.value, {
       title: newWETitle.value.trim(),
       category: newWECategory.value.trim() || undefined,
+      scope_type: newWEScopeType.value,
       content: newWEContent.value.trim(),
       confidence: newWEConfidence.value,
     })
@@ -870,6 +1102,7 @@ function startEditWorldEntry(entry: WorldEntry) {
   editingWEId.value = entry.id
   editWETitle.value = entry.title
   editWECategory.value = entry.category ?? ''
+  editWEScopeType.value = entry.scope_type
   editWEContent.value = entry.content ?? ''
   editWEConfidence.value = entry.confidence
 }
@@ -884,6 +1117,7 @@ async function saveEditWorldEntry(entry: WorldEntry) {
     await worldEntryStore.updateWorldEntry(projectId.value, entry.id, {
       title: editWETitle.value.trim(),
       category: editWECategory.value.trim() || undefined,
+      scope_type: editWEScopeType.value,
       content: editWEContent.value.trim(),
       confidence: editWEConfidence.value,
     })
@@ -960,6 +1194,15 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
         </div>
       </div>
       <div class="top-right">
+        <button
+          class="top-btn"
+          :title="shellMode === 'creative' ? '切换回经典三栏工作台' : '切换回新版对话式工作台'"
+          @click="toggleShellMode"
+        >
+          {{ shellMode === 'creative' ? '经典视图' : '新版视图' }}
+        </button>
+        <router-link v-if="projectMode === 'novel'" class="top-btn top-btn-link" :to="`/projects/${projectId}/knowledge`">资料库</router-link>
+        <router-link class="top-btn top-btn-link" :to="`/projects/${projectId}/evaluations`">评测集</router-link>
         <div class="export-group">
           <button class="top-btn" :disabled="exporting" @click="showExportMenu = !showExportMenu">{{ exporting ? '导出中...' : '导出' }}</button>
           <div v-if="showExportMenu" class="export-dropdown">
@@ -971,7 +1214,20 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
       </div>
     </header>
 
-    <div class="workspace" :class="{ 'sidebar-collapsed': !sidebarOpen, 'agent-collapsed': !agentOpen }">
+    <!-- 新版对话式创作壳层（默认；经典三栏可随时回退） -->
+    <ConversationCreativeWorkspace
+      v-if="shellMode === 'creative'"
+      ref="creativeShellRef"
+      class="creative-shell"
+      :project-id="projectId"
+      :mode="projectMode"
+      @create-unit="handleCreativeCreateUnit"
+      @open-config="openChapterConfig"
+      @extract-memory="extractChapterMemory"
+    />
+
+    <!-- 经典三栏布局（回退视图，原样保留） -->
+    <div v-else class="workspace" :class="{ 'sidebar-collapsed': !sidebarOpen, 'agent-collapsed': !agentOpen }">
       <!-- Left sidebar column (always in DOM for grid integrity) -->
       <aside class="sidebar" :class="{ 'sidebar-hidden': !sidebarOpen }">
         <button class="sidebar-toggle" @click="sidebarOpen = !sidebarOpen" :title="sidebarOpen ? '收起侧栏' : '展开侧栏'">
@@ -980,9 +1236,9 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
         <div class="sidebar-inner">
         <nav class="sidebar-tabs">
           <button :class="{ active: activeTab === 'units' }" @click="activeTab = 'units'">{{ unitLabel }}</button>
-          <button :class="{ active: activeTab === 'outline' }" @click="activeTab = 'outline'">{{ outlineLabel }}</button>
-          <button :class="{ active: activeTab === 'characters' }" @click="activeTab = 'characters'">{{ characterLabel }}</button>
-          <button :class="{ active: activeTab === 'world' }" @click="activeTab = 'world'">{{ worldLabel }}</button>
+          <button v-if="projectMode === 'article'" :class="{ active: activeTab === 'outline' }" @click="activeTab = 'outline'">{{ outlineLabel }}</button>
+          <button v-if="showArticleLibraries" :class="{ active: activeTab === 'characters' }" @click="activeTab = 'characters'">{{ characterLibraryLabel }}</button>
+          <button v-if="showArticleLibraries" :class="{ active: activeTab === 'world' }" @click="activeTab = 'world'">{{ worldLibraryLabel }}</button>
         </nav>
 
         <div class="sidebar-content">
@@ -990,14 +1246,6 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
           <div v-if="activeTab === 'units'" class="tab-pane">
             <div class="unit-toolbar">
               <button class="btn-add-unit" @click="openNewUnitForm">+ 新增{{ unitLabel }}</button>
-              <button
-                v-if="projectMode === 'novel'"
-                class="btn-extract-structure"
-                :disabled="!canExtractStructure"
-                @click="extractCurrentChapterStructure"
-              >
-                {{ extractingStructure ? '提炼中...' : '提炼结构' }}
-              </button>
             </div>
             <div v-if="showNewUnit" class="unit-form">
               <div class="form-row">
@@ -1037,6 +1285,14 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 <span class="unit-num">{{ unitDisplayNum(ch) }}</span>
                 <span class="unit-title">{{ unitDisplayTitle(ch) }}</span>
                 <span class="unit-status" :class="ch.status">{{ ch.status === 'final' ? '终稿' : ch.status === 'reviewing' ? '审核' : ch.status === 'revision' ? '修订' : '草稿' }}</span>
+                <button v-if="projectMode === 'novel'" class="chapter-meta-btn" title="本章资料" @click.stop="openChapterConfig(ch)">资料</button>
+                <button
+                  v-if="projectMode === 'novel'"
+                  class="chapter-meta-btn"
+                  :disabled="extractingStructure"
+                  title="提炼本章的角色、设定、事件与伏笔"
+                  @click.stop="extractChapterMemory(ch)"
+                >{{ extractingChapterId === ch.id ? '提炼中...' : '提炼' }}</button>
               </template>
             </div>
           </div>
@@ -1145,16 +1401,72 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
               >
                 <div class="ht-header">
                   <span class="ht-name">{{ ht.name }}</span>
+                  <span class="ht-status" :class="'ht-status-' + ht.status.toLowerCase()">{{ threadStatusLabel(ht.status) }}</span>
                   <button class="icon-btn icon-btn-danger" title="删除" @click.stop="deleteHiddenThreadConfirm(ht)">&#10005;</button>
                 </div>
                 <p v-if="ht.description" class="ht-desc">{{ ht.description }}</p>
               </div>
               <div v-if="!hiddenThreads.length && !showNewHiddenThread" class="empty-hint" style="padding: var(--sp-4) 0;">暂无{{ hiddenThreadLabel }}</div>
             </div>
+
+            <!-- Story Arcs sub-section within outline tab -->
+            <div v-if="projectMode === 'novel'" class="hidden-thread-section">
+              <div class="section-header">
+                <span class="section-title">长线结构</span>
+                <button class="btn-add-inline" @click="showNewArcForm = !showNewArcForm">+ 添加长线</button>
+              </div>
+              <div v-if="showNewArcForm" class="unit-form">
+                <div class="form-row">
+                  <label>类型 <span class="required">*</span></label>
+                  <select v-model="newArcType" class="form-input">
+                    <option value="VOLUME">卷 VOLUME</option>
+                    <option value="ACT">幕 ACT</option>
+                    <option value="ARC">弧 ARC</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label>名称 <span class="required">*</span></label>
+                  <input v-model="newArcName" type="text" placeholder="如：第一卷：觉醒" class="form-input" />
+                </div>
+                <div class="form-row">
+                  <label>目标</label>
+                  <input v-model="newArcGoal" type="text" placeholder="可选" class="form-input" />
+                </div>
+                <div class="form-row">
+                  <label>主冲突</label>
+                  <input v-model="newArcConflict" type="text" placeholder="可选" class="form-input" />
+                </div>
+                <div class="form-row" style="display: flex; gap: var(--sp-2);">
+                  <div style="flex: 1;">
+                    <label>起始章</label>
+                    <input v-model.number="newArcStart" type="number" min="1" class="form-input form-input-sm" />
+                  </div>
+                  <div style="flex: 1;">
+                    <label>结束章</label>
+                    <input v-model.number="newArcEnd" type="number" min="1" class="form-input form-input-sm" />
+                  </div>
+                </div>
+                <div v-if="newArcError" class="form-error">{{ newArcError }}</div>
+                <div class="form-actions">
+                  <button class="btn-submit" @click="submitNewArc">确定</button>
+                  <button class="btn-cancel" @click="showNewArcForm = false">取消</button>
+                </div>
+              </div>
+              <div v-for="arc in projectArcs" :key="arc.id" class="ht-item">
+                <div class="ht-header">
+                  <span class="ht-name">[{{ arc.arc_type }}] {{ arc.name }}</span>
+                  <button class="icon-btn icon-btn-danger" title="删除" @click.stop="deleteArcConfirm(arc)">&#10005;</button>
+                </div>
+                <p v-if="arc.goal" class="ht-desc">目标：{{ arc.goal }}</p>
+                <p v-if="arc.main_conflict" class="ht-desc">冲突：{{ arc.main_conflict }}</p>
+                <p v-if="arc.start_chapter && arc.end_chapter" class="ht-desc">章节范围：{{ arc.start_chapter }}-{{ arc.end_chapter }}</p>
+              </div>
+              <div v-if="!projectArcs.length && !showNewArcForm" class="empty-hint" style="padding: var(--sp-4) 0;">暂无长线结构</div>
+            </div>
           </div>
 
           <!-- Characters -->
-          <div v-if="activeTab === 'characters'" class="tab-pane">
+          <div v-if="activeTab === 'characters' && showArticleLibraries" class="tab-pane">
             <button class="btn-add-unit" @click="openNewCharacterForm">+ 新增{{ characterLabel }}</button>
             <div v-if="showNewCharacter" class="unit-form" style="margin: 0;">
               <div class="form-row">
@@ -1163,12 +1475,11 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
               </div>
               <div class="form-row">
                 <label>{{ characterLabel }}类型</label>
-                <select v-model="newCharRoleType" class="form-input">
-                  <option value="protagonist">{{ projectMode === 'article' ? '核心受众' : '主角' }}</option>
-                  <option value="antagonist">{{ projectMode === 'article' ? '反对人群' : '反派' }}</option>
-                  <option value="supporting">{{ projectMode === 'article' ? '影响者' : '配角' }}</option>
-                  <option value="minor">{{ projectMode === 'article' ? '泛受众' : '路人' }}</option>
-                </select>
+                <BaseSelect v-model="newCharRoleType" :options="characterRoleOptions" />
+              </div>
+              <div v-if="projectMode === 'novel'" class="form-row">
+                <label>叙事层级</label>
+                <BaseSelect v-model="newCharScopeType" :options="characterScopeOptions" />
               </div>
               <div class="form-row">
                 <label>{{ projectMode === 'article' ? '细分人群' : '阵营' }}</label>
@@ -1199,12 +1510,11 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                   </div>
                   <div class="form-row">
                     <label>{{ characterLabel }}类型</label>
-                    <select v-model="editCharRoleType" class="form-input">
-                      <option value="protagonist">{{ projectMode === 'article' ? '核心受众' : '主角' }}</option>
-                      <option value="antagonist">{{ projectMode === 'article' ? '反对人群' : '反派' }}</option>
-                      <option value="supporting">{{ projectMode === 'article' ? '影响者' : '配角' }}</option>
-                      <option value="minor">{{ projectMode === 'article' ? '泛受众' : '路人' }}</option>
-                    </select>
+                    <BaseSelect v-model="editCharRoleType" :options="characterRoleOptions" />
+                  </div>
+                  <div v-if="projectMode === 'novel'" class="form-row">
+                    <label>叙事层级</label>
+                    <BaseSelect v-model="editCharScopeType" :options="characterScopeOptions" />
                   </div>
                   <div class="form-row">
                     <label>{{ projectMode === 'article' ? '细分人群' : '阵营' }}</label>
@@ -1224,6 +1534,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 <div class="char-name">
                   {{ char.name }}
                   <span class="char-role-type" :class="char.role_type">{{ projectMode === 'article' ? { protagonist: '核心受众', antagonist: '反对人群', supporting: '影响者', minor: '泛受众' }[char.role_type] : { protagonist: '主角', antagonist: '反派', supporting: '配角', minor: '路人' }[char.role_type] }}</span>
+                  <span v-if="projectMode === 'novel'" class="char-scope-type" :class="char.scope_type">{{ characterScopeLabel(char.scope_type) }}</span>
                   <span class="outline-actions">
                     <button class="icon-btn" title="编辑" @click.stop="startEditCharacter(char)">&#9998;</button>
                     <button class="icon-btn icon-btn-danger" title="删除" @click.stop="deleteCharacterConfirm(char)">&#10005;</button>
@@ -1232,13 +1543,20 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 <p v-if="char.faction" class="char-faction">{{ projectMode === 'article' ? '细分人群' : '阵营' }}: {{ char.faction }}</p>
                 <p class="char-profile">{{ char.profile }}</p>
                 <div v-if="projectMode === 'novel' && char.appearance_count" class="char-appearance">出场次数: {{ char.appearance_count }}</div>
+                <div v-if="projectMode === 'novel' && characterRecentEvents(char).length" class="char-events">
+                  <div v-for="event in characterRecentEvents(char)" :key="event.id" class="char-event">
+                    <span class="char-event-chapter">第{{ event.chapter_sequence_number }}章</span>
+                    <span class="char-event-type">{{ appearanceTypeLabel(event.appearance_type) }}</span>
+                    <span class="char-event-summary">{{ event.event_summary || event.state_change || '未填写事件' }}</span>
+                  </div>
+                </div>
               </template>
             </div>
             <div v-if="!characters.length && !showNewCharacter" class="empty-hint">暂无{{ characterLabel }}</div>
           </div>
 
           <!-- World -->
-          <div v-if="activeTab === 'world'" class="tab-pane">
+          <div v-if="activeTab === 'world' && showArticleLibraries" class="tab-pane">
             <button class="btn-add-unit" @click="openNewWorldEntryForm">+ 新增{{ worldEntryLabel }}</button>
             <div v-if="showNewWorldEntry" class="unit-form" style="margin: 0;">
               <div class="form-row">
@@ -1249,17 +1567,17 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 <label>分类</label>
                 <input v-model="newWECategory" type="text" :placeholder="projectMode === 'article' ? '可选，如：品牌、产品、案例、数据' : '可选，如：地理、历史、魔法'" class="form-input" />
               </div>
+              <div v-if="projectMode === 'novel'" class="form-row">
+                <label>设定层级</label>
+                <BaseSelect v-model="newWEScopeType" :options="worldScopeOptions" />
+              </div>
               <div class="form-row">
                 <label>内容</label>
                 <textarea v-model="newWEContent" class="form-textarea" rows="3" :placeholder="projectMode === 'article' ? '品牌/产品资料、案例、数据或参考材料' : '世界观设定内容'"></textarea>
               </div>
               <div class="form-row">
                 <label>可信度</label>
-                <select v-model="newWEConfidence" class="form-input">
-                  <option value="low">低</option>
-                  <option value="medium">中</option>
-                  <option value="high">高</option>
-                </select>
+                <BaseSelect v-model="newWEConfidence" :options="confidenceOptions" />
               </div>
               <div v-if="newWEError" class="form-error">{{ newWEError }}</div>
               <div class="form-actions">
@@ -1284,17 +1602,17 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                     <label>分类</label>
                     <input v-model="editWECategory" type="text" class="form-input" />
                   </div>
+                  <div v-if="projectMode === 'novel'" class="form-row">
+                    <label>设定层级</label>
+                    <BaseSelect v-model="editWEScopeType" :options="worldScopeOptions" />
+                  </div>
                   <div class="form-row">
                     <label>内容</label>
                     <textarea v-model="editWEContent" class="form-textarea" rows="3"></textarea>
                   </div>
                   <div class="form-row">
                     <label>可信度</label>
-                    <select v-model="editWEConfidence" class="form-input">
-                      <option value="low">低</option>
-                      <option value="medium">中</option>
-                      <option value="high">高</option>
-                    </select>
+                    <BaseSelect v-model="editWEConfidence" :options="confidenceOptions" />
                   </div>
                   <div class="form-actions">
                     <button class="btn-submit" @click="saveEditWorldEntry(entry)">保存</button>
@@ -1306,6 +1624,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
                 <div class="world-label">
                   {{ entry.title }}
                   <span v-if="entry.category" class="world-category">· {{ entry.category }}</span>
+                  <span v-if="projectMode === 'novel'" class="world-scope" :class="entry.scope_type">{{ worldScopeLabel(entry.scope_type) }}</span>
                   <span class="we-confidence" :class="entry.confidence">{{ { low: '低', medium: '中', high: '高' }[entry.confidence] }}</span>
                   <span class="outline-actions">
                     <button class="icon-btn" title="编辑" @click.stop="startEditWorldEntry(entry)">&#9998;</button>
@@ -1357,8 +1676,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 
     <nav class="mobile-nav">
       <button :class="{ active: mobilePanel === 'units' }" @click="mobilePanel = 'units'">{{ unitLabel }}</button>
-      <button :class="{ active: mobilePanel === 'characters' }" @click="mobilePanel = 'characters'">{{ characterLabel }}</button>
-      <button :class="{ active: mobilePanel === 'world' }" @click="mobilePanel = 'world'">{{ worldLabel }}</button>
+      <button v-if="showArticleLibraries" :class="{ active: mobilePanel === 'characters' }" @click="mobilePanel = 'characters'">{{ characterLabel }}</button>
+      <button v-if="showArticleLibraries" :class="{ active: mobilePanel === 'world' }" @click="mobilePanel = 'world'">{{ worldLabel }}</button>
       <button :class="{ active: mobilePanel === 'editor' }" @click="mobilePanel = 'editor'">编辑</button>
       <button :class="{ active: mobilePanel === 'agent' }" @click="mobilePanel = 'agent'">Agent</button>
     </nav>
@@ -1366,14 +1685,6 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
     <div v-if="mobilePanel === 'units'" class="mobile-pane">
       <div class="unit-toolbar">
         <button class="btn-add-unit" @click="openNewUnitForm">+ 新增{{ unitLabel }}</button>
-        <button
-          v-if="projectMode === 'novel'"
-          class="btn-extract-structure"
-          :disabled="!canExtractStructure"
-          @click="extractCurrentChapterStructure"
-        >
-          {{ extractingStructure ? '提炼中...' : '提炼结构' }}
-        </button>
       </div>
       <div v-if="showNewUnit" class="unit-form">
         <div class="form-row">
@@ -1413,6 +1724,14 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
           <span class="unit-num">{{ unitDisplayNum(ch) }}</span>
           <span class="unit-title">{{ unitDisplayTitle(ch) }}</span>
           <span class="unit-status" :class="ch.status">{{ ch.status === 'final' ? '终稿' : '草稿' }}</span>
+          <button v-if="projectMode === 'novel'" class="chapter-meta-btn" title="本章资料" @click.stop="openChapterConfig(ch)">资料</button>
+          <button
+            v-if="projectMode === 'novel'"
+            class="chapter-meta-btn"
+            :disabled="extractingStructure"
+            title="提炼本章的角色、设定、事件与伏笔"
+            @click.stop="extractChapterMemory(ch)"
+          >{{ extractingChapterId === ch.id ? '提炼中...' : '提炼' }}</button>
         </template>
       </div>
     </div>
@@ -1426,6 +1745,25 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
       <AgentPanel ref="agentPanelRef" :project-id="projectId" :mode="projectMode" />
     </div>
   </div>
+
+  <Teleport to="body">
+    <div v-if="showChapterConfigModal" class="chapter-config-modal-overlay">
+      <section
+        class="chapter-config-modal"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="`第${configChapterNum}章资料配置`"
+      >
+        <ChapterConfig
+          :project-id="projectId"
+          :project-mode="projectMode"
+          :chapter-num="configChapterNum"
+          :chapter-title="configChapterTitle"
+          @close="closeChapterConfig"
+        />
+      </section>
+    </div>
+  </Teleport>
 
   <!-- Writing unit context menu -->
   <Teleport to="body">
@@ -1447,7 +1785,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   <StructureExtractPreview
     :show="showStructurePreview"
     :payload="structurePayload"
-    :confirm-text="applyingStructure ? '写入中...' : '确认写入'"
+    title="章节记忆预览"
+    :confirm-text="applyingStructure ? '写入中...' : '写入记忆'"
     @close="showStructurePreview = false"
     @confirm="applyExtractedStructure"
   />
@@ -1461,13 +1800,15 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--sp-4);
-  padding: 10px var(--sp-5);
-  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
-  border-bottom: 1px solid var(--border);
+  gap: 18px;
+  min-height: 66px;
+  padding: 12px 24px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-panel) 88%, transparent), color-mix(in srgb, var(--bg) 88%, transparent));
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   flex-shrink: 0;
-  box-shadow: 0 1px 0 rgba(17, 24, 39, 0.03);
-  backdrop-filter: blur(12px);
+  box-shadow: none;
+  backdrop-filter: blur(18px);
 }
 .top-left, .top-right {
   display: flex;
@@ -1476,7 +1817,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 }
 .top-left {
   min-width: 0;
-  flex: 1 1 260px;
+  flex: 1 1 300px;
 }
 .top-right {
   flex: 0 0 auto;
@@ -1484,14 +1825,14 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 .top-link {
   font-size: var(--text-sm);
   color: var(--accent);
-  font-weight: 650;
+  font-weight: 720;
   white-space: nowrap;
 }
 .top-link:hover { text-decoration: none; opacity: 0.85; }
 .top-sep { color: var(--text-tertiary); font-size: var(--text-xs); }
 .top-project-name {
-  font-size: var(--text-sm);
-  font-weight: 700;
+  font-size: 0.98rem;
+  font-weight: 780;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1500,21 +1841,22 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 .mode-badge {
   font-size: 10px;
   font-weight: 700;
-  padding: 3px 8px;
-  border-radius: 10px;
+  padding: 4px 9px;
+  border-radius: 999px;
   white-space: nowrap;
 }
 .mode-badge.novel { background: var(--status-final-bg); color: var(--status-final); }
 .mode-badge.article { background: var(--status-reviewing-bg); color: var(--status-reviewing); }
 .top-btn {
-  padding: var(--sp-2) var(--sp-3);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  height: 38px;
+  padding: 0 14px;
+  background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 10px;
   font-size: var(--text-xs);
   color: var(--text-secondary);
   cursor: pointer;
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
   transition: background var(--transition), border-color var(--transition), color var(--transition), transform var(--transition);
 }
 .top-btn:hover {
@@ -1524,6 +1866,11 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   transform: translateY(-1px);
 }
 .top-btn-logout { color: var(--text-tertiary); }
+.top-btn-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
 .export-group { position: relative; }
 .export-dropdown {
   position: absolute;
@@ -1553,8 +1900,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 
 .project-search {
   position: relative;
-  flex: 0 1 420px;
-  min-width: 260px;
+  flex: 0 1 620px;
+  min-width: 300px;
   z-index: 1300;
 }
 .search-prefix {
@@ -1569,10 +1916,10 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 }
 .project-search-input {
   width: 100%;
-  height: 36px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-input);
+  height: 42px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-input) 86%, transparent);
   color: var(--text);
   font-size: var(--text-sm);
   padding: 0 64px 0 36px;
@@ -1615,8 +1962,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   overflow-y: auto;
   padding: var(--sp-2);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
   box-shadow: var(--shadow-lg);
 }
 .search-result {
@@ -1683,22 +2030,23 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 .workspace-wrapper {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
+  height: calc(100vh - var(--desktop-status-bar-height, 0px));
+  height: calc(100dvh - var(--desktop-status-bar-height, 0px));
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg) 88%, white) 0%, var(--bg) 180px),
+    radial-gradient(circle at 54% 0, color-mix(in srgb, var(--accent) 10%, transparent), transparent 34%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-panel) 26%, var(--bg)) 0%, var(--bg) 240px),
     var(--bg);
 }
 .workspace {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr) 324px;
+  grid-template-columns: 280px minmax(0, 1fr) 360px;
   flex: 1;
   min-height: 0;
   overflow: hidden;
   transition: grid-template-columns 220ms ease;
 }
-.workspace.sidebar-collapsed { grid-template-columns: 0px minmax(0, 1fr) 324px; }
-.workspace.agent-collapsed { grid-template-columns: 248px minmax(0, 1fr) 0px; }
+.workspace.sidebar-collapsed { grid-template-columns: 0px minmax(0, 1fr) 360px; }
+.workspace.agent-collapsed { grid-template-columns: 280px minmax(0, 1fr) 0px; }
 .workspace.sidebar-collapsed.agent-collapsed { grid-template-columns: 0px 1fr 0px; }
 
 /* Sidebar & agent toggle buttons */
@@ -1707,11 +2055,11 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   top: 50%;
   transform: translateY(-50%);
   z-index: 10;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-panel) 90%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
   border-radius: 999px;
-  width: 24px;
-  height: 40px;
+  width: 28px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1721,6 +2069,7 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   transition: background var(--transition), color var(--transition), opacity 220ms ease;
   padding: 0;
   box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
 }
 .sidebar-toggle {
   right: -12px; /* overlap the border */
@@ -1736,8 +2085,9 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 
 /* Sidebar */
 .sidebar {
-  background: color-mix(in srgb, var(--bg-sidebar) 86%, var(--bg-panel));
-  border-right: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-panel) 20%, var(--bg-sidebar)), var(--bg-sidebar));
+  border-right: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   display: flex;
   flex-direction: column;
   overflow: visible;
@@ -1753,9 +2103,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   right: -24px;
 }
 .sidebar-inner {
-  flex: 1;
+  flex: 1 1 0;
   overflow: hidden;
-  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -1769,30 +2118,37 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   gap: 2px;
-  padding: var(--sp-2);
+  padding: 0 10px;
+  height: 48px;
+  align-items: flex-end;
 }
 .sidebar-tabs button {
   flex: 1;
-  padding: var(--sp-2) var(--sp-1);
+  height: 100%;
+  padding: 10px 8px;
   border: none;
-  border-radius: var(--radius-sm);
-  background: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
   font-size: var(--text-xs);
   font-weight: 650;
   color: var(--text-tertiary);
   cursor: pointer;
+  margin-bottom: -1px;
   transition: color var(--transition), border-color var(--transition);
 }
 .sidebar-tabs button:hover { color: var(--text-secondary); }
 .sidebar-tabs button.active {
-  background: var(--bg-panel);
+  background: transparent;
+  border-bottom-color: var(--accent);
   color: var(--text);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
+  font-weight: 700;
 }
 .sidebar-content {
-  flex: 1;
+  flex: 1 1 0;
   overflow-y: auto;
-  padding: var(--sp-3);
+  padding: 14px;
   min-width: 0;
   min-height: 0;
   overscroll-behavior: contain;
@@ -1809,22 +2165,23 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: 9px var(--sp-3);
-  border-radius: var(--radius);
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm, 6px);
   cursor: pointer;
   font-size: var(--text-sm);
   border: 1px solid transparent;
   transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
 }
 .unit-item:hover {
-  background: color-mix(in srgb, var(--bg-hover) 72%, var(--bg-panel));
+  background: var(--bg-hover);
   border-color: var(--border);
 }
 .unit-item.active {
-  background: var(--bg-panel);
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
-  box-shadow: var(--shadow-sm);
-  color: var(--accent);
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent), var(--shadow-sm);
+  color: var(--text);
   font-weight: 600;
 }
 .unit-item.search-highlight,
@@ -1852,23 +2209,86 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   height: 26px;
 }
 .unit-status {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 7px;
-  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
   white-space: nowrap;
 }
+.unit-status::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: currentColor;
+}
 .unit-status.draft { background: var(--status-draft-bg); color: var(--status-draft); }
+.unit-status.draft::before { background: var(--status-draft); }
 .unit-status.reviewing { background: var(--status-reviewing-bg); color: var(--status-reviewing); }
+.unit-status.reviewing::before { background: var(--status-reviewing); }
 .unit-status.revision { background: var(--status-revision-bg); color: var(--status-revision); }
+.unit-status.revision::before { background: var(--status-revision); }
 .unit-status.final { background: var(--status-final-bg); color: var(--status-final); }
+.unit-status.final::before { background: var(--status-final); }
+.unit-status.generating,
+.unit-status.running {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+.unit-status.generating::before,
+.unit-status.running::before {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% {
+    box-shadow: 0 0 0 2px var(--accent-subtle);
+  }
+  50% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .unit-status.generating::before,
+  .unit-status.running::before {
+    animation: none;
+  }
+}
+.chapter-meta-btn {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 7px;
+  padding: 2px 7px;
+  background: color-mix(in srgb, var(--accent-subtle) 76%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.chapter-meta-btn:hover {
+  background: var(--accent-subtle);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+.chapter-meta-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
 
 /* Outline */
 .outline-item {
   padding: var(--sp-3);
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--bg-panel);
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 86%, transparent);
   box-shadow: var(--shadow-sm);
 }
 .outline-header {
@@ -1908,13 +2328,44 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   padding: 2px 7px;
   border-radius: 8px;
 }
+.overview-panel {
+  padding: var(--sp-3);
+  background: color-mix(in srgb, var(--bg-panel) 86%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 14px;
+}
+.overview-textarea {
+  min-height: 220px;
+  resize: vertical;
+}
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+.overview-grid > div {
+  padding: var(--sp-3);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.overview-metric {
+  display: block;
+  color: var(--text);
+  font-size: var(--text-lg);
+  font-weight: 700;
+}
+.overview-label {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
 
 /* Characters */
 .character-card {
   padding: var(--sp-3);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-panel) 86%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 14px;
   box-shadow: var(--shadow-sm);
 }
 .char-name {
@@ -1933,9 +2384,33 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   white-space: nowrap;
 }
 .char-role-type.protagonist { background: var(--status-final-bg); color: var(--status-final); }
-.char-role-type.antagonist { background: var(--status-error-bg, #fef2f2); color: var(--status-error, #ef4444); }
+.char-role-type.antagonist { background: var(--status-error-bg); color: var(--status-error); }
 .char-role-type.supporting { background: var(--accent-subtle); color: var(--accent); }
 .char-role-type.minor { background: var(--bg-hover); color: var(--text-tertiary); }
+.char-scope-type,
+.world-scope {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+  background: var(--bg-hover);
+  color: var(--text-tertiary);
+}
+.char-scope-type.core,
+.world-scope.global {
+  background: var(--status-final-bg);
+  color: var(--status-final);
+}
+.char-scope-type.recurring {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+.char-scope-type.chapter,
+.world-scope.chapter {
+  background: var(--status-reviewing-bg);
+  color: var(--status-reviewing);
+}
 .char-faction {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
@@ -1951,6 +2426,31 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   font-size: 10px;
   color: var(--text-tertiary);
   margin-top: var(--sp-1);
+}
+.char-events {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: var(--sp-2);
+  padding-top: var(--sp-2);
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+.char-event {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+.char-event-chapter,
+.char-event-type {
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+.char-event-summary {
+  min-width: 0;
 }
 
 /* World */
@@ -1988,9 +2488,9 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 }
 .world-block {
   padding: var(--sp-3);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-panel) 86%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 14px;
   box-shadow: var(--shadow-sm);
 }
 
@@ -2009,10 +2509,11 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 }
 .btn-add-unit {
   width: 100%;
+  min-height: 44px;
   padding: 10px var(--sp-3);
-  background: color-mix(in srgb, var(--bg-panel) 68%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 54%, transparent);
   border: 1px dashed color-mix(in srgb, var(--accent) 34%, var(--border));
-  border-radius: var(--radius);
+  border-radius: 14px;
   font-size: var(--text-sm);
   font-weight: 650;
   color: var(--accent);
@@ -2023,29 +2524,10 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   border-color: var(--accent);
   background: var(--accent-subtle);
 }
-.btn-extract-structure {
-  width: 100%;
-  padding: 9px var(--sp-3);
-  background: var(--accent);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius);
-  color: var(--text-inverse);
-  font-size: var(--text-sm);
-  font-weight: 650;
-  transition: background var(--transition), border-color var(--transition), opacity var(--transition);
-}
-.btn-extract-structure:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-}
-.btn-extract-structure:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
-}
 .unit-form {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 14px;
   padding: var(--sp-3);
   display: flex;
   flex-direction: column;
@@ -2117,27 +2599,59 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--paper-stage);
+  background:
+    radial-gradient(circle at 50% 0, color-mix(in srgb, var(--accent) 8%, transparent), transparent 42%),
+    var(--paper-stage);
   min-width: 0;
   min-height: 0;
 }
 
+.chapter-config-modal-overlay {
+  position: fixed;
+  inset: var(--desktop-status-bar-height, 0px) 0 0;
+  z-index: 2500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg-overlay);
+  backdrop-filter: blur(12px);
+}
+.chapter-config-modal {
+  width: min(1180px, calc(100vw - 48px));
+  height: min(88dvh, calc(100dvh - var(--desktop-status-bar-height, 0px) - 48px));
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-modal);
+}
+.chapter-config-modal :deep(.chapter-config) {
+  width: 100%;
+  height: 100%;
+}
+
 /* Agent area */
 .agent-area {
-  border-left: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-sidebar) 86%, var(--bg-panel));
+  border-left: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-panel) 18%, var(--bg-sidebar)), var(--bg-sidebar));
   overflow: visible;
   position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 .agent-content {
-  flex: 1;
+  flex: 1 1 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: var(--sp-4);
+  padding: 20px;
   min-width: 0;
+  min-height: 0;
 }
 .agent-area.agent-hidden {
   border-left: none;
@@ -2153,8 +2667,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 .workspace-mobile {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
+  height: calc(100vh - var(--desktop-status-bar-height, 0px));
+  height: calc(100dvh - var(--desktop-status-bar-height, 0px));
   background: var(--bg);
 }
 .mobile-nav {
@@ -2192,6 +2706,17 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   padding: 0;
   overflow: hidden;
 }
+@media (max-width: 768px) {
+  .chapter-config-modal-overlay {
+    align-items: stretch;
+    padding: 10px;
+  }
+  .chapter-config-modal {
+    width: 100%;
+    height: calc(100dvh - var(--desktop-status-bar-height, 0px) - 20px);
+    border-radius: 14px;
+  }
+}
 
 /* Outline actions (edit/delete icons) */
 .outline-actions {
@@ -2223,8 +2748,8 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
   color: var(--text-secondary);
 }
 .icon-btn-danger:hover {
-  background: var(--status-error-bg, #fef2f2);
-  color: var(--status-error, #ef4444);
+  background: var(--status-error-bg);
+  color: var(--status-error);
 }
 
 /* Hidden thread section */
@@ -2315,4 +2840,11 @@ async function deleteWorldEntryConfirm(entry: WorldEntry) {
 .ctx-item:hover { background: var(--bg-hover); }
 .ctx-item-danger { color: var(--status-error); }
 .ctx-item-danger:hover { background: var(--sev-critical-bg); }
+
+/* 新版对话式创作壳层：占满顶栏下方区域 */
+.creative-shell {
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+}
 </style>

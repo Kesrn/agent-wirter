@@ -1,21 +1,27 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useProjectStore, useUiStore, friendlyError } from '../stores'
+import { computed, ref, onMounted } from 'vue'
+import { useProjectStore, useCharacterStore, useCharacterEventStore, useWorldEntryStore, useOutlineStore, useUiStore, friendlyError } from '../stores'
 import { useRouter } from 'vue-router'
-import type { ProjectMode } from '../api/types'
+import type { Project, ProjectMode } from '../api/types'
 import { api } from '../api/client'
+import { performLogout } from '../utils/authSession'
 import ConfirmModal from '../components/ConfirmModal.vue'
+import BaseMultiSelect from '../components/BaseMultiSelect.vue'
+import NovelConfig from '../components/NovelConfig.vue'
+import ProjectWorldLibrary from '../components/ProjectWorldLibrary.vue'
 
 const store = useProjectStore()
+const characterStore = useCharacterStore()
+const characterEventStore = useCharacterEventStore()
+const worldEntryStore = useWorldEntryStore()
+const outlineStore = useOutlineStore()
 const ui = useUiStore()
 const router = useRouter()
 
 onMounted(() => { store.loadProjects() })
 
-function handleLogout() {
-  localStorage.removeItem('ai_write_logged_in')
-  localStorage.removeItem('ai_write_token')
-  router.push('/login')
+async function handleLogout() {
+  await performLogout()
 }
 
 function formatDate(iso: string): string {
@@ -42,11 +48,42 @@ function modeLabel(mode: string): string {
 const showNewProject = ref(false)
 const newTitle = ref('')
 const newMode = ref<ProjectMode>('novel')
-const newGenre = ref('')
-const newStyle = ref('')
+const newGenres = ref<string[]>([])
+const newStyles = ref<string[]>([])
 const newDescription = ref('')
 const newTargetWords = ref<number | null>(null)
 const newProjectError = ref('')
+
+const novelGenreOptions = [
+  '玄幻', '仙侠', '奇幻', '都市', '科幻', '悬疑', '历史', '武侠',
+  '言情', '穿越重生', '末世', '无限流', '游戏竞技', '轻小说',
+  '灵异', '现实', '宫斗宅斗', '职场商战',
+].map(label => ({ value: label, label }))
+
+const articleGenreOptions = [
+  '产品介绍', '行业分析', '教程指南', '品牌故事', '案例复盘', '观点评论',
+  '知识科普', '营销文案', '社媒短文', '新闻解读', '人物访谈', '活动策划',
+].map(label => ({ value: label, label }))
+
+const novelStyleOptions = [
+  '爽文', '热血', '轻松', '正剧', '甜文', '暗黑', '硬核', '悬疑感',
+  '群像', '慢热', '快节奏', '幽默', '治愈', '史诗', '赛博朋克', '国风',
+].map(label => ({ value: label, label }))
+
+const articleStyleOptions = [
+  '专业', '轻松', '犀利', '克制', '故事化', '数据驱动', '口语化', '高级感',
+  '转化导向', '深度分析', '短平快', '社媒感', '科普向', '观点鲜明',
+].map(label => ({ value: label, label }))
+
+const genreOptions = computed(() => newMode.value === 'article' ? articleGenreOptions : novelGenreOptions)
+const styleOptions = computed(() => newMode.value === 'article' ? articleStyleOptions : novelStyleOptions)
+
+function setNewProjectMode(mode: ProjectMode) {
+  if (newMode.value === mode) return
+  newMode.value = mode
+  newGenres.value = []
+  newStyles.value = []
+}
 
 const importFileInput = ref<HTMLInputElement | null>(null)
 const showTxtImport = ref(false)
@@ -58,12 +95,16 @@ const txtImportError = ref('')
 const importingTxt = ref(false)
 const deletingProjectId = ref<string | null>(null)
 const projectPendingDelete = ref<{ id: string; title: string } | null>(null)
+const configProject = ref<Project | null>(null)
+const loadingConfigProjectId = ref<string | null>(null)
+const worldLibraryProject = ref<Project | null>(null)
+const loadingWorldLibraryProjectId = ref<string | null>(null)
 
 function openNewProjectForm() {
   newTitle.value = ''
   newMode.value = 'novel'
-  newGenre.value = ''
-  newStyle.value = ''
+  newGenres.value = []
+  newStyles.value = []
   newDescription.value = ''
   newTargetWords.value = null
   newProjectError.value = ''
@@ -78,8 +119,8 @@ async function submitNewProject() {
   const payload = {
     title: newTitle.value.trim(),
     mode: newMode.value,
-    genre: newGenre.value.trim() || undefined,
-    style: newStyle.value.trim() || undefined,
+    genre: newGenres.value.join('、') || undefined,
+    style: newStyles.value.join('、') || undefined,
     description: newDescription.value.trim() || undefined,
     target_words: newTargetWords.value ?? undefined,
   }
@@ -174,6 +215,43 @@ async function deleteProject(projectId: string) {
     deletingProjectId.value = null
   }
 }
+
+async function openProjectConfig(project: Project) {
+  if (project.mode !== 'novel') return
+  loadingConfigProjectId.value = project.id
+  try {
+    await Promise.all([
+      characterStore.loadCharacters(project.id),
+      characterEventStore.loadCharacterEvents(project.id),
+      outlineStore.loadOutlines(project.id),
+    ])
+    configProject.value = project
+  } catch (e: unknown) {
+    ui.showToast(friendlyError(e, '加载全书配置失败'), 'error')
+  } finally {
+    loadingConfigProjectId.value = null
+  }
+}
+
+function worldLibraryLabel(project: Project): string {
+  return project.mode === 'article' ? '资料库' : ''
+}
+
+function worldLibraryTitle(project: Project): string {
+  return project.mode === 'article' ? '品牌/产品资料库' : ''
+}
+
+async function openProjectWorldLibrary(project: Project) {
+  loadingWorldLibraryProjectId.value = project.id
+  try {
+    await worldEntryStore.loadWorldEntries(project.id)
+    worldLibraryProject.value = project
+  } catch (e: unknown) {
+    ui.showToast(friendlyError(e, `加载${worldLibraryTitle(project)}失败`), 'error')
+  } finally {
+    loadingWorldLibraryProjectId.value = null
+  }
+}
 </script>
 
 <template>
@@ -202,17 +280,25 @@ async function deleteProject(projectId: string) {
       <div class="form-row">
         <label>创作模式</label>
         <div class="mode-segmented">
-          <button :class="{ active: newMode === 'novel' }" @click="newMode = 'novel'">小说</button>
-          <button :class="{ active: newMode === 'article' }" @click="newMode = 'article'">文章</button>
+          <button :class="{ active: newMode === 'novel' }" @click="setNewProjectMode('novel')">小说</button>
+          <button :class="{ active: newMode === 'article' }" @click="setNewProjectMode('article')">文章</button>
         </div>
       </div>
       <div class="form-row">
         <label>题材</label>
-        <input v-model="newGenre" type="text" placeholder="可选，如：科幻、悬疑" class="form-input" />
+        <BaseMultiSelect
+          v-model="newGenres"
+          :options="genreOptions"
+          :placeholder="newMode === 'article' ? '可选，如：行业分析、教程指南' : '可选，如：科幻、悬疑'"
+        />
       </div>
       <div class="form-row">
         <label>风格</label>
-        <input v-model="newStyle" type="text" placeholder="可选，如：硬核、暗黑" class="form-input" />
+        <BaseMultiSelect
+          v-model="newStyles"
+          :options="styleOptions"
+          :placeholder="newMode === 'article' ? '可选，如：专业、故事化' : '可选，如：硬核、暗黑'"
+        />
       </div>
       <div class="form-row">
         <label>简介</label>
@@ -266,6 +352,31 @@ async function deleteProject(projectId: string) {
           <div class="card-actions" @click.stop>
             <span class="status-badge" :class="project.status">{{ statusLabel(project.status) }}</span>
             <button
+              class="btn-card-secondary"
+              title="评测集"
+              @click.stop="router.push(`/projects/${project.id}/evaluations`)"
+            >
+              评测集
+            </button>
+            <button
+              v-if="project.mode === 'article'"
+              class="btn-card-library"
+              :disabled="loadingWorldLibraryProjectId === project.id"
+              :title="worldLibraryTitle(project)"
+              @click.stop="openProjectWorldLibrary(project)"
+            >
+              {{ loadingWorldLibraryProjectId === project.id ? '加载中' : worldLibraryLabel(project) }}
+            </button>
+            <button
+              v-if="project.mode === 'novel'"
+              class="btn-card-config"
+              :disabled="loadingConfigProjectId === project.id"
+              title="全书配置"
+              @click.stop="openProjectConfig(project)"
+            >
+              {{ loadingConfigProjectId === project.id ? '加载中' : '全书配置' }}
+            </button>
+            <button
               class="btn-card-delete"
               :disabled="deletingProjectId === project.id"
               title="删除项目"
@@ -300,14 +411,71 @@ async function deleteProject(projectId: string) {
       @confirm="confirmDeleteProject"
       @cancel="projectPendingDelete = null"
     />
+
+    <Teleport to="body">
+      <div v-if="configProject" class="project-config-overlay">
+        <section class="project-config-modal" role="dialog" aria-modal="true" aria-label="全书配置">
+          <NovelConfig
+            :project-id="configProject.id"
+            :project-mode="configProject.mode"
+            @close="configProject = null"
+          />
+        </section>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="worldLibraryProject" class="project-config-overlay">
+        <section class="project-config-modal" role="dialog" aria-modal="true" :aria-label="worldLibraryTitle(worldLibraryProject)">
+          <ProjectWorldLibrary
+            :project-id="worldLibraryProject.id"
+            :project-mode="worldLibraryProject.mode"
+            @close="worldLibraryProject = null"
+          />
+        </section>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
 .project-list-page {
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 40px var(--sp-6) 56px;
+  --project-page-bg:
+    radial-gradient(circle at 18% 0%, var(--accent-subtle), transparent 32%),
+    var(--bg);
+  --project-panel-bg: var(--bg-panel);
+  --project-panel-strong-bg: var(--bg-hover);
+  --project-button-bg: var(--bg-hover);
+  --project-border: var(--border);
+  --project-inner-bg: var(--bg-hover);
+  --project-shadow: var(--shadow);
+  height: calc(100vh - var(--desktop-status-bar-height, 0px));
+  overflow-y: auto;
+  max-width: none;
+  margin: 0;
+  padding: 46px max(var(--sp-8), calc((100vw - 1520px) / 2 + var(--sp-8))) 72px;
+  background: var(--project-page-bg);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.project-list-page::-webkit-scrollbar {
+  width: 8px;
+}
+.project-list-page::-webkit-scrollbar-track {
+  background: transparent;
+}
+.project-list-page::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 999px;
+}
+.page-header,
+.new-project-form,
+.project-grid,
+.empty-state,
+.loading-state {
+  max-width: 1520px;
+  margin-left: auto;
+  margin-right: auto;
 }
 .page-header {
   display: flex;
@@ -342,8 +510,8 @@ async function deleteProject(projectId: string) {
 }
 .btn-logout {
   padding: var(--sp-2) var(--sp-3);
-  background: color-mix(in srgb, var(--bg-panel) 78%, transparent);
-  border: 1px solid var(--border);
+  background: var(--project-button-bg);
+  border: 1px solid var(--project-border);
   border-radius: var(--radius);
   font-size: var(--text-xs);
   color: var(--text-secondary);
@@ -357,8 +525,8 @@ async function deleteProject(projectId: string) {
 }
 .btn-settings {
   padding: var(--sp-2) var(--sp-3);
-  background: color-mix(in srgb, var(--bg-panel) 78%, transparent);
-  border: 1px solid var(--border);
+  background: var(--project-button-bg);
+  border: 1px solid var(--project-border);
   border-radius: var(--radius);
   font-size: var(--text-xs);
   color: var(--text-secondary);
@@ -373,7 +541,7 @@ async function deleteProject(projectId: string) {
 }
 .btn-secondary-action {
   padding: var(--sp-2) var(--sp-3);
-  background: color-mix(in srgb, var(--bg-panel) 78%, transparent);
+  background: var(--project-button-bg);
   border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
   border-radius: var(--radius);
   font-size: var(--text-xs);
@@ -412,15 +580,15 @@ async function deleteProject(projectId: string) {
 
 /* New project form */
 .new-project-form {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
+  background: var(--project-panel-strong-bg);
+  border: 1px solid var(--project-border);
   border-radius: var(--radius-lg);
   padding: var(--sp-6);
   margin-bottom: var(--sp-8);
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
-  box-shadow: var(--shadow);
+  box-shadow: var(--project-shadow);
 }
 .new-project-form h3 {
   font-size: var(--text-lg);
@@ -434,9 +602,9 @@ async function deleteProject(projectId: string) {
   justify-content: space-between;
   gap: var(--sp-3);
   padding: var(--sp-3);
-  border: 1px solid var(--border);
+  border: 1px solid var(--project-border);
   border-radius: var(--radius);
-  background: var(--bg-sidebar);
+  background: var(--project-inner-bg);
 }
 .import-file-name {
   min-width: 0;
@@ -557,12 +725,12 @@ async function deleteProject(projectId: string) {
 .project-card {
   position: relative;
   overflow: hidden;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
+  background: var(--project-panel-bg);
+  border: 1px solid var(--project-border);
   border-radius: var(--radius-lg);
   padding: var(--sp-6);
   cursor: pointer;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--project-shadow);
   transition: box-shadow var(--transition), border-color var(--transition), transform var(--transition);
 }
 .project-card::before {
@@ -575,21 +743,23 @@ async function deleteProject(projectId: string) {
 }
 .project-card:hover {
   border-color: var(--border-focus);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-lg), 0 0 0 1px var(--accent-subtle) inset;
   transform: translateY(-2px);
 }
 .card-header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
   gap: var(--sp-2);
-  margin-bottom: var(--sp-2);
+  margin-bottom: var(--sp-3);
 }
 .card-actions {
-  flex-shrink: 0;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
   gap: var(--sp-2);
+  width: 100%;
 }
 .card-title {
   font-size: 1.05rem;
@@ -597,6 +767,8 @@ async function deleteProject(projectId: string) {
   color: var(--text);
   margin: 0;
   line-height: 1.3;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .status-badge {
   flex-shrink: 0;
@@ -620,17 +792,67 @@ async function deleteProject(projectId: string) {
 }
 .btn-card-delete {
   padding: 3px 8px;
-  border: 1px solid color-mix(in srgb, var(--status-error, #ef4444) 36%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--status-error) 36%, var(--border));
   border-radius: 9px;
-  background: color-mix(in srgb, var(--status-error-bg, #fef2f2) 72%, transparent);
-  color: var(--status-error, #ef4444);
+  background: color-mix(in srgb, var(--status-error-bg) 72%, transparent);
+  color: var(--status-error);
   font-size: var(--text-xs);
   font-weight: 650;
   transition: opacity var(--transition), background var(--transition), border-color var(--transition);
 }
+.btn-card-secondary {
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
+  border-radius: 9px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  transition: background var(--transition), border-color var(--transition);
+}
+.btn-card-secondary:hover {
+  background: color-mix(in srgb, var(--accent-subtle) 70%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
+}
+.btn-card-library {
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--status-reviewing) 34%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--status-reviewing-bg) 78%, transparent);
+  color: var(--status-reviewing);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  transition: background var(--transition), border-color var(--transition), opacity var(--transition);
+}
+.btn-card-library:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-reviewing-bg) 58%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--status-reviewing) 58%, var(--border));
+}
+.btn-card-library:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+.btn-card-config {
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--status-final) 34%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--status-final-bg) 78%, transparent);
+  color: var(--status-final);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  transition: background var(--transition), border-color var(--transition), opacity var(--transition);
+}
+.btn-card-config:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-final-bg) 58%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--status-final) 58%, var(--border));
+}
+.btn-card-config:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
 .btn-card-delete:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--status-error, #ef4444) 12%, var(--bg-panel));
-  border-color: color-mix(in srgb, var(--status-error, #ef4444) 64%, var(--border));
+  background: color-mix(in srgb, var(--status-error) 12%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--status-error) 64%, var(--border));
 }
 .btn-card-delete:disabled {
   cursor: not-allowed;
@@ -657,12 +879,32 @@ async function deleteProject(projectId: string) {
 .mode-badge.article { background: var(--status-reviewing-bg); color: var(--status-reviewing); }
 .meta-sep { margin: 0 var(--sp-1); color: var(--text-tertiary); }
 .card-footer {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--project-border);
   padding-top: var(--sp-3);
 }
 .meta-time {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
+}
+.project-config-overlay {
+  position: fixed;
+  inset: var(--desktop-status-bar-height, 0px) 0 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: var(--bg-overlay);
+  backdrop-filter: blur(10px);
+}
+.project-config-modal {
+  width: min(1120px, calc(100vw - 48px));
+  height: min(820px, calc(100vh - var(--desktop-status-bar-height, 0px) - 48px));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-lg);
 }
 
 @media (max-width: 720px) {
@@ -676,6 +918,14 @@ async function deleteProject(projectId: string) {
   .header-actions {
     width: 100%;
     flex-wrap: wrap;
+  }
+  .project-config-overlay {
+    padding: 14px;
+  }
+  .project-config-modal {
+    width: calc(100vw - 28px);
+    height: calc(100vh - var(--desktop-status-bar-height, 0px) - 28px);
+    border-radius: 12px;
   }
 }
 </style>

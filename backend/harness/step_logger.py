@@ -1,0 +1,147 @@
+"""StepLogger — AiRunStep 步骤记录。
+
+纯 async 函数，接 AsyncSession。幂等：start_step 对同一 run+step_name+revision_round
+返回既有 step（基于唯一索引），不重复创建。并发安全：critic 与 consistency_checker
+step_name 不同 → 幂等键不同 → 可并存。
+"""
+
+from __future__ import annotations
+
+import uuid
+from contextvars import ContextVar, Token
+from datetime import datetime, timezone
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.ai_run_step import AiRunStep
+from models.harness_enums import RunStepStatus
+
+
+current_step_id_var: ContextVar[str | None] = ContextVar("current_ai_run_step_id", default=None)
+
+
+def record_fewshot_example_ids(step: AiRunStep, example_ids: list[str]) -> None:
+    """Add used human-example IDs to the traceable step input snapshot."""
+    if not example_ids:
+        return
+    snapshot = dict(step.input or {})
+    snapshot["fewshot_example_ids"] = [str(example_id) for example_id in example_ids]
+    step.input = snapshot
+
+
+def _activate_step_context(step: AiRunStep) -> None:
+    step_id = str(step.id)
+    if current_step_id_var.get() == step_id:
+        return
+    token = current_step_id_var.set(step_id)
+    # This is request/task-local execution state, not an ORM column. It lets the
+    # matching finish/fail callback restore the exact previous ContextVar value.
+    step.__dict__["_step_context_token"] = token
+
+
+def _reset_step_context(step: AiRunStep) -> None:
+    token: Token[str | None] | None = step.__dict__.pop("_step_context_token", None)
+    if token is not None:
+        try:
+            current_step_id_var.reset(token)
+        except ValueError:
+            # A callback can be delivered from a copied task context. Never leave
+            # this step as the current value in that context.
+            if current_step_id_var.get() == str(step.id):
+                current_step_id_var.set(None)
+    elif current_step_id_var.get() == str(step.id):
+        current_step_id_var.set(None)
+
+
+def _idempotency_key(run_id: str | uuid.UUID, step_name: str, revision_round: int) -> str:
+    """生成 step 幂等键。
+
+    同一个 run 的同一步在网络重试或 resume 重放时可能被再次 start；
+    使用 run_id + step_name + revision_round 保证不会重复创建步骤。
+    """
+    return f"{run_id}:{step_name}:{revision_round}"
+
+
+async def start_step(
+    db: AsyncSession,
+    *,
+    run_id: str | uuid.UUID,
+    step_order: int,
+    step_name: str,
+    agent_name: str | None = None,
+    revision_round: int = 0,
+    input_data: dict[str, Any] | None = None,
+    max_retry: int = 0,
+) -> AiRunStep:
+    """创建或复用一个 RUNNING step。
+
+    routes.py 在 LangGraph on_chain_start 事件中调用它，把图节点映射成可展示步骤。
+    """
+    key = _idempotency_key(run_id, step_name, revision_round)
+    # 幂等：若已存在同 key 的 step，直接返回
+    existing = await db.execute(
+        select(AiRunStep).where(AiRunStep.idempotency_key == key)
+    )
+    found = existing.scalar_one_or_none()
+    if found is not None:
+        _activate_step_context(found)
+        return found
+
+    step = AiRunStep(
+        run_id=run_id,
+        step_order=step_order,
+        step_name=step_name,
+        agent_name=agent_name,
+        status=RunStepStatus.RUNNING,
+        input=input_data,
+        max_retry=max_retry,
+        idempotency_key=key,
+        started_at=datetime.now(timezone.utc),
+    )
+    db.add(step)
+    await db.flush()
+    _activate_step_context(step)
+    return step
+
+
+async def finish_step(
+    db: AsyncSession, step: AiRunStep, *, output: dict[str, Any] | None = None
+) -> None:
+    """把 step 标记为 SUCCESS，并保存节点输出摘要。"""
+    try:
+        step.status = RunStepStatus.SUCCESS
+        step.output = output
+        step.ended_at = datetime.now(timezone.utc)
+        await db.flush()
+    finally:
+        _reset_step_context(step)
+
+
+async def fail_step(
+    db: AsyncSession, step: AiRunStep, *, error_message: str
+) -> None:
+    """把 step 标记为 FAILED，并保存错误信息。"""
+    try:
+        step.status = RunStepStatus.FAILED
+        step.error_message = error_message
+        step.ended_at = datetime.now(timezone.utc)
+        await db.flush()
+    finally:
+        _reset_step_context(step)
+
+
+async def wait_human_step(
+    db: AsyncSession, step: AiRunStep, *, payload: dict[str, Any] | None = None
+) -> None:
+    """把 step 标记为 WAITING_HUMAN。
+
+    用于 human_review、task_card_review、human_clarification 等暂停点。
+    """
+    try:
+        step.status = RunStepStatus.WAITING_HUMAN
+        step.output = payload
+        await db.flush()
+    finally:
+        _reset_step_context(step)

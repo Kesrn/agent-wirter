@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import type { ProjectMode } from '../api/types'
 
 const props = defineProps<{
@@ -9,16 +9,20 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  confirm: [direction: string, userNote: string, targetWords: number]
+  confirm: [direction: string, targetWords: number]
   cancel: []
 }>()
 
 const MAX_ENHANCE_WORDS = 5000
 const MIN_ENHANCE_WORDS = 20
 
+const selectedMode = ref<'suggestion' | 'custom'>(props.directions.length ? 'suggestion' : 'custom')
 const selectedDirection = ref(props.directions[0] ?? '')
-const userNote = ref('')
+const customDirection = ref('')
 const isArticle = props.projectMode === 'article'
+const finalDirection = computed(() => selectedMode.value === 'custom'
+  ? customDirection.value.trim()
+  : selectedDirection.value.trim())
 const targetWords = ref(
   Math.min(
     MAX_ENHANCE_WORDS,
@@ -33,31 +37,41 @@ function clampTargetWords(value: number) {
 
 function handleConfirm() {
   targetWords.value = clampTargetWords(targetWords.value)
-  emit('confirm', selectedDirection.value, userNote.value, targetWords.value)
+  if (!finalDirection.value) return
+  emit('confirm', finalDirection.value, targetWords.value)
 }
 </script>
 
 <template>
-  <div class="picker-overlay" @click.self="emit('cancel')">
+  <div class="picker-overlay">
     <div class="picker-card">
       <div class="picker-header">
         <h3>{{ isArticle ? '选择改写方向' : '选择润色方向' }}</h3>
-        <p class="picker-subtitle">{{ isArticle ? 'AI 根据当前稿件和 brief 给出了以下改写优化方向' : 'AI 根据当前章节内容给出了以下润色方向，选择一个方向后确认' }}</p>
+        <p class="picker-subtitle">{{ isArticle ? '可以选择 AI 建议的改写方向，也可以自己指定改写方式' : '可以选择 AI 建议的润色方向，也可以自己指定润色方式' }}</p>
       </div>
 
       <div class="picker-body">
-        <div v-if="!directions.length" class="loading-hint">
-          <span class="spinner"></span>
-          <span>AI 正在分析{{ isArticle ? '稿件内容' : '章节内容' }}...</span>
+        <div v-if="!directions.length" class="empty-hint">
+          <span>AI 暂未提供建议，你可以直接指定{{ isArticle ? '改写' : '润色' }}方式</span>
         </div>
         <div v-else class="direction-list">
-          <div v-for="(dir, i) in directions" :key="i" class="direction-item" :class="{ selected: selectedDirection === dir }" @click="selectedDirection = dir">
+          <div v-for="(dir, i) in directions" :key="i" class="direction-item" :class="{ selected: selectedMode === 'suggestion' && selectedDirection === dir }" @click="selectedMode = 'suggestion'; selectedDirection = dir">
             <span class="dir-index">{{ i + 1 }}</span>
             <span class="dir-text">{{ dir }}</span>
           </div>
         </div>
 
-        <div v-if="directions.length" class="note-section">
+        <div class="note-section">
+          <label class="note-label">自定义{{ isArticle ? '改写' : '润色' }}方向</label>
+          <textarea
+            v-model="customDirection"
+            class="note-input custom-direction-input"
+            :class="{ active: selectedMode === 'custom' }"
+            rows="3"
+            :placeholder="isArticle ? '例如：压缩开头背景，突出产品价值和行动号召...' : '例如：加强环境氛围描写，减少冗余叙述，保留原有情节...'"
+            @focus="selectedMode = 'custom'"
+            @input="selectedMode = 'custom'"
+          ></textarea>
           <label class="note-label">目标字数</label>
           <div class="target-row">
             <input
@@ -71,14 +85,12 @@ function handleConfirm() {
             />
             <span class="target-hint">建议接近原{{ isArticle ? '稿件' : '章节' }}字数，最多 {{ MAX_ENHANCE_WORDS }} 字</span>
           </div>
-          <label class="note-label">补充说明</label>
-          <textarea v-model="userNote" class="note-input" rows="2" :placeholder="isArticle ? '补充你希望优化的结构、卖点、语气或 CTA...' : '补充你希望润色的重点...'"></textarea>
         </div>
       </div>
 
       <div class="picker-footer">
         <button class="btn-cancel" @click="emit('cancel')">取消</button>
-        <button class="btn-confirm" :disabled="!selectedDirection" @click="handleConfirm">{{ isArticle ? '确认改写' : '确认润色' }}</button>
+        <button class="btn-confirm" :disabled="!finalDirection" @click="handleConfirm">{{ isArticle ? '确认改写' : '确认润色' }}</button>
       </div>
     </div>
   </div>
@@ -88,7 +100,8 @@ function handleConfirm() {
 .picker-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -103,7 +116,7 @@ function handleConfirm() {
   max-height: 85vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-modal);
 }
 .picker-header {
   padding: var(--sp-4) var(--sp-5);
@@ -130,21 +143,12 @@ function handleConfirm() {
   min-height: 0;
 }
 
-.loading-hint {
+.empty-hint {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
   padding: var(--sp-4);
   font-size: var(--text-sm);
   color: var(--text-secondary);
-}
-.spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
 }
 
 .direction-list {
@@ -238,6 +242,10 @@ function handleConfirm() {
   transition: border-color var(--transition);
 }
 .note-input:focus { border-color: var(--border-focus); outline: none; }
+.custom-direction-input.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+}
 
 .picker-footer {
   display: flex;
@@ -270,10 +278,6 @@ function handleConfirm() {
 }
 .btn-confirm:hover { background: var(--accent-hover); }
 .btn-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
 
 @media (max-width: 520px) {
   .picker-card {

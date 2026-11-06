@@ -122,6 +122,13 @@ def get_skill_for_role(role_type: str) -> Optional[SkillInfo]:
     return get_registry().get(dir_name)
 
 
+def get_skill_by_dir(skill_dir: str | None) -> Optional[SkillInfo]:
+    """根据显式 skill 目录名查找 skill。"""
+    if not skill_dir:
+        return None
+    return get_registry().get(skill_dir)
+
+
 def get_skill_for_node(node_name: str) -> Optional[SkillInfo]:
     """根据工作流节点名查找对应 skill
 
@@ -146,6 +153,17 @@ def get_skill_for_node(node_name: str) -> Optional[SkillInfo]:
 def get_skill_prompt(role_type: str) -> str:
     """获取专家 role_type 对应 skill 的 SKILL.md 全文内容，用于注入 prompt"""
     skill = get_skill_for_role(role_type)
+    return get_skill_prompt_for_info(skill)
+
+
+def get_skill_prompt_by_dir(skill_dir: str | None) -> str:
+    """获取显式 skill_dir 对应的 SKILL.md 正文。"""
+    skill = get_skill_by_dir(skill_dir)
+    return get_skill_prompt_for_info(skill)
+
+
+def get_skill_prompt_for_info(skill: Optional[SkillInfo]) -> str:
+    """获取 SkillInfo 对应的 SKILL.md 正文，用于注入 prompt。"""
     if not skill:
         return ""
     content = skill.load_content()

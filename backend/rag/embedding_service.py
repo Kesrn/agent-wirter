@@ -17,7 +17,7 @@ async def generate_embedding(text: str) -> list[float] | None:
 
     - 截断过长文本（超过 8000 字符截断到前 8000 字符）
     - 如果 embedding provider 不支持（如 mock），返回确定性伪向量而非报错
-    - 使用 settings.EMBEDDING_DIMENSIONS 作为维度
+    - 使用 settings.EMBEDDING_DIMENSION 作为维度
 
     Args:
         text: 待生成 embedding 的文本

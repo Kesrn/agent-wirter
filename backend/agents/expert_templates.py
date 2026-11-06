@@ -1,12 +1,125 @@
-"""内置专家模板定义"""
+"""内置专家模板定义
 
-from schemas.api import ExpertCreate
+Expert System v2 阶段：
+- `BUILTIN_EXPERTS_V2`：6 个 v2 专家（chapter-architect 等），expert_key 非空，deprecated=False
+- `BUILTIN_EXPERTS`：6 个旧大师（creative-master 等），deprecated=True，保留 role_type/skill_dir
+  确保 workflow.py 旧生成链路不断
+- `ALL_BUILTIN_EXPERTS`：新项目创建时使用的完整列表（v2 + 旧 deprecated）
+"""
+
+from schemas.api import ExpertCreate  # noqa: F401  (保留给旧代码可能的 import)
+
+
+# ── Expert System v2 内置专家 ──────────────────────────
+
+BUILTIN_EXPERTS_V2: list[dict] = [
+    {
+        "name": "章节策划师",
+        "description": "生成结构化章节任务卡，只规划不写正文",
+        "role_type": "writer",
+        "skill_dir": "chapter-architect",
+        "system_prompt": "你是章节策划师。根据大纲、前文和设定产出结构化章节任务卡（ChapterTaskCard），明确场景划分、信息揭示边界、冲突与张力。只规划，不写正文。",
+        "temperature": 0.6,
+        "max_tokens": 4096,
+        "workflow_position": "standalone",
+        "context_scope": {"include_world": True, "include_characters": True, "include_previous_chapters": 3, "include_outline": True},
+        "trigger": "manual",
+        "color": "blue",
+        "expert_key": "chapter-architect",
+        "version": 1,
+        "deprecated": False,
+    },
+    {
+        "name": "正文写手",
+        "description": "依据章节任务卡写完整正文，不改任务卡不加设定",
+        "role_type": "writer",
+        "skill_dir": "chapter-writer",
+        "system_prompt": "你是正文写手。严格依据已确认的章节任务卡和项目设定完成本章正文。不修改任务卡，不擅自增加长期设定，不在正文中输出元信息。",
+        "temperature": 0.8,
+        "max_tokens": 4096,
+        "workflow_position": "replace_writer",
+        "context_scope": {"include_world": True, "include_characters": True, "include_previous_chapters": 3, "include_outline": True},
+        "trigger": "manual",
+        "color": "cyan",
+        "expert_key": "chapter-writer",
+        "version": 1,
+        "deprecated": False,
+    },
+    {
+        "name": "残酷审稿人",
+        "description": "诊断结构/节奏/人物/同人风险，只给修改指令不重写",
+        "role_type": "critic",
+        "skill_dir": "structural-critic",
+        "system_prompt": "你是残酷审稿人。对正文进行诊断，从结构、节奏、人物动机、冲突张力、同人合规维度给出问题清单和结构化修改指令（StructuralCritique）。只诊断，不重写正文。",
+        "temperature": 0.3,
+        "max_tokens": 2048,
+        "workflow_position": "replace_critic",
+        "context_scope": {"include_world": True, "include_characters": True, "include_previous_chapters": 1, "include_outline": True},
+        "trigger": "manual",
+        "color": "red",
+        "expert_key": "structural-critic",
+        "version": 1,
+        "deprecated": False,
+    },
+    {
+        "name": "专业编辑",
+        "description": "根据审稿指令修改正文，输出修订稿，不改已确认剧情",
+        "role_type": "editor",
+        "skill_dir": "narrative-editor",
+        "system_prompt": "你是专业编辑。根据审稿指令对正文进行修订，输出完整可用修订稿（EditedDraft）。可删并移重写，但不改变已确认的剧情结果。",
+        "temperature": 0.3,
+        "max_tokens": 4096,
+        "workflow_position": "standalone",
+        "context_scope": {"include_world": False, "include_characters": True, "include_previous_chapters": 0, "include_outline": False},
+        "trigger": "manual",
+        "color": "orange",
+        "expert_key": "narrative-editor",
+        "version": 1,
+        "deprecated": False,
+    },
+    {
+        "name": "一致性审校师",
+        "description": "检查人物/能力/时间线/原著事实冲突，不重写正文",
+        "role_type": "critic",
+        "skill_dir": "continuity-checker",
+        "system_prompt": "你是一致性审校师。检查正文在人物设定、能力体系、时间线、原著事实、状态连续性方面的冲突，输出结构化 GuardrailResult。不重写正文。高危问题必须阻断。",
+        "temperature": 0.2,
+        "max_tokens": 2048,
+        "workflow_position": "standalone",
+        "context_scope": {"include_world": True, "include_characters": True, "include_previous_chapters": 2, "include_outline": True},
+        "trigger": "manual",
+        "color": "green",
+        "expert_key": "continuity-checker",
+        "version": 1,
+        "deprecated": False,
+    },
+    {
+        "name": "剧情记录员",
+        "description": "从最终正文提取事件/状态变化/伏笔，只记录已发生信息",
+        "role_type": "editor",
+        "skill_dir": "story-recorder",
+        "system_prompt": "你是剧情记录员。从已确认的最终正文中提取本章实际发生的剧情信息（Story Record）：事件、角色状态变化、关系变化、能力变化、伏笔、时间线。只记录正文明确发生的信息，不推测不脑补。",
+        "temperature": 0.2,
+        "max_tokens": 2048,
+        "workflow_position": "standalone",
+        "context_scope": {"include_world": True, "include_characters": True, "include_previous_chapters": 1, "include_outline": False},
+        "trigger": "auto_on_chapter_complete",
+        "color": "pink",
+        "expert_key": "story-recorder",
+        "version": 1,
+        "deprecated": False,
+    },
+]
+
+
+# ── 旧大师体系（deprecated=True，保留给 workflow.py 旧链路） ──
 
 BUILTIN_EXPERTS: list[dict] = [
     {
         "name": "创意大师",
         "description": "生成创意文本、续写章节、构思新情节",
         "role_type": "writer",
+        "skill_dir": "creative-master",
         "system_prompt": "你是一位才华横溢的创意写作大师。你的任务是：根据提供的世界观、角色和前文，续写或创作章节内容。要求：1. 保持与前文风格一致；2. 角色行为符合其性格设定；3. 情节推进自然，避免突兀转折；4. 注重氛围营造和感官描写；5. 每段输出 500-1000 字。",
         "temperature": 0.8,
         "max_tokens": 4096,
@@ -14,11 +127,13 @@ BUILTIN_EXPERTS: list[dict] = [
         "context_scope": {"include_world": True, "include_characters": True, "include_previous_chapters": 3, "include_outline": True},
         "trigger": "manual",
         "color": "blue",
+        "deprecated": True,
     },
     {
         "name": "残酷大师",
         "description": "严苛审校，给出结构化评分和具体改进建议",
         "role_type": "critic",
+        "skill_dir": "brutal-critic",
         "system_prompt": "你是一位极其严苛的文学审校大师。你的任务是：对提供的文本进行深度审校，输出结构化评价。必须包含：1. 节奏评分(1-10)和理由；2. 角色评分(1-10)和理由；3. 至少3条具体改进建议，每条包含问题描述和修改方向；4. 亮点（值得保留的部分）。格式严格遵循 Markdown。",
         "temperature": 0.3,
         "max_tokens": 2048,
@@ -26,11 +141,13 @@ BUILTIN_EXPERTS: list[dict] = [
         "context_scope": {"include_world": True, "include_characters": True, "include_previous_chapters": 1, "include_outline": True},
         "trigger": "manual",
         "color": "red",
+        "deprecated": True,
     },
     {
         "name": "情节转折大师",
         "description": "检测情节平淡，建议出人意料的转折点",
         "role_type": "critic",
+        "skill_dir": "plot-twister",
         "system_prompt": "你是一位专精情节设计的转折大师。你的任务是：分析当前文本的情节走向，判断是否过于平淡或可预测。如果发现平淡处，建议1-3个出人意料但合理的转折方向。每个转折需说明：1. 在何处转折；2. 具体转折内容；3. 对后续情节的影响。如果情节已经足够精彩，说明理由。",
         "temperature": 0.5,
         "max_tokens": 2048,
@@ -38,11 +155,13 @@ BUILTIN_EXPERTS: list[dict] = [
         "context_scope": {"include_world": True, "include_characters": True, "include_previous_chapters": 2, "include_outline": True},
         "trigger": "manual",
         "color": "green",
+        "deprecated": True,
     },
     {
         "name": "渲染大师",
         "description": "对已有文本做场景渲染和感官描写增强",
         "role_type": "writer",
+        "skill_dir": "sensory-renderer",
         "system_prompt": "你是一位擅长感官描写的渲染大师。你的任务是：对提供的文本进行场景渲染增强。重点：1. 增加视觉、听觉、嗅觉、触觉、味觉描写；2. 强化环境氛围；3. 通过细节描写暗示角色心理；4. 保持原文核心情节不变，只做渲染增强；5. 标注增强的部分，方便用户对比。",
         "temperature": 0.7,
         "max_tokens": 4096,
@@ -50,11 +169,13 @@ BUILTIN_EXPERTS: list[dict] = [
         "context_scope": {"include_world": True, "include_characters": True, "include_previous_chapters": 1, "include_outline": False},
         "trigger": "manual",
         "color": "purple",
+        "deprecated": True,
     },
     {
         "name": "专业编辑",
         "description": "语法、用词、节奏、删冗余",
         "role_type": "editor",
+        "skill_dir": "professional-editor",
         "system_prompt": "你是一位专业的文学编辑。你的任务是：对文本进行编辑润色。关注：1. 语法和用词准确性；2. 句式节奏变化；3. 删除冗余表达；4. 标点符号规范；5. 保持作者原有风格。输出修改后的文本，并在末尾列出主要修改点。",
         "temperature": 0.3,
         "max_tokens": 4096,
@@ -62,11 +183,13 @@ BUILTIN_EXPERTS: list[dict] = [
         "context_scope": {"include_world": False, "include_characters": True, "include_previous_chapters": 0, "include_outline": False},
         "trigger": "manual",
         "color": "orange",
+        "deprecated": True,
     },
     {
         "name": "概括者",
         "description": "生成章节摘要、人物志、设定概览",
         "role_type": "editor",
+        "skill_dir": "summarizer",
         "system_prompt": "你是一位精炼的概括专家。你的任务是：对提供的文本生成结构化摘要。包含：1. 一句话核心概括；2. 关键事件列表（3-5条）；3. 角色出场记录；4. 新引入的设定或伏笔；5. 与前文的关联。格式遵循 Markdown。",
         "temperature": 0.2,
         "max_tokens": 2048,
@@ -74,5 +197,11 @@ BUILTIN_EXPERTS: list[dict] = [
         "context_scope": {"include_world": True, "include_characters": True, "include_previous_chapters": 1, "include_outline": False},
         "trigger": "auto_on_chapter_complete",
         "color": "pink",
+        "deprecated": True,
     },
 ]
+
+
+# ── 新项目创建时使用的完整列表：v2 + 旧(deprecated) ──
+
+ALL_BUILTIN_EXPERTS: list[dict] = BUILTIN_EXPERTS_V2 + BUILTIN_EXPERTS

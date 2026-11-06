@@ -7,16 +7,63 @@ services:
     environment:
       POSTGRES_DB: ai_creative
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_creative"]
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    env_file:
+      - .env
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      AUTO_CREATE_TABLES: "false"
+      CHECKPOINTER_BACKEND: postgres
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:?请在 .env 中设置}@postgres:5432/ai_creative
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && exec uvicorn main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health/ready', timeout=2)
+      interval: 10s
+      timeout: 3s
+      start_period: 45s
+      retries: 6
+    restart: unless-stopped
+
+  # SQLite 桌面端不启动本服务（finalize 由 request_chapter_index 同步构建）。
+  index-worker:
+    build:
+      context: ./backend
+    env_file:
+      - .env
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:?请在 .env 中设置}@postgres:5432/ai_creative
+    command: ["python", "scripts/run_index_worker.py", "--interval", "5", "--batch", "10"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:

@@ -1,0 +1,2837 @@
+{
+  "meta": {
+    "runner": "run_baseline.py (ILIKE keyword baseline)",
+    "created_at": "2026-08-02T14:42:02+00:00",
+    "db_path": "/Users/zcx/ai-creative-platform/backend/dev-web.sqlite3",
+    "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+    "project_title": "111",
+    "dataset": "/Users/zcx/ai-creative-platform/backend/retrieval_eval/datasets/regression_candidates.json",
+    "top_k": 5,
+    "hit_rules": "hit = any top-K result: source_id/chunk_id in expected.source_ids, or (evidence_type matches AND snippet/title contains any expected.entities); chapter_no compared when both present"
+  },
+  "summary": {
+    "n_samples": 76,
+    "recall_at_k": 0.1316,
+    "mrr": 0.1316,
+    "precision_at_k": 0.1316,
+    "false_recall_rate": 0.8684,
+    "p95_latency_ms": 84.4,
+    "total_runtime_sec": 4.45
+  },
+  "by_category": {
+    "ability_query": {
+      "n_samples": 5,
+      "recall_at_k": 0.6,
+      "mrr": 0.6,
+      "precision_at_k": 0.6,
+      "false_recall_rate": 0.4,
+      "p95_latency_ms": 277.7
+    },
+    "character_first_appearance": {
+      "n_samples": 5,
+      "recall_at_k": 0.6,
+      "mrr": 0.6,
+      "precision_at_k": 0.6,
+      "false_recall_rate": 0.4,
+      "p95_latency_ms": 14.2
+    },
+    "character_profile": {
+      "n_samples": 8,
+      "recall_at_k": 0.25,
+      "mrr": 0.25,
+      "precision_at_k": 0.25,
+      "false_recall_rate": 0.75,
+      "p95_latency_ms": 66.4
+    },
+    "timeline_event": {
+      "n_samples": 54,
+      "recall_at_k": 0.0,
+      "mrr": 0.0,
+      "precision_at_k": 0.0,
+      "false_recall_rate": 1.0,
+      "p95_latency_ms": 68.2
+    },
+    "world_rule": {
+      "n_samples": 4,
+      "recall_at_k": 0.5,
+      "mrr": 0.5,
+      "precision_at_k": 0.5,
+      "false_recall_rate": 0.5,
+      "p95_latency_ms": 94.0
+    }
+  },
+  "by_difficulty": {
+    "conflict": {
+      "n_samples": 2,
+      "recall_at_k": 1.0,
+      "mrr": 1.0,
+      "precision_at_k": 1.0,
+      "false_recall_rate": 0.0,
+      "p95_latency_ms": 16.7
+    },
+    "normal": {
+      "n_samples": 70,
+      "recall_at_k": 0.1143,
+      "mrr": 0.1143,
+      "precision_at_k": 0.1143,
+      "false_recall_rate": 0.8857,
+      "p95_latency_ms": 84.4
+    },
+    "same_name": {
+      "n_samples": 4,
+      "recall_at_k": 0.0,
+      "mrr": 0.0,
+      "precision_at_k": 0.0,
+      "false_recall_rate": 1.0,
+      "p95_latency_ms": 14.6
+    }
+  },
+  "samples": [
+    {
+      "query_id": "reg-001",
+      "category": "ability_query",
+      "difficulty": "normal",
+      "query": "莫凡的火系是什么等级？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "火系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "8ce03ee6-7e7d-41b2-8d40-0a30893b6225"
+        ]
+      },
+      "latency_ms": 277.7,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "de0a2fa6-e13b-4509-8432-30c30e88ef2f",
+          "title": "全职法师笔趣阁txt",
+          "score": 4.0,
+          "matched_query": "莫凡的火系",
+          "hit": true,
+          "snippet": "第18章 队友很重要\n\n唐月老师灵动的眼眸落在了莫凡的身上，在探查莫凡气息的时候，她的唇不由的张了张。\n\n“莫凡，你好意思站出来，一个学期都过去了，你火系星子一个都把控不了，星尘更是暗得看不见，别逗了好吗！”赵坤三马上说道。\n\n上学期期末是有测试的，测试学生们修炼的进度，很没有意外，莫凡的火系星尘就和刚觉醒时没多大差别，这事全班都知道，没把赵坤三和慕白"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "进入魔法高中，成为一名真正的魔法师！\n\n……\n\n桂花被雨水打落在校园笔直的道路上，铃声响起之后，学生们蜂拥而出，要么独行，要么寻找着自己的小伙伴，讨论着今日的考试内容。\n\n“喂，慕白，元素魔法的七系，冰系、火系、土系、水系、风系、光系、雷系，这道题你们做出来了吗？”一名戴着小领结的白脸男生问道。\n\n“完美解答！”那个无论是发型、身高、长相都堪称男神的慕白说道。\n\n“不愧是我们的尖子生，这么难的混系"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "c246a8f7-b9b8-4294-b0d8-558538a80305",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "可惜这家伙一个旁系子弟和穆宁雪这种小公主级别的不是一个层次的，穆白以前就各种讨穆宁雪欢心，穆宁雪甩都不甩他。\n\n穆白魔法成绩很好，在穆氏世家里应该算是重点培养对象了，据说这家伙若是觉醒了穆家的家族系寒冰系的话，他以后修炼速度更是提升好几倍，毕竟穆世家有太多的世家资源可以提供了，分到穆白这样一个旁系子弟上都和普通人没法比的。\n\n“同学们，欢迎你们入校，想必你们很多人都在等待今天这个令人激动的时刻了，"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2456a739-64a5-4457-a70a-c9f15dad8639",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "一副毫不在意的样子，眼神却很享受这种被人议论，他走到了班主任面前，脸上带着谦逊和自信的笑容。\n\n“穆白，是有名的寒冰世家穆氏世家的吧？”班主任薛木生微笑的问道。\n\n“正是。”\n\n“好，你如果觉醒的是寒冰系，你应该会比别人优越很多，但别忘了多加努力，天赋毕竟决定不了一切。”班主任薛木生说道。\n\n穆白点了点头，心里却暗暗道：是，天赋决定不了一切，但没有天赋和家底，就永远生活在社会的最底层！\n\n在班主任"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "72560abc-8b85-40a0-9ede-8f82b74f2846",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "动不动，被醍醐灌顶一般，头颅微微的扬起……\n\n“咯吱，咯吱，咯吱~~~~”\n\n突然，觉醒石周围，一股寒霜之气在那里缭绕。\n\n这些寒霜越来越强，竟然是慢慢的冻结了觉醒石的边缘，结成了一片小冰霜！\n\n“寒冰系，真是寒冰系啊！！！”\n\n突然，身后有人大叫了起来，其中还伴随着一些女生的尖叫声。\n\n穆白已经听到声响了，在欣喜中睁开了眼睛！\n\n果然是寒冰系，拥有了穆家本源系，自己就更容易被穆家接纳了，飞黄腾达"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-001b",
+      "category": "character_first_appearance",
+      "difficulty": "normal",
+      "query": "莫凡是什么时候掌握火系的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "火系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "8ce03ee6-7e7d-41b2-8d40-0a30893b6225"
+        ]
+      },
+      "latency_ms": 10.9,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "进入魔法高中，成为一名真正的魔法师！\n\n……\n\n桂花被雨水打落在校园笔直的道路上，铃声响起之后，学生们蜂拥而出，要么独行，要么寻找着自己的小伙伴，讨论着今日的考试内容。\n\n“喂，慕白，元素魔法的七系，冰系、火系、土系、水系、风系、光系、雷系，这道题你们做出来了吗？”一名戴着小领结的白脸男生问道。\n\n“完美解答！”那个无论是发型、身高、长相都堪称男神的慕白说道。\n\n“不愧是我们的尖子生，这么难的混系"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2df36149-3749-4acb-aaa3-04813fee222c",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "品，唯有魔法高，但也有行行出状元的说法……”莫家兴继续说道。\n\n莫凡听完，不自觉的吧唧了一下嘴。\n\n现在很多信息莫凡要自动转换，但转换的过程中就让莫凡特别无语，比如说莫凡记得有一天历史老师告诉同学们：光系的魔法鼻祖是“爱迪生”，当时莫凡内心就有亿万草泥马在奔腾！\n\n老爸莫家兴拍着莫凡的肩膀，宽慰宽慰着的时候，莫家兴突然发现自己儿子保持着沉默，神情显得不太对劲。\n\n知子莫若父，莫家兴慢慢的收起了笑容"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a1231dd5-90fa-4e6a-95fb-b2805187f9e6",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "的大人们都不允许孩子再闯到山庄里去，而那位原本和大家玩成一片的公主就真的成为了城堡里的公主，随着年龄的增长变得遥不可及，见到的次数越来越少了。\n\n“你知道吗，我听说小公主现在是帝都名校魔法尖子，天生对冰系魔法有着别人无法媲美的能力，才15岁就已经可以释放冰系魔法了。”张候神神秘秘的说道。\n\n莫凡愣了愣，假如张候跟自己说小公主获得什么全国奥赛奖这些，他估计毫无感觉，但如果是冰系魔法师的话，那就真的了"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "c246a8f7-b9b8-4294-b0d8-558538a80305",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "可惜这家伙一个旁系子弟和穆宁雪这种小公主级别的不是一个层次的，穆白以前就各种讨穆宁雪欢心，穆宁雪甩都不甩他。\n\n穆白魔法成绩很好，在穆氏世家里应该算是重点培养对象了，据说这家伙若是觉醒了穆家的家族系寒冰系的话，他以后修炼速度更是提升好几倍，毕竟穆世家有太多的世家资源可以提供了，分到穆白这样一个旁系子弟上都和普通人没法比的。\n\n“同学们，欢迎你们入校，想必你们很多人都在等待今天这个令人激动的时刻了，"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2456a739-64a5-4457-a70a-c9f15dad8639",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "一副毫不在意的样子，眼神却很享受这种被人议论，他走到了班主任面前，脸上带着谦逊和自信的笑容。\n\n“穆白，是有名的寒冰世家穆氏世家的吧？”班主任薛木生微笑的问道。\n\n“正是。”\n\n“好，你如果觉醒的是寒冰系，你应该会比别人优越很多，但别忘了多加努力，天赋毕竟决定不了一切。”班主任薛木生说道。\n\n穆白点了点头，心里却暗暗道：是，天赋决定不了一切，但没有天赋和家底，就永远生活在社会的最底层！\n\n在班主任"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-002",
+      "category": "ability_query",
+      "difficulty": "normal",
+      "query": "莫凡的雷系是什么等级？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "雷系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "aedbd685-9bd5-49fd-905a-47a0cec042d1"
+        ]
+      },
+      "latency_ms": 10.8,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "进入魔法高中，成为一名真正的魔法师！\n\n……\n\n桂花被雨水打落在校园笔直的道路上，铃声响起之后，学生们蜂拥而出，要么独行，要么寻找着自己的小伙伴，讨论着今日的考试内容。\n\n“喂，慕白，元素魔法的七系，冰系、火系、土系、水系、风系、光系、雷系，这道题你们做出来了吗？”一名戴着小领结的白脸男生问道。\n\n“完美解答！”那个无论是发型、身高、长相都堪称男神的慕白说道。\n\n“不愧是我们的尖子生，这么难的混系"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "74296e79-6797-43dc-8247-6e6d7aad765a",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "弱再微弱，就TM觉醒成功了！！\n\n哈哈哈哈，谁说老子会觉醒失败的！\n\n老子这不是觉醒成功了吗？\n\n真想马上看看赵坤三和穆白那扭曲的脸。\n\n恩？\n\n等等，星尘是什么颜色。\n\n不是红色，好可惜，没觉醒的是火系啊。\n\n红色星尘，代表着的是火系。\n\n青色星尘，代表着的是风系。\n\n褐色星尘，代表着的是土系。\n\n蓝色星尘，代表着的是水系。\n\n金色星尘，代表着的是光系。\n\n紫色星尘，代表着……\n\n我了个草！！！"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "20d55b62-bbb8-480b-ab39-b3955f3bcb8c",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "触目惊心的火焰弧线，那看上去宛如焚烧的流星，让莫凡整个人都颤动了！\n\n“这……这是……”\n\n自己精神世界里出现了一片“红色星尘”！！！！\n\n莫凡先是略有迷茫，但随后彻底陷入癫狂一般的欣喜中了！！！\n\n火系！！！\n\n自己又觉醒了一个火系！！！\n\n竟然是双系！！\n\n自己竟然觉醒了双系！！！！\n\n要知道在初阶魔法师级别里面，所有学生都只可能觉醒一系，会出现天生双系的人几乎是没有的啊，比千分之一的雷霆系概"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "06b27620-e4ba-46d0-aab0-7b3bddceb33b",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "国人口这么多出一些强系没什么好大惊小怪的，又不是天生双系这种天纵英才，哼哼，等以后看我不把你踩扁，居然敢跟我抢风头。\n\n哦，差点忘了看莫凡这渣渣是什么系了，觉醒这么久，基本上失败了吧。\n\n“哇，哇，是火系也！！”\n\n“不得了啊，我们班又多了一个火系。”\n\n“是谁说他会觉醒失败的啊，居然是火系，好让人羡慕啊。”\n\n雷霆系惊现的风波慢慢平息下去后，大家终于发现了莫凡的觉醒系。\n\n那个叫之前觉醒火炎系叫"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2dc5d515-5de2-4693-a45f-9d5feae75014",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "小瘪三一般见识，自己是穆家半个少爷，这家伙只是杂役的儿子。\n\n“这个废物觉醒成功了不说，竟然觉醒的是前期优势很大的火系，废物也有废物的狗运……还有，更他妈气人的是隔壁班出现了一个罕见雷系，自己这个祖传冰系的风头被他完全压过去了，妈了个蛋！”表面上跟个白马王子的穆白在心里却早已经脏话连篇。\n\n莫凡回到了自己的位置上，同时也感受到周围同学们那截然不同的目光……\n\n“火系也，以后这家伙尽量别惹。”\n\n“"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-002b",
+      "category": "character_first_appearance",
+      "difficulty": "normal",
+      "query": "莫凡是什么时候掌握雷系的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "雷系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "aedbd685-9bd5-49fd-905a-47a0cec042d1"
+        ]
+      },
+      "latency_ms": 11.1,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "进入魔法高中，成为一名真正的魔法师！\n\n……\n\n桂花被雨水打落在校园笔直的道路上，铃声响起之后，学生们蜂拥而出，要么独行，要么寻找着自己的小伙伴，讨论着今日的考试内容。\n\n“喂，慕白，元素魔法的七系，冰系、火系、土系、水系、风系、光系、雷系，这道题你们做出来了吗？”一名戴着小领结的白脸男生问道。\n\n“完美解答！”那个无论是发型、身高、长相都堪称男神的慕白说道。\n\n“不愧是我们的尖子生，这么难的混系"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2df36149-3749-4acb-aaa3-04813fee222c",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "品，唯有魔法高，但也有行行出状元的说法……”莫家兴继续说道。\n\n莫凡听完，不自觉的吧唧了一下嘴。\n\n现在很多信息莫凡要自动转换，但转换的过程中就让莫凡特别无语，比如说莫凡记得有一天历史老师告诉同学们：光系的魔法鼻祖是“爱迪生”，当时莫凡内心就有亿万草泥马在奔腾！\n\n老爸莫家兴拍着莫凡的肩膀，宽慰宽慰着的时候，莫家兴突然发现自己儿子保持着沉默，神情显得不太对劲。\n\n知子莫若父，莫家兴慢慢的收起了笑容"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a1231dd5-90fa-4e6a-95fb-b2805187f9e6",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "的大人们都不允许孩子再闯到山庄里去，而那位原本和大家玩成一片的公主就真的成为了城堡里的公主，随着年龄的增长变得遥不可及，见到的次数越来越少了。\n\n“你知道吗，我听说小公主现在是帝都名校魔法尖子，天生对冰系魔法有着别人无法媲美的能力，才15岁就已经可以释放冰系魔法了。”张候神神秘秘的说道。\n\n莫凡愣了愣，假如张候跟自己说小公主获得什么全国奥赛奖这些，他估计毫无感觉，但如果是冰系魔法师的话，那就真的了"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "c246a8f7-b9b8-4294-b0d8-558538a80305",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "可惜这家伙一个旁系子弟和穆宁雪这种小公主级别的不是一个层次的，穆白以前就各种讨穆宁雪欢心，穆宁雪甩都不甩他。\n\n穆白魔法成绩很好，在穆氏世家里应该算是重点培养对象了，据说这家伙若是觉醒了穆家的家族系寒冰系的话，他以后修炼速度更是提升好几倍，毕竟穆世家有太多的世家资源可以提供了，分到穆白这样一个旁系子弟上都和普通人没法比的。\n\n“同学们，欢迎你们入校，想必你们很多人都在等待今天这个令人激动的时刻了，"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2456a739-64a5-4457-a70a-c9f15dad8639",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "一副毫不在意的样子，眼神却很享受这种被人议论，他走到了班主任面前，脸上带着谦逊和自信的笑容。\n\n“穆白，是有名的寒冰世家穆氏世家的吧？”班主任薛木生微笑的问道。\n\n“正是。”\n\n“好，你如果觉醒的是寒冰系，你应该会比别人优越很多，但别忘了多加努力，天赋毕竟决定不了一切。”班主任薛木生说道。\n\n穆白点了点头，心里却暗暗道：是，天赋决定不了一切，但没有天赋和家底，就永远生活在社会的最底层！\n\n在班主任"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-003",
+      "category": "ability_query",
+      "difficulty": "conflict",
+      "query": "张小侯的风系是什么等级？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "风系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "46707d57-5ee9-4c6d-85f6-a711239b6f81"
+        ]
+      },
+      "latency_ms": 16.7,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "f31bd9f3-4a65-4251-b2ef-8eb0595d38f5",
+          "title": "全职法师笔趣阁txt",
+          "score": 4.0,
+          "matched_query": "张小侯的风系",
+          "hit": true,
+          "snippet": "组20人刚刚通过河谷，在山崖坡下的林子里，一名戴着草帽的男子从树上跳了下来，手上还拿着一个计分板！\n\n此人登记完之后迅速的离开了这片林子，朝着一片空旷的草地里走去。\n\n“三组全部通过，其中叫做张小侯的风系学生表现非常出色。”这名戴草帽的男子走到了一个帐篷里对帐篷里的男子说道。\n\n如果学生们在这里的话，一定会惊讶的发现他们的实践课老师还有那些教官基本上都在这里，他们一个个舒服的坐在草地上吃着零食喝着"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "03ba3287-667c-4521-a3db-3c0f9d6ff6a0",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "年四季随机播，想到哪季就哪季的节奏！”宿舍里，张小侯抱怨了起来。\n\n“张小侯，你不是风系的吗，来，到外面大风的地方试试，看看能不能把风系的初阶技能-风轨给释放出来。”同宿舍的陆小斌说道。\n\n“你他妈还水系的，怎么不见你去来一个水域，堂堂水系魔法师，出门你还打伞，说出去不怕丢人？”莫凡劈头盖脸的就把陆小斌这家伙给骂了一顿。\n\n陆小斌脸上一阵青一阵白。\n\n确实啊，水系魔法师大雨天就应该一件风衣，在天地"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "4cd65daf-b7a3-49db-8f30-30a60061f62b",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "舍一群人顿时挤出了门，追着张小候望去。\n\n然而，就大家刚走出宿舍这一会，张小候已经从整个走廊的最左端极速挪到了最尽头。\n\n太快了！\n\n什么百米冲刺飞人在这移动速度满前都弱爆了！\n\n莫凡心中一片涟漪，这风系的初阶技能也是帅啊，那踩着风之轨迹飞奔的感觉一定棒极了。\n\n“啊啊啊啊啊……救命救命……”\n\n“砰！！！！！”\n\n走廊忽然莫名的一阵颤抖，莫凡刚感慨完那远处的张小候已经整个人撞贴在了公共厕所门上！"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "d901e816-05ae-4c5c-9734-8fd91e920a8e",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "慢慢的进入到冥修状态。\n\n星感石光辉斑驳，正在随着张小侯的呼吸而时暗时明，看得出来张小侯有些紧张，星感石无法完整的捕捉到他星辰的能量。\n\n不过，张小侯正在一点点进入状态。\n\n终于，光辉稳定了，那青色的风系光辉遍布在星感石周围，亮度还要胜何雨一筹，除了几分不稳定之外几乎无可挑剔。\n\n“A！”\n\n“A！”\n\n“A+！”\n\n三个考官似乎出现了不同的意见。\n\n“老师，给我再试一次。”\n\n张小侯显然不甘心这"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "3834e33f-c815-4177-9225-a7a940891861",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "索跳的，就算没跳过去我们也能够拉住了，无非是完了一个蹦极。”许昭霆继续说道。\n\n“我不要！！”张英璐明显是一个胆小的女生。\n\n“我靠，你一个风系法师，需要你的时候你不站出来，那还做什么魔法师。”另一个水系的女生也说道。\n\n“还是别强人所难了。”周敏说道。\n\n大家不知该如何是好之时，莫凡看了一眼旁边的张小侯。\n\n张小侯在尖子班里算不上非常突出的，所以大家习惯性把希望寄托在风系成绩最好的张英璐那里，可"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-003b",
+      "category": "character_first_appearance",
+      "difficulty": "conflict",
+      "query": "张小侯是什么时候掌握风系的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "风系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "46707d57-5ee9-4c6d-85f6-a711239b6f81"
+        ]
+      },
+      "latency_ms": 14.1,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "02f5f532-3ce5-4ae2-ad16-f060d82dfe70",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "些活人作为修炼器材，这种丧心病狂的事情国家当然是绝不留情的！\n\n这一个月来，莫凡潜心冥修。\n\n在知道雷系星尘仅仅在释放了两个雷印之后就枯竭黯淡后，莫凡更加明白冥修的重要性。\n\n所以这一整个月，哪怕释放火系-火滋技能的诱惑有多大，莫凡都没有轻易的去跟火系星子打交道，必须得把基础先打牢靠。\n\n当全神贯注去冥修，将这一切当做是每天的习惯之后，时间就会变得飞快。\n\n马上又是开学季了。\n\n图书馆里，莫凡扫掉"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "05ffb8af-e6fb-4f22-862c-34818d58b98d",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "\n操场其实也就是练习场，它们被一股莫凡所不了解的魔法罩子给分割成独立的好几块空间，一切外溢出来的力量都会被这些看不见的罩子给吸纳掉，防止误伤到还没有任何防御能力的学生。\n\n“看好，我今天向大家演示的是火系初阶技能-火滋！”唐月站在了全班学生的中央。\n\n所有的学生围成一个半弧分散在唐月老师的身后，至于大家是不是都在看唐月老师的起手仪式那的就不好说了！\n\n“火系，是火系的技能，莫凡哥……你擦擦口水吧，"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "03ba3287-667c-4521-a3db-3c0f9d6ff6a0",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "年四季随机播，想到哪季就哪季的节奏！”宿舍里，张小侯抱怨了起来。\n\n“张小侯，你不是风系的吗，来，到外面大风的地方试试，看看能不能把风系的初阶技能-风轨给释放出来。”同宿舍的陆小斌说道。\n\n“你他妈还水系的，怎么不见你去来一个水域，堂堂水系魔法师，出门你还打伞，说出去不怕丢人？”莫凡劈头盖脸的就把陆小斌这家伙给骂了一顿。\n\n陆小斌脸上一阵青一阵白。\n\n确实啊，水系魔法师大雨天就应该一件风衣，在天地"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "4cd65daf-b7a3-49db-8f30-30a60061f62b",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "舍一群人顿时挤出了门，追着张小候望去。\n\n然而，就大家刚走出宿舍这一会，张小候已经从整个走廊的最左端极速挪到了最尽头。\n\n太快了！\n\n什么百米冲刺飞人在这移动速度满前都弱爆了！\n\n莫凡心中一片涟漪，这风系的初阶技能也是帅啊，那踩着风之轨迹飞奔的感觉一定棒极了。\n\n“啊啊啊啊啊……救命救命……”\n\n“砰！！！！！”\n\n走廊忽然莫名的一阵颤抖，莫凡刚感慨完那远处的张小候已经整个人撞贴在了公共厕所门上！"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "4ad085ea-f75f-43bb-a258-146408c713ce",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "听过她的传奇……没错，她就是穆宁雪！让我们掌声欢迎这位本应该和你们同届，却早已经晋升大学的魔法天才！”穆贺高声说道。\n\n此话一出，整个一千多人的操场都骚动了起来。\n\n“天呐，是穆宁雪啊，我听说她觉醒时冰系力量直接将脚下的地面都给冻成冰块了。”\n\n“那都是谣言，我这个才最准确，我听说她只用了八个月时间就学会了冰系初阶技能-冰蔓。”\n\n“八……八个月？？我的老天，我在学校一年都过去了，也不过掌握5颗星"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-004",
+      "category": "ability_query",
+      "difficulty": "same_name",
+      "query": "莫凡的火系是什么等级？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡",
+          "火系"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "516d3dd9-b660-4386-9524-e2d212831877"
+        ]
+      },
+      "latency_ms": 11.2,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "de0a2fa6-e13b-4509-8432-30c30e88ef2f",
+          "title": "全职法师笔趣阁txt",
+          "score": 4.0,
+          "matched_query": "莫凡的火系",
+          "hit": false,
+          "snippet": "第18章 队友很重要\n\n唐月老师灵动的眼眸落在了莫凡的身上，在探查莫凡气息的时候，她的唇不由的张了张。\n\n“莫凡，你好意思站出来，一个学期都过去了，你火系星子一个都把控不了，星尘更是暗得看不见，别逗了好吗！”赵坤三马上说道。\n\n上学期期末是有测试的，测试学生们修炼的进度，很没有意外，莫凡的火系星尘就和刚觉醒时没多大差别，这事全班都知道，没把赵坤三和慕白"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "进入魔法高中，成为一名真正的魔法师！\n\n……\n\n桂花被雨水打落在校园笔直的道路上，铃声响起之后，学生们蜂拥而出，要么独行，要么寻找着自己的小伙伴，讨论着今日的考试内容。\n\n“喂，慕白，元素魔法的七系，冰系、火系、土系、水系、风系、光系、雷系，这道题你们做出来了吗？”一名戴着小领结的白脸男生问道。\n\n“完美解答！”那个无论是发型、身高、长相都堪称男神的慕白说道。\n\n“不愧是我们的尖子生，这么难的混系"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "c246a8f7-b9b8-4294-b0d8-558538a80305",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "可惜这家伙一个旁系子弟和穆宁雪这种小公主级别的不是一个层次的，穆白以前就各种讨穆宁雪欢心，穆宁雪甩都不甩他。\n\n穆白魔法成绩很好，在穆氏世家里应该算是重点培养对象了，据说这家伙若是觉醒了穆家的家族系寒冰系的话，他以后修炼速度更是提升好几倍，毕竟穆世家有太多的世家资源可以提供了，分到穆白这样一个旁系子弟上都和普通人没法比的。\n\n“同学们，欢迎你们入校，想必你们很多人都在等待今天这个令人激动的时刻了，"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2456a739-64a5-4457-a70a-c9f15dad8639",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "一副毫不在意的样子，眼神却很享受这种被人议论，他走到了班主任面前，脸上带着谦逊和自信的笑容。\n\n“穆白，是有名的寒冰世家穆氏世家的吧？”班主任薛木生微笑的问道。\n\n“正是。”\n\n“好，你如果觉醒的是寒冰系，你应该会比别人优越很多，但别忘了多加努力，天赋毕竟决定不了一切。”班主任薛木生说道。\n\n穆白点了点头，心里却暗暗道：是，天赋决定不了一切，但没有天赋和家底，就永远生活在社会的最底层！\n\n在班主任"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "72560abc-8b85-40a0-9ede-8f82b74f2846",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "动不动，被醍醐灌顶一般，头颅微微的扬起……\n\n“咯吱，咯吱，咯吱~~~~”\n\n突然，觉醒石周围，一股寒霜之气在那里缭绕。\n\n这些寒霜越来越强，竟然是慢慢的冻结了觉醒石的边缘，结成了一片小冰霜！\n\n“寒冰系，真是寒冰系啊！！！”\n\n突然，身后有人大叫了起来，其中还伴随着一些女生的尖叫声。\n\n穆白已经听到声响了，在欣喜中睁开了眼睛！\n\n果然是寒冰系，拥有了穆家本源系，自己就更容易被穆家接纳了，飞黄腾达"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-004b",
+      "category": "character_first_appearance",
+      "difficulty": "same_name",
+      "query": "莫凡是什么时候掌握火系的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡",
+          "火系"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "516d3dd9-b660-4386-9524-e2d212831877"
+        ]
+      },
+      "latency_ms": 11.7,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "进入魔法高中，成为一名真正的魔法师！\n\n……\n\n桂花被雨水打落在校园笔直的道路上，铃声响起之后，学生们蜂拥而出，要么独行，要么寻找着自己的小伙伴，讨论着今日的考试内容。\n\n“喂，慕白，元素魔法的七系，冰系、火系、土系、水系、风系、光系、雷系，这道题你们做出来了吗？”一名戴着小领结的白脸男生问道。\n\n“完美解答！”那个无论是发型、身高、长相都堪称男神的慕白说道。\n\n“不愧是我们的尖子生，这么难的混系"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2df36149-3749-4acb-aaa3-04813fee222c",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "品，唯有魔法高，但也有行行出状元的说法……”莫家兴继续说道。\n\n莫凡听完，不自觉的吧唧了一下嘴。\n\n现在很多信息莫凡要自动转换，但转换的过程中就让莫凡特别无语，比如说莫凡记得有一天历史老师告诉同学们：光系的魔法鼻祖是“爱迪生”，当时莫凡内心就有亿万草泥马在奔腾！\n\n老爸莫家兴拍着莫凡的肩膀，宽慰宽慰着的时候，莫家兴突然发现自己儿子保持着沉默，神情显得不太对劲。\n\n知子莫若父，莫家兴慢慢的收起了笑容"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a1231dd5-90fa-4e6a-95fb-b2805187f9e6",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "的大人们都不允许孩子再闯到山庄里去，而那位原本和大家玩成一片的公主就真的成为了城堡里的公主，随着年龄的增长变得遥不可及，见到的次数越来越少了。\n\n“你知道吗，我听说小公主现在是帝都名校魔法尖子，天生对冰系魔法有着别人无法媲美的能力，才15岁就已经可以释放冰系魔法了。”张候神神秘秘的说道。\n\n莫凡愣了愣，假如张候跟自己说小公主获得什么全国奥赛奖这些，他估计毫无感觉，但如果是冰系魔法师的话，那就真的了"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "c246a8f7-b9b8-4294-b0d8-558538a80305",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "可惜这家伙一个旁系子弟和穆宁雪这种小公主级别的不是一个层次的，穆白以前就各种讨穆宁雪欢心，穆宁雪甩都不甩他。\n\n穆白魔法成绩很好，在穆氏世家里应该算是重点培养对象了，据说这家伙若是觉醒了穆家的家族系寒冰系的话，他以后修炼速度更是提升好几倍，毕竟穆世家有太多的世家资源可以提供了，分到穆白这样一个旁系子弟上都和普通人没法比的。\n\n“同学们，欢迎你们入校，想必你们很多人都在等待今天这个令人激动的时刻了，"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2456a739-64a5-4457-a70a-c9f15dad8639",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "一副毫不在意的样子，眼神却很享受这种被人议论，他走到了班主任面前，脸上带着谦逊和自信的笑容。\n\n“穆白，是有名的寒冰世家穆氏世家的吧？”班主任薛木生微笑的问道。\n\n“正是。”\n\n“好，你如果觉醒的是寒冰系，你应该会比别人优越很多，但别忘了多加努力，天赋毕竟决定不了一切。”班主任薛木生说道。\n\n穆白点了点头，心里却暗暗道：是，天赋决定不了一切，但没有天赋和家底，就永远生活在社会的最底层！\n\n在班主任"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-005",
+      "category": "ability_query",
+      "difficulty": "same_name",
+      "query": "张小侯的风系是什么等级？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "张小侯",
+          "风系"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "07e8bde0-f06a-487e-8ac5-6869469eb0a1"
+        ]
+      },
+      "latency_ms": 14.6,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "f31bd9f3-4a65-4251-b2ef-8eb0595d38f5",
+          "title": "全职法师笔趣阁txt",
+          "score": 4.0,
+          "matched_query": "张小侯的风系",
+          "hit": false,
+          "snippet": "组20人刚刚通过河谷，在山崖坡下的林子里，一名戴着草帽的男子从树上跳了下来，手上还拿着一个计分板！\n\n此人登记完之后迅速的离开了这片林子，朝着一片空旷的草地里走去。\n\n“三组全部通过，其中叫做张小侯的风系学生表现非常出色。”这名戴草帽的男子走到了一个帐篷里对帐篷里的男子说道。\n\n如果学生们在这里的话，一定会惊讶的发现他们的实践课老师还有那些教官基本上都在这里，他们一个个舒服的坐在草地上吃着零食喝着"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "03ba3287-667c-4521-a3db-3c0f9d6ff6a0",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "张小侯",
+          "hit": false,
+          "snippet": "年四季随机播，想到哪季就哪季的节奏！”宿舍里，张小侯抱怨了起来。\n\n“张小侯，你不是风系的吗，来，到外面大风的地方试试，看看能不能把风系的初阶技能-风轨给释放出来。”同宿舍的陆小斌说道。\n\n“你他妈还水系的，怎么不见你去来一个水域，堂堂水系魔法师，出门你还打伞，说出去不怕丢人？”莫凡劈头盖脸的就把陆小斌这家伙给骂了一顿。\n\n陆小斌脸上一阵青一阵白。\n\n确实啊，水系魔法师大雨天就应该一件风衣，在天地"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "4cd65daf-b7a3-49db-8f30-30a60061f62b",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "张小侯",
+          "hit": false,
+          "snippet": "舍一群人顿时挤出了门，追着张小候望去。\n\n然而，就大家刚走出宿舍这一会，张小候已经从整个走廊的最左端极速挪到了最尽头。\n\n太快了！\n\n什么百米冲刺飞人在这移动速度满前都弱爆了！\n\n莫凡心中一片涟漪，这风系的初阶技能也是帅啊，那踩着风之轨迹飞奔的感觉一定棒极了。\n\n“啊啊啊啊啊……救命救命……”\n\n“砰！！！！！”\n\n走廊忽然莫名的一阵颤抖，莫凡刚感慨完那远处的张小候已经整个人撞贴在了公共厕所门上！"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "d901e816-05ae-4c5c-9734-8fd91e920a8e",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "张小侯",
+          "hit": false,
+          "snippet": "慢慢的进入到冥修状态。\n\n星感石光辉斑驳，正在随着张小侯的呼吸而时暗时明，看得出来张小侯有些紧张，星感石无法完整的捕捉到他星辰的能量。\n\n不过，张小侯正在一点点进入状态。\n\n终于，光辉稳定了，那青色的风系光辉遍布在星感石周围，亮度还要胜何雨一筹，除了几分不稳定之外几乎无可挑剔。\n\n“A！”\n\n“A！”\n\n“A+！”\n\n三个考官似乎出现了不同的意见。\n\n“老师，给我再试一次。”\n\n张小侯显然不甘心这"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "3834e33f-c815-4177-9225-a7a940891861",
+          "title": "全职法师笔趣阁txt",
+          "score": 3.0,
+          "matched_query": "张小侯",
+          "hit": false,
+          "snippet": "索跳的，就算没跳过去我们也能够拉住了，无非是完了一个蹦极。”许昭霆继续说道。\n\n“我不要！！”张英璐明显是一个胆小的女生。\n\n“我靠，你一个风系法师，需要你的时候你不站出来，那还做什么魔法师。”另一个水系的女生也说道。\n\n“还是别强人所难了。”周敏说道。\n\n大家不知该如何是好之时，莫凡看了一眼旁边的张小侯。\n\n张小侯在尖子班里算不上非常突出的，所以大家习惯性把希望寄托在风系成绩最好的张英璐那里，可"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-005b",
+      "category": "character_first_appearance",
+      "difficulty": "same_name",
+      "query": "张小侯是什么时候掌握风系的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "张小侯",
+          "风系"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "07e8bde0-f06a-487e-8ac5-6869469eb0a1"
+        ]
+      },
+      "latency_ms": 14.2,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "02f5f532-3ce5-4ae2-ad16-f060d82dfe70",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "张小侯",
+          "hit": false,
+          "snippet": "些活人作为修炼器材，这种丧心病狂的事情国家当然是绝不留情的！\n\n这一个月来，莫凡潜心冥修。\n\n在知道雷系星尘仅仅在释放了两个雷印之后就枯竭黯淡后，莫凡更加明白冥修的重要性。\n\n所以这一整个月，哪怕释放火系-火滋技能的诱惑有多大，莫凡都没有轻易的去跟火系星子打交道，必须得把基础先打牢靠。\n\n当全神贯注去冥修，将这一切当做是每天的习惯之后，时间就会变得飞快。\n\n马上又是开学季了。\n\n图书馆里，莫凡扫掉"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "05ffb8af-e6fb-4f22-862c-34818d58b98d",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "张小侯",
+          "hit": false,
+          "snippet": "\n操场其实也就是练习场，它们被一股莫凡所不了解的魔法罩子给分割成独立的好几块空间，一切外溢出来的力量都会被这些看不见的罩子给吸纳掉，防止误伤到还没有任何防御能力的学生。\n\n“看好，我今天向大家演示的是火系初阶技能-火滋！”唐月站在了全班学生的中央。\n\n所有的学生围成一个半弧分散在唐月老师的身后，至于大家是不是都在看唐月老师的起手仪式那的就不好说了！\n\n“火系，是火系的技能，莫凡哥……你擦擦口水吧，"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "03ba3287-667c-4521-a3db-3c0f9d6ff6a0",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "张小侯",
+          "hit": false,
+          "snippet": "年四季随机播，想到哪季就哪季的节奏！”宿舍里，张小侯抱怨了起来。\n\n“张小侯，你不是风系的吗，来，到外面大风的地方试试，看看能不能把风系的初阶技能-风轨给释放出来。”同宿舍的陆小斌说道。\n\n“你他妈还水系的，怎么不见你去来一个水域，堂堂水系魔法师，出门你还打伞，说出去不怕丢人？”莫凡劈头盖脸的就把陆小斌这家伙给骂了一顿。\n\n陆小斌脸上一阵青一阵白。\n\n确实啊，水系魔法师大雨天就应该一件风衣，在天地"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "4cd65daf-b7a3-49db-8f30-30a60061f62b",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "张小侯",
+          "hit": false,
+          "snippet": "舍一群人顿时挤出了门，追着张小候望去。\n\n然而，就大家刚走出宿舍这一会，张小候已经从整个走廊的最左端极速挪到了最尽头。\n\n太快了！\n\n什么百米冲刺飞人在这移动速度满前都弱爆了！\n\n莫凡心中一片涟漪，这风系的初阶技能也是帅啊，那踩着风之轨迹飞奔的感觉一定棒极了。\n\n“啊啊啊啊啊……救命救命……”\n\n“砰！！！！！”\n\n走廊忽然莫名的一阵颤抖，莫凡刚感慨完那远处的张小候已经整个人撞贴在了公共厕所门上！"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "4ad085ea-f75f-43bb-a258-146408c713ce",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "张小侯",
+          "hit": false,
+          "snippet": "听过她的传奇……没错，她就是穆宁雪！让我们掌声欢迎这位本应该和你们同届，却早已经晋升大学的魔法天才！”穆贺高声说道。\n\n此话一出，整个一千多人的操场都骚动了起来。\n\n“天呐，是穆宁雪啊，我听说她觉醒时冰系力量直接将脚下的地面都给冻成冰块了。”\n\n“那都是谣言，我这个才最准确，我听说她只用了八个月时间就学会了冰系初阶技能-冰蔓。”\n\n“八……八个月？？我的老天，我在学校一年都过去了，也不过掌握5颗星"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-006",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第1章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "8286dba1-e83d-4eb8-a9f0-7984d766d1d5"
+        ]
+      },
+      "latency_ms": 180.1,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-006b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第1章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "8286dba1-e83d-4eb8-a9f0-7984d766d1d5"
+        ]
+      },
+      "latency_ms": 55.3,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-007",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第2章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 2,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "1db1618f-39db-4d36-815e-527c338f95ac"
+        ]
+      },
+      "latency_ms": 60.9,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-007b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第2章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 2,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "1db1618f-39db-4d36-815e-527c338f95ac"
+        ]
+      },
+      "latency_ms": 56.6,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-008",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第3章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 3,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "9a4d3acb-4ff5-4d73-8a3f-424e9f59e04e"
+        ]
+      },
+      "latency_ms": 56.3,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-008b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第3章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 3,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "9a4d3acb-4ff5-4d73-8a3f-424e9f59e04e"
+        ]
+      },
+      "latency_ms": 63.7,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-009",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第4章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 4,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "99c36128-7106-436b-96b7-c6d26432050a"
+        ]
+      },
+      "latency_ms": 64.4,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-009b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第4章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 4,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "99c36128-7106-436b-96b7-c6d26432050a"
+        ]
+      },
+      "latency_ms": 55.4,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-010",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第5章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 5,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "146a50c6-c45f-407d-b28d-93a2e27cc497"
+        ]
+      },
+      "latency_ms": 57.0,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-010b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第5章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 5,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "146a50c6-c45f-407d-b28d-93a2e27cc497"
+        ]
+      },
+      "latency_ms": 55.4,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-011",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第6章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 6,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "dbb95632-e365-4a5b-b71b-b868dbc54f52"
+        ]
+      },
+      "latency_ms": 56.5,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-011b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第6章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 6,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "dbb95632-e365-4a5b-b71b-b868dbc54f52"
+        ]
+      },
+      "latency_ms": 54.5,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-012",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第7章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 7,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "75d85f5b-8c38-475b-8999-b7c3aa3b8577"
+        ]
+      },
+      "latency_ms": 55.0,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-012b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第7章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 7,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "75d85f5b-8c38-475b-8999-b7c3aa3b8577"
+        ]
+      },
+      "latency_ms": 53.7,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-013",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第8章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 8,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "2e3b4fe8-dcd1-42fa-a6aa-13ef75c58b8f"
+        ]
+      },
+      "latency_ms": 56.2,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-013b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第8章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 8,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "2e3b4fe8-dcd1-42fa-a6aa-13ef75c58b8f"
+        ]
+      },
+      "latency_ms": 54.5,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-014",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第9章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 9,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "d000a75b-bf9b-47f6-87df-68c13ddaa7ca"
+        ]
+      },
+      "latency_ms": 55.6,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-014b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第9章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 9,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "d000a75b-bf9b-47f6-87df-68c13ddaa7ca"
+        ]
+      },
+      "latency_ms": 55.7,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-015",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第10章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 10,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "6c6cfe93-1af0-4588-97bc-f9fa9e308103"
+        ]
+      },
+      "latency_ms": 54.7,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-015b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第10章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 10,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "6c6cfe93-1af0-4588-97bc-f9fa9e308103"
+        ]
+      },
+      "latency_ms": 55.0,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-016",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第11章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 11,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "6a66cb70-71b5-4532-b600-c7649bd060cf"
+        ]
+      },
+      "latency_ms": 57.9,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-016b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第11章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 11,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "6a66cb70-71b5-4532-b600-c7649bd060cf"
+        ]
+      },
+      "latency_ms": 54.5,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-017",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第12章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 12,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "fdf5c63c-d5be-4c69-80ab-747a5bbcc4cb"
+        ]
+      },
+      "latency_ms": 54.5,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-017b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第12章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 12,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "fdf5c63c-d5be-4c69-80ab-747a5bbcc4cb"
+        ]
+      },
+      "latency_ms": 59.7,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-018",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第13章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 13,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "0a84fb42-4be1-4ee0-b4c5-2d3f43224dec"
+        ]
+      },
+      "latency_ms": 55.5,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-018b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第13章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 13,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "0a84fb42-4be1-4ee0-b4c5-2d3f43224dec"
+        ]
+      },
+      "latency_ms": 53.9,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-019",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第14章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 14,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "2d2d456a-9f86-4d82-bc94-1301eb2e4ee4"
+        ]
+      },
+      "latency_ms": 55.0,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-019b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第14章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 14,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "2d2d456a-9f86-4d82-bc94-1301eb2e4ee4"
+        ]
+      },
+      "latency_ms": 54.0,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-020",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第15章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 15,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "6189b7f5-6aef-43e6-8ebf-b4972ca50747"
+        ]
+      },
+      "latency_ms": 84.4,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-020b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第15章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 15,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "6189b7f5-6aef-43e6-8ebf-b4972ca50747"
+        ]
+      },
+      "latency_ms": 55.6,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-021",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第16章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "2519d144-a0bd-4d39-9f9d-d83033039dbd"
+        ]
+      },
+      "latency_ms": 56.1,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-021b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第16章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "2519d144-a0bd-4d39-9f9d-d83033039dbd"
+        ]
+      },
+      "latency_ms": 53.8,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-022",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第17章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 17,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "78eb5e3f-cfca-442c-b081-974bfb5efed5"
+        ]
+      },
+      "latency_ms": 65.3,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-022b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第17章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 17,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "78eb5e3f-cfca-442c-b081-974bfb5efed5"
+        ]
+      },
+      "latency_ms": 57.0,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-023",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第18章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 18,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "b2bf6619-39e1-41d7-ace1-8f7ad6e4e2c5"
+        ]
+      },
+      "latency_ms": 64.5,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-023b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第18章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 18,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "b2bf6619-39e1-41d7-ace1-8f7ad6e4e2c5"
+        ]
+      },
+      "latency_ms": 58.0,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-024",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第19章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 19,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "1f29378f-36b4-4940-9548-f2e2500e0355"
+        ]
+      },
+      "latency_ms": 57.7,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-024b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第19章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 19,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "1f29378f-36b4-4940-9548-f2e2500e0355"
+        ]
+      },
+      "latency_ms": 57.9,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-025",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第20章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 20,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "12f3b4f0-e395-440a-9b19-f1a841ce2684"
+        ]
+      },
+      "latency_ms": 68.2,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-025b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第20章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 20,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "12f3b4f0-e395-440a-9b19-f1a841ce2684"
+        ]
+      },
+      "latency_ms": 58.1,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-026",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第1章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 1,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "9a67bf8d-1c18-4fd8-becd-69686a299e62"
+        ]
+      },
+      "latency_ms": 58.6,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-026b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第1章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 1,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "9a67bf8d-1c18-4fd8-becd-69686a299e62"
+        ]
+      },
+      "latency_ms": 56.8,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-027",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第2章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 2,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "be2e2bbe-bb67-4356-8f96-7e56939beaf4"
+        ]
+      },
+      "latency_ms": 57.8,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-027b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第2章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 2,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "be2e2bbe-bb67-4356-8f96-7e56939beaf4"
+        ]
+      },
+      "latency_ms": 64.2,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-028",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第21章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 21,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "c291f237-7c1e-40c8-8356-ffc7e146af08"
+        ]
+      },
+      "latency_ms": 58.5,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-028b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第21章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 21,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "c291f237-7c1e-40c8-8356-ffc7e146af08"
+        ]
+      },
+      "latency_ms": 58.9,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-029",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第22章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 22,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "44bb5097-a21d-45df-b525-0128fb9ad58b"
+        ]
+      },
+      "latency_ms": 58.6,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-029b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第22章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 22,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "44bb5097-a21d-45df-b525-0128fb9ad58b"
+        ]
+      },
+      "latency_ms": 57.9,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-030",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第23章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 23,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "16c7cd2b-042b-4917-b9fa-f7230b240ed0"
+        ]
+      },
+      "latency_ms": 57.8,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-030b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第23章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 23,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "16c7cd2b-042b-4917-b9fa-f7230b240ed0"
+        ]
+      },
+      "latency_ms": 65.8,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-031",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第24章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 24,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "95436c6e-4467-446c-8dbb-6a3d263f7cf6"
+        ]
+      },
+      "latency_ms": 63.2,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-031b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第24章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 24,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "95436c6e-4467-446c-8dbb-6a3d263f7cf6"
+        ]
+      },
+      "latency_ms": 57.5,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-032",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第25章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 25,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "5ba89f68-de17-4e9f-b0c8-e3489172f2f4"
+        ]
+      },
+      "latency_ms": 60.5,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-032b",
+      "category": "timeline_event",
+      "difficulty": "normal",
+      "query": "第25章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 25,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "5ba89f68-de17-4e9f-b0c8-e3489172f2f4"
+        ]
+      },
+      "latency_ms": 58.7,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-033",
+      "category": "character_profile",
+      "difficulty": "normal",
+      "query": "介绍下莫凡",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "bab0dfbc-3df5-48d4-9879-7d3bfa254903"
+        ]
+      },
+      "latency_ms": 66.4,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-033b",
+      "category": "character_profile",
+      "difficulty": "normal",
+      "query": "莫凡是什么角色？",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "bab0dfbc-3df5-48d4-9879-7d3bfa254903"
+        ]
+      },
+      "latency_ms": 13.1,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "20d55b62-bbb8-480b-ab39-b3955f3bcb8c",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "很快，莫凡终于发现什么问题了。\n\n原来隔壁班出现了一个雷霆系的，而就在自己觉醒的这瞬间，全校师生的目光齐刷刷的注视着那个比自己快你们一步觉醒的家伙！\n\n莫凡一脸苦逼的看着觉醒石上同样跳跃着的紫色雷弧，真希望一巴"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "aba119fc-425a-460e-8040-372d887ddacb",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "“莫凡哥哥。”女孩甜甜的唤了一声。\n\n“又是那般狗东西，对不对？”莫凡走了上去，脸上隐隐有一股怒气在缭绕。\n\n心夏没有说话。\n\n“今天我一定要狠狠的收拾他们，一群败类！！”莫凡怒气翻涌着，目光往山丘上的阶梯"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "做出来了吗？”一名戴着小领结的白脸男生问道。\n\n“完美解答！”那个无论是发型、身高、长相都堪称男神的慕白说道。\n\n“不愧是我们的尖子生，这么难的混系问题都能够做出来……咦，那不是模拟考上只靠了个6分的莫凡吗？”满脸麻子的赵坤三说道。\n\n男神慕白眼睛马上不屑的瞥了一眼那个独自一人打伞的少年，道：“这家伙马上要跟他老爸一样，当一个破皮卡车采购员了。”\n\n“那不就是你们穆家的仆人了吗，哈哈哈！”\n\n这三"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2df36149-3749-4acb-aaa3-04813fee222c",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "魔法觉醒会在高中开学典礼上，全校领导老师见证下开启，那个时候哪怕你前面的理论没有学，一样是有可能开启属于自己的系！\n\n莫凡其实是真的喜欢魔法，这对他来说无疑是一次完美的奇幻重生。\n\n他也想要成为一个能够傲立高楼穹顶上方舞火唤雷的至高法师，为拯救世界做那么一点贡献。\n\n偏偏，这次考试……\n\n这么说吧，经过他临考前不懈努力，"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "3c52cc78-4caf-4c7e-bd8a-12526a5ac8fe",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": true,
+          "snippet": "莫凡也没有再说话。\n\n“真的想学？”莫家兴再一次确认一遍。\n\n“真的。”莫凡没有一点犹豫的点头。\n\n起初莫凡也觉得是自己在做梦，世界和自己开了一个玩笑，可事实证明，世界真的变了，这不是在做梦！\n\n“那好吧"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-034",
+      "category": "character_profile",
+      "difficulty": "normal",
+      "query": "介绍下张小侯",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "efeec82a-c416-4b4f-bb2e-4ad6a5484f96"
+        ]
+      },
+      "latency_ms": 65.0,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-034b",
+      "category": "character_profile",
+      "difficulty": "normal",
+      "query": "张小侯是什么角色？",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "efeec82a-c416-4b4f-bb2e-4ad6a5484f96"
+        ]
+      },
+      "latency_ms": 12.0,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "20d55b62-bbb8-480b-ab39-b3955f3bcb8c",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "角色",
+          "hit": true,
+          "snippet": "的莫凡很清楚很清楚，多一系意味着从起步就领先别人，系与系之间的修炼都是独立的。\n\n就像一款网游，全服务器的人都只能够开一个号那里苦逼打怪升级修炼，而自己直接开两个号，最重要的是这两个号是可以融合在一个角色身上，这战斗力就不是1+1=2的问题了！\n\n这太爽了！！\n\n老子天生双系，一个吊炸天的雷系，一个暴力的火系，看看谁能挡我！\n\n那沉浸在老爸卖房屈辱、愧疚在这一刻一扫而空，莫凡很清楚很清楚，若是自己"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "aba119fc-425a-460e-8040-372d887ddacb",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "角色",
+          "hit": true,
+          "snippet": "我女朋友……我现在在这亭子里打打牌，给她一些考虑的时间怎么了？”那个叫做徐冰的青年说道。\n\n徐冰脖子上有一个很明显的青色纹身，穿着短夹克的原故，这缠绕了半个脖子的纹身就显得非常显眼，一看就是不好惹的的角色。\n\n“就是啊，她要是拒绝，直接走就好了……王炸，哈哈哈，给钱，给钱，炸弹翻倍！”坐在另一边，一身牛仔破洞装的青年说道。\n\n“我草，你这****运。”\n\n“再打几轮，再打几轮，打到天黑不信那小妞不"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "02f5f532-3ce5-4ae2-ad16-f060d82dfe70",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "\n马上又是开学季了。\n\n图书馆里，莫凡扫掉了自己满身的蜘蛛网准备迎接新的一个魔法学期。\n\n意气风发的走入到班级里，莫凡像往常那样坐到了最后一排位置上。\n\n恩？\n\n今天有点不对劲。\n\n莫凡看了一眼旁边的张小侯，发现这货的神情有些不对劲。\n\n往常这家伙的眼神，就跟一只好奇的小猴子，灵滑得很，并且一定会马上滔滔不绝的在上课前给自己讲这几天的见闻\n\n可今天，他双眼呆然，口微微张开，神情一脸莫名其妙陶醉的看"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "05ffb8af-e6fb-4f22-862c-34818d58b98d",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "分散在唐月老师的身后，至于大家是不是都在看唐月老师的起手仪式那的就不好说了！\n\n“火系，是火系的技能，莫凡哥……你擦擦口水吧，是你的元素系技能啊，没有想到看上去温柔贤良的唐月老师竟然是一位火魔法师！”张小侯推了推旁边的莫凡。\n\n“哦，哦，我正想学呢！”莫凡这才反应过来。\n\n——————————————————\n\n（今天去百度百科搜索了一下自己，看见一长串评论之中还有一句来形容我的话\n\n叫做“网文圈"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "03ba3287-667c-4521-a3db-3c0f9d6ff6a0",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "张小侯",
+          "hit": true,
+          "snippet": "，烈阳高照，万里无云，刚睡了一个午觉简直就跟穿越了一般，狂风作怪，乌云密布。再到傍晚那会，暴雨冰冷、狂风凛冽！\n\n“是不是台风要来了啊，这鬼天气……真就一年四季随机播，想到哪季就哪季的节奏！”宿舍里，张小侯抱怨了起来。\n\n“张小侯，你不是风系的吗，来，到外面大风的地方试试，看看能不能把风系的初阶技能-风轨给释放出来。”同宿舍的陆小斌说道。\n\n“你他妈还水系的，怎么不见你去来一个水域，堂堂水系魔法师"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-035",
+      "category": "character_profile",
+      "difficulty": "normal",
+      "query": "介绍下莫凡",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "848fe767-5e30-4abe-903c-7d7ca45ba0b0"
+        ]
+      },
+      "latency_ms": 58.3,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-035b",
+      "category": "character_profile",
+      "difficulty": "normal",
+      "query": "莫凡是什么角色？",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "848fe767-5e30-4abe-903c-7d7ca45ba0b0"
+        ]
+      },
+      "latency_ms": 10.6,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "20d55b62-bbb8-480b-ab39-b3955f3bcb8c",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "很快，莫凡终于发现什么问题了。\n\n原来隔壁班出现了一个雷霆系的，而就在自己觉醒的这瞬间，全校师生的目光齐刷刷的注视着那个比自己快你们一步觉醒的家伙！\n\n莫凡一脸苦逼的看着觉醒石上同样跳跃着的紫色雷弧，真希望一巴"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "aba119fc-425a-460e-8040-372d887ddacb",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "“莫凡哥哥。”女孩甜甜的唤了一声。\n\n“又是那般狗东西，对不对？”莫凡走了上去，脸上隐隐有一股怒气在缭绕。\n\n心夏没有说话。\n\n“今天我一定要狠狠的收拾他们，一群败类！！”莫凡怒气翻涌着，目光往山丘上的阶梯"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "做出来了吗？”一名戴着小领结的白脸男生问道。\n\n“完美解答！”那个无论是发型、身高、长相都堪称男神的慕白说道。\n\n“不愧是我们的尖子生，这么难的混系问题都能够做出来……咦，那不是模拟考上只靠了个6分的莫凡吗？”满脸麻子的赵坤三说道。\n\n男神慕白眼睛马上不屑的瞥了一眼那个独自一人打伞的少年，道：“这家伙马上要跟他老爸一样，当一个破皮卡车采购员了。”\n\n“那不就是你们穆家的仆人了吗，哈哈哈！”\n\n这三"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2df36149-3749-4acb-aaa3-04813fee222c",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "魔法觉醒会在高中开学典礼上，全校领导老师见证下开启，那个时候哪怕你前面的理论没有学，一样是有可能开启属于自己的系！\n\n莫凡其实是真的喜欢魔法，这对他来说无疑是一次完美的奇幻重生。\n\n他也想要成为一个能够傲立高楼穹顶上方舞火唤雷的至高法师，为拯救世界做那么一点贡献。\n\n偏偏，这次考试……\n\n这么说吧，经过他临考前不懈努力，"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "3c52cc78-4caf-4c7e-bd8a-12526a5ac8fe",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "莫凡",
+          "hit": false,
+          "snippet": "莫凡也没有再说话。\n\n“真的想学？”莫家兴再一次确认一遍。\n\n“真的。”莫凡没有一点犹豫的点头。\n\n起初莫凡也觉得是自己在做梦，世界和自己开了一个玩笑，可事实证明，世界真的变了，这不是在做梦！\n\n“那好吧"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-036",
+      "category": "character_profile",
+      "difficulty": "normal",
+      "query": "介绍下张小侯",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "张小侯"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "32dbea5e-1dc5-427a-bfc6-c6f613663dbf"
+        ]
+      },
+      "latency_ms": 57.5,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": []
+    },
+    {
+      "query_id": "reg-036b",
+      "category": "character_profile",
+      "difficulty": "normal",
+      "query": "张小侯是什么角色？",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "张小侯"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "32dbea5e-1dc5-427a-bfc6-c6f613663dbf"
+        ]
+      },
+      "latency_ms": 12.4,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "20d55b62-bbb8-480b-ab39-b3955f3bcb8c",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "角色",
+          "hit": false,
+          "snippet": "的莫凡很清楚很清楚，多一系意味着从起步就领先别人，系与系之间的修炼都是独立的。\n\n就像一款网游，全服务器的人都只能够开一个号那里苦逼打怪升级修炼，而自己直接开两个号，最重要的是这两个号是可以融合在一个角色身上，这战斗力就不是1+1=2的问题了！\n\n这太爽了！！\n\n老子天生双系，一个吊炸天的雷系，一个暴力的火系，看看谁能挡我！\n\n那沉浸在老爸卖房屈辱、愧疚在这一刻一扫而空，莫凡很清楚很清楚，若是自己"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "aba119fc-425a-460e-8040-372d887ddacb",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "角色",
+          "hit": false,
+          "snippet": "我女朋友……我现在在这亭子里打打牌，给她一些考虑的时间怎么了？”那个叫做徐冰的青年说道。\n\n徐冰脖子上有一个很明显的青色纹身，穿着短夹克的原故，这缠绕了半个脖子的纹身就显得非常显眼，一看就是不好惹的的角色。\n\n“就是啊，她要是拒绝，直接走就好了……王炸，哈哈哈，给钱，给钱，炸弹翻倍！”坐在另一边，一身牛仔破洞装的青年说道。\n\n“我草，你这****运。”\n\n“再打几轮，再打几轮，打到天黑不信那小妞不"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "02f5f532-3ce5-4ae2-ad16-f060d82dfe70",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "张小侯",
+          "hit": false,
+          "snippet": "\n马上又是开学季了。\n\n图书馆里，莫凡扫掉了自己满身的蜘蛛网准备迎接新的一个魔法学期。\n\n意气风发的走入到班级里，莫凡像往常那样坐到了最后一排位置上。\n\n恩？\n\n今天有点不对劲。\n\n莫凡看了一眼旁边的张小侯，发现这货的神情有些不对劲。\n\n往常这家伙的眼神，就跟一只好奇的小猴子，灵滑得很，并且一定会马上滔滔不绝的在上课前给自己讲这几天的见闻\n\n可今天，他双眼呆然，口微微张开，神情一脸莫名其妙陶醉的看"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "05ffb8af-e6fb-4f22-862c-34818d58b98d",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "张小侯",
+          "hit": false,
+          "snippet": "分散在唐月老师的身后，至于大家是不是都在看唐月老师的起手仪式那的就不好说了！\n\n“火系，是火系的技能，莫凡哥……你擦擦口水吧，是你的元素系技能啊，没有想到看上去温柔贤良的唐月老师竟然是一位火魔法师！”张小侯推了推旁边的莫凡。\n\n“哦，哦，我正想学呢！”莫凡这才反应过来。\n\n——————————————————\n\n（今天去百度百科搜索了一下自己，看见一长串评论之中还有一句来形容我的话\n\n叫做“网文圈"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "03ba3287-667c-4521-a3db-3c0f9d6ff6a0",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "张小侯",
+          "hit": false,
+          "snippet": "，烈阳高照，万里无云，刚睡了一个午觉简直就跟穿越了一般，狂风作怪，乌云密布。再到傍晚那会，暴雨冰冷、狂风凛冽！\n\n“是不是台风要来了啊，这鬼天气……真就一年四季随机播，想到哪季就哪季的节奏！”宿舍里，张小侯抱怨了起来。\n\n“张小侯，你不是风系的吗，来，到外面大风的地方试试，看看能不能把风系的初阶技能-风轨给释放出来。”同宿舍的陆小斌说道。\n\n“你他妈还水系的，怎么不见你去来一个水域，堂堂水系魔法师"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-037",
+      "category": "world_rule",
+      "difficulty": "normal",
+      "query": "这个世界里魔法体系的规则是什么？",
+      "expected": {
+        "evidence_type": "world_rule",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "魔法体系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "63fa8b18-52ed-4b16-958d-c52071b2d680"
+        ]
+      },
+      "latency_ms": 94.0,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "b81e293a-a2dc-454d-8a24-52f802eb1fd7",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "规则",
+          "hit": true,
+          "snippet": "被干扰的时候，自己脑海是一片空无的！\n\n魔法师觉醒之后，他的这片空无世界里便会出现相应系的星尘。\n\n也就是说，现在只要莫凡闭上眼睛，完全不去浮想任何事情让脑海达到一片如黑色宇宙般空无的时候，雷系星尘和火系星尘就会在这片空无的脑海之中浮现。\n\n雷系星尘为紫色，看上去就像一片紫色的宇宙尘埃悬浮在那里，唯美迷人、绚丽多姿。\n\n雷系星尘内一共有七颗星子，这些星子们在整片小小的星尘里做无规则的运动，就像七个"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "01f9fdd4-556e-417e-a918-797e3ea016ff",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "规则",
+          "hit": true,
+          "snippet": "做的就只变成站在那里数数就好了。\n\n……\n\n“我听说他们召唤系是有指标的，需要干掉我们100个人，否则他们的资源会被分配到表现优异的系上。妈的，这食骨妖估计就可以揽下一半，多少组人上去都没有作用啊。”土系坐席上，李俊巍旁边的人讨论了起来。\n\n“确实是，难道就没有人可以终结掉这个食骨妖？？”\n\n“高手肯定有，只是他们不一定想出手吧……”\n\n几人正在讨论的时候，一个略显肥胖的脑袋却凑了过来，开口问道："
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "daf4e6a7-ac89-4482-a9fe-fe437db6884d",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "规则",
+          "hit": true,
+          "snippet": "惊人，让之前那般杂乱无杂的虾兵蟹将看看我们之间的战斗默契！”李俊巍脸上笑容飞扬。\n\n把战斗当做是一个人的事，那只能说那些挑战者都太不合格了。\n\n在初阶，大家都只有单个技能的情况下最重要的就是团队合作，雷系固然强大，元素之首，却绝没有单独对抗妖魔的能力，水系或许看上去并没有任何的攻击性，然而这初阶唯一的防御技能却绝对是战斗至关重要的一部分，李俊巍眼中根本没有一开始就是废的系，唯有一群不懂得合作的蠢材"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "44e9b580-a0ab-4105-a819-14a79046904d",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "规则",
+          "hit": true,
+          "snippet": "“要不，我们劝莫凡主动放弃了，否则影响太大啊？”周正华开口说道。\n\n一开始他们也都没有预料到会发生这种事情，萧院长说出后一条规矩的时候他们其实也就听听的态度，谁知道莫凡不仅是召唤系中的佼佼者，更掌控着雷系中阶魔法……\n\n除此之外，这家伙一定还隐藏着别的能力，否则他一定会被牧奴娇给终结，牧奴娇这实力在新生之中都属于逆天的了！\n\n“规矩就是规矩！”萧院长冷哼一声，并没有采纳周正华的意见。\n\n现场一片混"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a69497bf-788b-403b-98c7-a05f3f192711",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "规则",
+          "hit": true,
+          "snippet": "什么怪物？？”莫凡有些不解的问道。\n\n“就是黑畜妖啊。”\n\n“黑畜妖？？那不是妖魔吗？？”莫凡更是不解了。\n\n其实莫凡也有些奇怪，似乎只要是黑教廷的人都能够驱使几只黑畜妖，偏偏能够驾驭妖魔的人似乎只有召唤系的吧，总不可能黑教廷的人全部都是召唤系的？\n\n“它们不是妖魔，它们都是人，活人！”唐月说道。\n\n“什么？？”莫凡愣住了。\n\n活人？？\n\n那些黑畜妖是活人？？？\n\n“它们都是一群灵魂被诅咒了的活人"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-037b",
+      "category": "world_rule",
+      "difficulty": "normal",
+      "query": "这个世界的魔法体系设定是怎么样的？",
+      "expected": {
+        "evidence_type": "world_rule",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "魔法体系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "63fa8b18-52ed-4b16-958d-c52071b2d680"
+        ]
+      },
+      "latency_ms": 21.2,
+      "hit": true,
+      "mrr": 1.0,
+      "precision": 1.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "这个世界",
+          "hit": true,
+          "snippet": "，显然他们有足够的信心能够考上魔法高中。\n\n……\n\n打着一把黑色的黄飞鸿伞，莫凡自顾走出了校门外去。\n\n回头望了一眼这个即将告别的校园，莫凡千言万语化作两个字：坑爹！\n\n能不坑爹吗？\n\n莫凡本来不属于这个世界，他是一个天才学生，对平日里的考试其实压根不屑，从来都是交白卷。\n\n被同学、老师们认为是学渣很正常，就像一个大学生没有理由要为了那小红花而浪费一个多小时时间在那里干坐着。\n\n原本，莫凡就打算中"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2df36149-3749-4acb-aaa3-04813fee222c",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "这个世界",
+          "hit": true,
+          "snippet": "\n\n这个社会汽车、手机、电脑、冰箱都有，科技的产品一点也没有因为魔法的取代而改变，假如成不了一个魔法师，那么你就会成为这些东西生产的工人。妈蛋，这和自己在原来的世界有什么区别，老子要学魔法！！\n\n按照这个世界，其他东西都不会改变的理论来看，自己的天赋应该也是不变的才对。高中只要多加努力，把过往的那些东西补起来，自己依然可以成为一个真正的学霸……不，魔法霸！\n\n“爸，我想继续学。”莫凡沉默了良久，还"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "06c86eb0-3bc9-4441-bcb5-e967e6e0ff8b",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "这个世界",
+          "hit": true,
+          "snippet": "，这事莫凡压根不知道啊。\n\n在他看来穆白那蠢货都已经可以掌握4颗、5颗星子了，自己能够释放魔法不很正常吗？\n\n可为什么叶心夏一脸很不敢置信的样子，更有一种看怪物的味道？\n\n难道，半年不到学会初阶技能在这个世界里真的灰常变态？？\n\n“你刚才所谓的‘再有天赋也要一年’的‘再有天赋’指的是什么层次的？”莫凡小心翼翼的问道。\n\n莫凡可不想暴露自己对这个世界其实还有很多无知。\n\n“穆宁雪算是我们博城最有天赋"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "963f451d-c358-44d3-b1f8-2a05cfc6bdda",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "这个世界",
+          "hit": true,
+          "snippet": "笑，道：“原来是先觉醒了，虽说过早觉醒反而会有修炼副作用，但既然是魔法协会的人，那应该没多大关系啦。”\n\n莫凡见叶心夏终于没有再追问下去，松了一口气。\n\n妈的，自己果然是一个怪物，看来在还没有完全了解这个世界之前还是不要轻易的展露太多东西了。\n\n“5个月修成的，真的只可能是黑教廷吗？”莫凡还是弱弱的问了一句。\n\n“嗯。”叶心夏认真的点了点头。\n\n莫凡那个汗啊！\n\n太过牛B也不是一件好事，本来莫凡还"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "6418d893-8c87-4744-a670-ac0b4a4e6a35",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "这个世界",
+          "hit": true,
+          "snippet": "度考核真的很简单，就像当初典礼上觉醒那般，学生们只要将自己的手掌放在这硕大的星感石上，考官们就可以马上通过星感石的亮度来判断学生这一年的修炼成果。\n\n就像高考一样，学生们的命运很可能就被这一纸判定，在这个世界里也有着一样的硬是指标，要么继续学习，获得更好的机会，要么卷铺盖走人另谋出路。\n\n“记得我跟你们说过，星尘的光辉的强弱代表着你们星尘内魔能的高低，八班的同学们，证明你们这一年努力成果的时刻到了"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-038",
+      "category": "world_rule",
+      "difficulty": "normal",
+      "query": "这个世界里魔法体系的规则是什么？",
+      "expected": {
+        "evidence_type": "world_rule",
+        "chapter_no": 1,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "魔法体系"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "bb317bcb-1c1d-425f-a4f3-b7c74150ca8e"
+        ]
+      },
+      "latency_ms": 68.6,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "b81e293a-a2dc-454d-8a24-52f802eb1fd7",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "规则",
+          "hit": false,
+          "snippet": "被干扰的时候，自己脑海是一片空无的！\n\n魔法师觉醒之后，他的这片空无世界里便会出现相应系的星尘。\n\n也就是说，现在只要莫凡闭上眼睛，完全不去浮想任何事情让脑海达到一片如黑色宇宙般空无的时候，雷系星尘和火系星尘就会在这片空无的脑海之中浮现。\n\n雷系星尘为紫色，看上去就像一片紫色的宇宙尘埃悬浮在那里，唯美迷人、绚丽多姿。\n\n雷系星尘内一共有七颗星子，这些星子们在整片小小的星尘里做无规则的运动，就像七个"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "01f9fdd4-556e-417e-a918-797e3ea016ff",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "规则",
+          "hit": false,
+          "snippet": "做的就只变成站在那里数数就好了。\n\n……\n\n“我听说他们召唤系是有指标的，需要干掉我们100个人，否则他们的资源会被分配到表现优异的系上。妈的，这食骨妖估计就可以揽下一半，多少组人上去都没有作用啊。”土系坐席上，李俊巍旁边的人讨论了起来。\n\n“确实是，难道就没有人可以终结掉这个食骨妖？？”\n\n“高手肯定有，只是他们不一定想出手吧……”\n\n几人正在讨论的时候，一个略显肥胖的脑袋却凑了过来，开口问道："
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "daf4e6a7-ac89-4482-a9fe-fe437db6884d",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "规则",
+          "hit": false,
+          "snippet": "惊人，让之前那般杂乱无杂的虾兵蟹将看看我们之间的战斗默契！”李俊巍脸上笑容飞扬。\n\n把战斗当做是一个人的事，那只能说那些挑战者都太不合格了。\n\n在初阶，大家都只有单个技能的情况下最重要的就是团队合作，雷系固然强大，元素之首，却绝没有单独对抗妖魔的能力，水系或许看上去并没有任何的攻击性，然而这初阶唯一的防御技能却绝对是战斗至关重要的一部分，李俊巍眼中根本没有一开始就是废的系，唯有一群不懂得合作的蠢材"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "44e9b580-a0ab-4105-a819-14a79046904d",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "规则",
+          "hit": false,
+          "snippet": "“要不，我们劝莫凡主动放弃了，否则影响太大啊？”周正华开口说道。\n\n一开始他们也都没有预料到会发生这种事情，萧院长说出后一条规矩的时候他们其实也就听听的态度，谁知道莫凡不仅是召唤系中的佼佼者，更掌控着雷系中阶魔法……\n\n除此之外，这家伙一定还隐藏着别的能力，否则他一定会被牧奴娇给终结，牧奴娇这实力在新生之中都属于逆天的了！\n\n“规矩就是规矩！”萧院长冷哼一声，并没有采纳周正华的意见。\n\n现场一片混"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "a69497bf-788b-403b-98c7-a05f3f192711",
+          "title": "全职法师笔趣阁txt",
+          "score": 2.0,
+          "matched_query": "规则",
+          "hit": false,
+          "snippet": "什么怪物？？”莫凡有些不解的问道。\n\n“就是黑畜妖啊。”\n\n“黑畜妖？？那不是妖魔吗？？”莫凡更是不解了。\n\n其实莫凡也有些奇怪，似乎只要是黑教廷的人都能够驱使几只黑畜妖，偏偏能够驾驭妖魔的人似乎只有召唤系的吧，总不可能黑教廷的人全部都是召唤系的？\n\n“它们不是妖魔，它们都是人，活人！”唐月说道。\n\n“什么？？”莫凡愣住了。\n\n活人？？\n\n那些黑畜妖是活人？？？\n\n“它们都是一群灵魂被诅咒了的活人"
+        }
+      ]
+    },
+    {
+      "query_id": "reg-038b",
+      "category": "world_rule",
+      "difficulty": "normal",
+      "query": "这个世界的魔法体系设定是怎么样的？",
+      "expected": {
+        "evidence_type": "world_rule",
+        "chapter_no": 1,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "魔法体系"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "bb317bcb-1c1d-425f-a4f3-b7c74150ca8e"
+        ]
+      },
+      "latency_ms": 22.0,
+      "hit": false,
+      "mrr": 0.0,
+      "precision": 0.0,
+      "results": [
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "995d2522-2ce4-4124-8a59-54db357e9e29",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "这个世界",
+          "hit": false,
+          "snippet": "，显然他们有足够的信心能够考上魔法高中。\n\n……\n\n打着一把黑色的黄飞鸿伞，莫凡自顾走出了校门外去。\n\n回头望了一眼这个即将告别的校园，莫凡千言万语化作两个字：坑爹！\n\n能不坑爹吗？\n\n莫凡本来不属于这个世界，他是一个天才学生，对平日里的考试其实压根不屑，从来都是交白卷。\n\n被同学、老师们认为是学渣很正常，就像一个大学生没有理由要为了那小红花而浪费一个多小时时间在那里干坐着。\n\n原本，莫凡就打算中"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "2df36149-3749-4acb-aaa3-04813fee222c",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "这个世界",
+          "hit": false,
+          "snippet": "\n\n这个社会汽车、手机、电脑、冰箱都有，科技的产品一点也没有因为魔法的取代而改变，假如成不了一个魔法师，那么你就会成为这些东西生产的工人。妈蛋，这和自己在原来的世界有什么区别，老子要学魔法！！\n\n按照这个世界，其他东西都不会改变的理论来看，自己的天赋应该也是不变的才对。高中只要多加努力，把过往的那些东西补起来，自己依然可以成为一个真正的学霸……不，魔法霸！\n\n“爸，我想继续学。”莫凡沉默了良久，还"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "06c86eb0-3bc9-4441-bcb5-e967e6e0ff8b",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "这个世界",
+          "hit": false,
+          "snippet": "，这事莫凡压根不知道啊。\n\n在他看来穆白那蠢货都已经可以掌握4颗、5颗星子了，自己能够释放魔法不很正常吗？\n\n可为什么叶心夏一脸很不敢置信的样子，更有一种看怪物的味道？\n\n难道，半年不到学会初阶技能在这个世界里真的灰常变态？？\n\n“你刚才所谓的‘再有天赋也要一年’的‘再有天赋’指的是什么层次的？”莫凡小心翼翼的问道。\n\n莫凡可不想暴露自己对这个世界其实还有很多无知。\n\n“穆宁雪算是我们博城最有天赋"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "963f451d-c358-44d3-b1f8-2a05cfc6bdda",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "这个世界",
+          "hit": false,
+          "snippet": "笑，道：“原来是先觉醒了，虽说过早觉醒反而会有修炼副作用，但既然是魔法协会的人，那应该没多大关系啦。”\n\n莫凡见叶心夏终于没有再追问下去，松了一口气。\n\n妈的，自己果然是一个怪物，看来在还没有完全了解这个世界之前还是不要轻易的展露太多东西了。\n\n“5个月修成的，真的只可能是黑教廷吗？”莫凡还是弱弱的问了一句。\n\n“嗯。”叶心夏认真的点了点头。\n\n莫凡那个汗啊！\n\n太过牛B也不是一件好事，本来莫凡还"
+        },
+        {
+          "source_id": "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "chunk_id": "6418d893-8c87-4744-a670-ac0b4a4e6a35",
+          "title": "全职法师笔趣阁txt",
+          "score": 1.0,
+          "matched_query": "这个世界",
+          "hit": false,
+          "snippet": "度考核真的很简单，就像当初典礼上觉醒那般，学生们只要将自己的手掌放在这硕大的星感石上，考官们就可以马上通过星感石的亮度来判断学生这一年的修炼成果。\n\n就像高考一样，学生们的命运很可能就被这一纸判定，在这个世界里也有着一样的硬是指标，要么继续学习，获得更好的机会，要么卷铺盖走人另谋出路。\n\n“记得我跟你们说过，星尘的光辉的强弱代表着你们星尘内魔能的高低，八班的同学们，证明你们这一年努力成果的时刻到了"
+        }
+      ]
+    }
+  ]
+}

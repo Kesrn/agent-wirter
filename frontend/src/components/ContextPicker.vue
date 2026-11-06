@@ -13,7 +13,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  confirm: [outlineIds: string[], characterIds: string[], worldEntryIds: string[], hiddenThreadIds: string[], targetWords: number]
+  confirm: [outlineIds: string[], characterIds: string[], worldEntryIds: string[], hiddenThreadIds: string[], targetWords: number, userNote: string, includeKnowledgeSources: boolean, includePreviousSummary: boolean]
   cancel: []
 }>()
 
@@ -42,15 +42,29 @@ const CONFIDENCE_LABELS: Record<string, string> = {
 const pickerTitle = computed(() => isNovel.value ? '选择创作素材' : '选择内容素材')
 const pickerSubtitle = computed(() =>
   isNovel.value
-    ? '选择本次生成要用的大纲、角色和世界观设定'
+    ? '以下勾选项就是任务卡和正文实际使用的创作素材；取消勾选后不会隐式加载'
     : '选择本次生成要用的内容结构、受众画像和品牌资料'
 )
 const confirmLabel = computed(() => isNovel.value ? '确认生成' : '确认生成内容')
 
-// Default: all selected
-const selectedOutlines = ref<string[]>(props.outlines.map(o => o.id))
+// 小说模式下默认且优先只使用本章大纲；文章模式无章节概念，全选
+function currentChapterOutlineIds() {
+  if (!isNovel.value || !props.currentChapterNum) {
+    return props.outlines.map(o => o.id)
+  }
+  return props.outlines
+    .filter(o => o.chapter_num === props.currentChapterNum)
+    .map(o => o.id)
+}
+
+// Default: novel 模式只选本章大纲，article 模式全选
+const selectedOutlines = ref<string[]>(currentChapterOutlineIds())
 const selectedCharacters = ref<string[]>(props.characters.map(c => c.id))
-const selectedWorldEntries = ref<string[]>(props.worldEntries.map(w => w.id))
+const selectedWorldEntries = ref<string[]>(props.worldEntries
+  .filter(w => !isNovel.value
+    || w.scope_type === 'global'
+    || w.chapter_sequence_number === props.currentChapterNum)
+  .map(w => w.id))
 // Hidden threads: default-check those matching current chapter
 const selectedHiddenThreads = ref<string[]>(
   props.currentChapterNum
@@ -58,6 +72,9 @@ const selectedHiddenThreads = ref<string[]>(
     : props.hiddenThreads.map(ht => ht.id),
 )
 const targetWords = ref(2000)
+const userNote = ref('')
+const includeKnowledgeSources = ref(false)
+const includePreviousSummary = ref(false)
 
 const openSections = ref({ outlines: true, characters: false, worldEntries: false, hiddenThreads: false })
 
@@ -66,8 +83,17 @@ function toggleSection(key: 'outlines' | 'characters' | 'worldEntries' | 'hidden
 }
 
 function toggleAllOutlines() {
-  selectedOutlines.value = selectedOutlines.value.length === props.outlines.length ? [] : props.outlines.map(o => o.id)
+  // 小说生成的本章大纲是系统必需项，不能取消；文章模式仍允许全选/全不选。
+  const ids = isNovel.value ? currentChapterOutlineIds() : props.outlines.map(o => o.id)
+  selectedOutlines.value = isNovel.value
+    ? ids
+    : (selectedOutlines.value.length === ids.length ? [] : ids)
 }
+
+// 大纲“全选”复选框：小说模式下仅作用于本章大纲
+const outlineSelectAllScope = computed(() => isNovel.value ? currentChapterOutlineIds() : props.outlines.map(o => o.id))
+const outlineSelectAllLabel = computed(() => isNovel.value ? '本章' : '全选')
+const outlineSelectAllChecked = computed(() => outlineSelectAllScope.value.length > 0 && selectedOutlines.value.length === outlineSelectAllScope.value.length)
 function toggleAllCharacters() {
   selectedCharacters.value = selectedCharacters.value.length === props.characters.length ? [] : props.characters.map(c => c.id)
 }
@@ -84,6 +110,7 @@ function toggleHiddenThread(id: string) {
 }
 
 function toggleOutline(id: string) {
+  if (isNovel.value && currentChapterOutlineIds().includes(id)) return
   const idx = selectedOutlines.value.indexOf(id)
   if (idx >= 0) selectedOutlines.value.splice(idx, 1)
   else selectedOutlines.value.push(id)
@@ -107,12 +134,22 @@ function truncate(text: string, max: number): string {
 }
 
 function handleConfirm() {
-  emit('confirm', selectedOutlines.value, selectedCharacters.value, selectedWorldEntries.value, selectedHiddenThreads.value, targetWords.value)
+  emit(
+    'confirm',
+    selectedOutlines.value,
+    selectedCharacters.value,
+    selectedWorldEntries.value,
+    selectedHiddenThreads.value,
+    targetWords.value,
+    userNote.value.trim(),
+    includeKnowledgeSources.value,
+    includePreviousSummary.value,
+  )
 }
 </script>
 
 <template>
-  <div class="picker-overlay" @click.self="emit('cancel')">
+  <div class="picker-overlay">
     <div class="picker-card">
       <div class="picker-header">
         <h3>{{ pickerTitle }}</h3>
@@ -126,14 +163,14 @@ function handleConfirm() {
             <span class="section-chevron" :class="{ open: openSections.outlines }">▾</span>
             <span class="section-title">{{ sectionLabels.outlines }}</span>
             <label class="select-all" @click.stop>
-              <input type="checkbox" :checked="selectedOutlines.length === outlines.length && outlines.length > 0" @change="toggleAllOutlines" />
-              <span>全选</span>
+              <input type="checkbox" :checked="outlineSelectAllChecked" :disabled="isNovel" @change="toggleAllOutlines" />
+              <span>{{ isNovel ? '本章必需' : outlineSelectAllLabel }}</span>
             </label>
           </div>
           <div v-if="openSections.outlines" class="section-list">
             <div v-if="!outlines.length" class="empty-hint">暂无{{ sectionLabels.outlines }}</div>
             <div v-for="o in outlines" :key="o.id" class="item" @click="toggleOutline(o.id)">
-              <input type="checkbox" :checked="selectedOutlines.includes(o.id)" class="item-checkbox" />
+              <input type="checkbox" :checked="selectedOutlines.includes(o.id)" :disabled="isNovel && currentChapterOutlineIds().includes(o.id)" class="item-checkbox" />
               <span class="item-main">
                 <span class="item-title">{{ isNovel ? `第${o.chapter_num}章 ${o.title}` : o.title }}</span>
                 <span v-if="o.summary" class="item-desc">{{ truncate(o.summary, 80) }}</span>
@@ -179,7 +216,12 @@ function handleConfirm() {
             <div v-for="w in worldEntries" :key="w.id" class="item" @click="toggleWorldEntry(w.id)">
               <input type="checkbox" :checked="selectedWorldEntries.includes(w.id)" class="item-checkbox" />
               <span class="item-main">
-                <span class="item-title">{{ w.title }} <span v-if="w.category" class="badge cat-badge">[{{ w.category }}]</span> <span class="badge conf-badge" :class="w.confidence">{{ CONFIDENCE_LABELS[w.confidence] ?? w.confidence }}</span></span>
+                <span class="item-title">
+                  {{ w.title }}
+                  <span v-if="w.category" class="badge cat-badge">[{{ w.category }}]</span>
+                  <span class="badge auto-badge">{{ w.scope_type === 'global' ? '全局' : (w.chapter_sequence_number ? `第${w.chapter_sequence_number}章` : '章节未归属') }}</span>
+                  <span class="badge conf-badge" :class="w.confidence">{{ CONFIDENCE_LABELS[w.confidence] ?? w.confidence }}</span>
+                </span>
                 <span v-if="w.content" class="item-desc">{{ truncate(w.content, 60) }}</span>
               </span>
             </div>
@@ -207,6 +249,32 @@ function handleConfirm() {
             </div>
           </div>
         </div>
+
+        <div class="generation-requirements">
+          <label class="requirements-label">本轮写作要求</label>
+          <textarea
+            v-model="userNote"
+            class="requirements-input"
+            rows="4"
+            placeholder="可选。例如：更强调主角心理变化；节奏快一点；少用旁白，多写动作和对话；不要提前揭示反派身份..."
+          ></textarea>
+        </div>
+
+        <div class="knowledge-source-option">
+          <label class="knowledge-toggle">
+            <input v-model="includePreviousSummary" type="checkbox" />
+            <span>加入前文摘要</span>
+          </label>
+          <p>默认不加入前文摘要。勾选后才会把最近 3 章定稿摘要放进本次上下文；上章结尾锚点始终保留。</p>
+        </div>
+
+        <div class="knowledge-source-option">
+          <label class="knowledge-toggle">
+            <input v-model="includeKnowledgeSources" type="checkbox" />
+            <span>加入资料库内容</span>
+          </label>
+          <p>默认不加入资料库。勾选后才会把同人规则、固定注入资料和关键词命中的资料放进本次上下文。</p>
+        </div>
       </div>
 
       <div class="picker-footer">
@@ -225,7 +293,8 @@ function handleConfirm() {
 .picker-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -240,7 +309,7 @@ function handleConfirm() {
   height: 85vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-modal);
 }
 .picker-header {
   padding: var(--sp-3) var(--sp-5);
@@ -261,6 +330,8 @@ function handleConfirm() {
 .picker-body {
   flex: 1;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: var(--sp-3) var(--sp-5);
   display: flex;
   flex-direction: column;
@@ -310,6 +381,68 @@ function handleConfirm() {
   padding: var(--sp-1) 0;
   max-height: 180px;
   overflow-y: auto;
+}
+.generation-requirements {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+}
+.requirements-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+.requirements-input {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+.requirements-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.knowledge-source-option {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+}
+.knowledge-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+.knowledge-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+.knowledge-source-option p {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-tertiary);
 }
 
 /* Items */

@@ -34,6 +34,10 @@ export interface RegisterResponse {
   username: string
 }
 
+export interface AuthConfigResponse {
+  registration_enabled: boolean
+}
+
 export interface ProjectImageUploadResponse {
   url: string
   filename: string
@@ -75,6 +79,7 @@ export interface Expert {
   role: string
   name: string
   role_type: RoleType
+  skill_dir?: string | null
   description: string
   system_prompt: string
   temperature: number
@@ -85,6 +90,10 @@ export interface Expert {
   is_builtin: boolean
   is_enabled: boolean
   color: string
+  /** Expert System v2 */
+  expert_key?: string | null
+  version: number
+  deprecated: boolean
 }
 
 /** 项目创作模式 */
@@ -94,10 +103,9 @@ export type ProjectMode = 'novel' | 'article'
 export interface Project {
   id: string
   title: string
-  /** Backend has no genre field; kept for UI backward-compat, always empty from API */
   genre: string
-  /** Backend has no style field; kept for UI backward-compat, always empty from API */
   style: string
+  overall_outline: string
   status: string
   mode: ProjectMode
   description: string
@@ -154,6 +162,27 @@ export interface ReviewComment {
   expert_id: string
   comment: string
   severity: 'info' | 'warning' | 'critical'
+  resolved?: boolean
+  source_type?: string
+  created_at?: string
+  updated_at?: string
+  metadata?: Record<string, unknown> | null
+}
+
+export type ReviewNoteSeverity = 'info' | 'warning' | 'critical'
+
+/** Backend chapter_review_notes response */
+export interface ChapterReviewNote {
+  id: string
+  project_id: string
+  chapter_sequence_number: number
+  source_type: string
+  severity: ReviewNoteSeverity
+  content: string
+  resolved: boolean
+  metadata: Record<string, unknown> | null
+  created_at: string
+  updated_at: string
 }
 
 /** 世界观条目 (UI / store) — mapped from ApiWorldEntry */
@@ -162,6 +191,8 @@ export interface WorldEntry {
   project_id: string
   title: string
   category: string
+  scope_type: 'global' | 'chapter'
+  chapter_sequence_number: number | null
   content: string
   rules: Record<string, unknown> | null
   confidence: 'low' | 'medium' | 'high'
@@ -175,6 +206,7 @@ export interface Character {
   project_id: string
   name: string
   role_type: 'protagonist' | 'antagonist' | 'supporting' | 'minor'
+  scope_type: 'core' | 'recurring' | 'chapter' | 'cameo'
   profile: string
   faction: string
   appearance_count: number
@@ -190,6 +222,25 @@ export interface CharacterRelation {
   description: string
 }
 
+export type CharacterAppearanceType = 'appeared' | 'mentioned' | 'absent'
+
+export interface CharacterEvent {
+  id: string
+  project_id: string
+  character_id: string
+  chapter_sequence_number: number
+  appearance_type: CharacterAppearanceType
+  appeared: boolean
+  event_summary: string | null
+  actions: string[] | null
+  state_change: string | null
+  location: string | null
+  emotion: string | null
+  importance: number
+  created_at: string
+  updated_at: string
+}
+
 /** 大纲条目 (UI / store) — mapped from ApiOutline via apiOutlineToOutlineItem */
 export interface OutlineItem {
   id: string
@@ -199,6 +250,27 @@ export interface OutlineItem {
   summary: string
   turning_point: string | null
   hidden_thread_ids: string[]
+  story_arc_id: string | null
+  arc_position: string | null
+  pacing: string | null
+  tension_level: number | null
+  target_scene_count: number | null
+}
+
+/** 长线结构 (UI / store) — mapped from ApiStoryArc via apiStoryArcToStoryArc */
+export interface StoryArc {
+  id: string
+  project_id: string
+  parent_arc_id: string | null
+  arc_type: 'VOLUME' | 'ACT' | 'ARC'
+  name: string
+  summary: string
+  goal: string
+  main_conflict: string
+  start_chapter: number | null
+  end_chapter: number | null
+  order_index: number
+  status: string
 }
 
 /** 暗线 (UI / store) — mapped from ApiHiddenThread via apiHiddenThreadToHiddenThread */
@@ -208,6 +280,13 @@ export interface HiddenThread {
   name: string
   description: string
   chapter_nums: number[]
+  status: string
+  thread_type: string | null
+  planted_chapter: number | null
+  reveal_chapter: number | null
+  resolved_chapter: number | null
+  payoff_summary: string | null
+  risk_level: string | null
   created_at: string
   updated_at: string
 }
@@ -235,6 +314,9 @@ export interface ApiProject {
   id: string
   title: string
   description: string | null
+  overall_outline: string | null
+  genre: string | null
+  style: string | null
   target_words: number
   status: string
   mode: ProjectMode
@@ -251,6 +333,8 @@ export interface ApiChapter {
   sequence_number: number
   word_count: number
   status: string
+  /** 用户最终审核确认的不可变版本；下一章只读取该版本作为前文。 */
+  final_version_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -273,6 +357,7 @@ export interface ApiExpert {
   name: string
   description: string
   role_type: RoleType
+  skill_dir?: string | null
   system_prompt: string
   temperature: number
   max_tokens: number
@@ -283,6 +368,10 @@ export interface ApiExpert {
   is_enabled: boolean
   color: string
   created_at: string
+  /** Expert System v2 */
+  expert_key?: string | null
+  version: number
+  deprecated: boolean
 }
 
 /** Backend WorldEntryResponse */
@@ -291,6 +380,8 @@ export interface ApiWorldEntry {
   project_id: string
   title: string
   category: string
+  scope_type: 'global' | 'chapter'
+  chapter_sequence_number: number | null
   content: string
   rules: Record<string, unknown> | null
   confidence: string
@@ -304,6 +395,7 @@ export interface ApiCharacter {
   project_id: string
   name: string
   role_type: string
+  scope_type: 'core' | 'recurring' | 'chapter' | 'cameo'
   profile: string
   faction: string
   appearance_count: number
@@ -323,6 +415,44 @@ export interface ApiCharacterRelation {
   updated_at: string
 }
 
+export interface ApiCharacterEvent {
+  id: string
+  project_id: string
+  character_id: string
+  chapter_sequence_number: number
+  appearance_type: CharacterAppearanceType
+  appeared: boolean
+  event_summary: string | null
+  actions: string[] | null
+  state_change: string | null
+  location: string | null
+  emotion: string | null
+  importance: number
+  created_at: string
+  updated_at: string
+}
+
+// ─── K-5: Character Arc ───
+
+export interface ApiCharacterArcItem {
+  chapter_sequence_number: number | null
+  source_type: string
+  title: string
+  summary: string
+  state_change: string | null
+  emotion: string | null
+  importance: number
+  confidence: string
+}
+
+export interface ApiCharacterArcResponse {
+  character_id: string
+  character_name: string
+  role_type: string
+  items: ApiCharacterArcItem[]
+  chapter_range: string
+}
+
 /** Backend OutlineResponse */
 export interface ApiOutline {
   id: string
@@ -332,6 +462,30 @@ export interface ApiOutline {
   summary: string | null
   turning_point: string | null
   hidden_thread_ids: string[]
+  story_arc_id: string | null
+  arc_position: string | null
+  pacing: string | null
+  tension_level: number | null
+  target_scene_count: number | null
+  created_at: string
+  updated_at: string
+}
+
+/** Backend StoryArcResponse */
+export interface ApiStoryArc {
+  id: string
+  project_id: string
+  parent_arc_id: string | null
+  arc_type: string
+  name: string
+  summary: string | null
+  goal: string | null
+  main_conflict: string | null
+  start_chapter: number | null
+  end_chapter: number | null
+  order_index: number
+  status: string
+  metadata: Record<string, unknown> | null
   created_at: string
   updated_at: string
 }
@@ -343,6 +497,13 @@ export interface ApiHiddenThread {
   name: string
   description: string | null
   chapter_nums: number[]
+  status: string
+  thread_type: string | null
+  planted_chapter: number | null
+  reveal_chapter: number | null
+  resolved_chapter: number | null
+  payoff_summary: string | null
+  risk_level: string | null
   created_at: string
   updated_at: string
 }
@@ -352,6 +513,9 @@ export interface ApiHiddenThread {
 export interface ProjectCreatePayload {
   title: string
   description?: string
+  overall_outline?: string
+  genre?: string
+  style?: string
   target_words?: number
   mode?: ProjectMode
 }
@@ -386,6 +550,32 @@ export interface ChapterCreatePayload {
   sequence_number?: number
 }
 
+export interface ChapterReviewNoteCreatePayload {
+  source_type: string
+  severity?: ReviewNoteSeverity
+  content: string
+  resolved?: boolean
+  metadata?: Record<string, unknown> | null
+}
+
+export interface ChapterReviewNoteUpdatePayload {
+  source_type?: string
+  severity?: ReviewNoteSeverity
+  content?: string
+  resolved?: boolean
+  metadata?: Record<string, unknown> | null
+}
+
+export interface ProjectUpdatePayload {
+  title?: string
+  description?: string | null
+  overall_outline?: string | null
+  genre?: string | null
+  style?: string | null
+  target_words?: number
+  status?: string
+}
+
 export interface DocumentCreatePayload {
   title: string
   content?: string | null
@@ -413,6 +603,7 @@ export interface ExpertCreatePayload {
   name: string
   description: string
   role_type: RoleType
+  skill_dir?: string | null
   system_prompt: string
   temperature: number
   max_tokens: number
@@ -425,6 +616,8 @@ export interface ExpertCreatePayload {
 export interface WorldEntryCreatePayload {
   title: string
   category?: string
+  scope_type?: 'global' | 'chapter'
+  chapter_sequence_number?: number | null
   content: string
   rules?: Record<string, unknown> | null
   confidence?: 'low' | 'medium' | 'high'
@@ -433,6 +626,8 @@ export interface WorldEntryCreatePayload {
 export interface WorldEntryUpdatePayload {
   title?: string
   category?: string
+  scope_type?: 'global' | 'chapter'
+  chapter_sequence_number?: number | null
   content?: string
   rules?: Record<string, unknown> | null
   confidence?: 'low' | 'medium' | 'high'
@@ -441,6 +636,7 @@ export interface WorldEntryUpdatePayload {
 export interface CharacterCreatePayload {
   name: string
   role_type: 'protagonist' | 'antagonist' | 'supporting' | 'minor'
+  scope_type?: 'core' | 'recurring' | 'chapter' | 'cameo'
   profile?: string
   faction?: string
   appearance_count?: number
@@ -450,9 +646,14 @@ export interface CharacterCreatePayload {
 export interface CharacterUpdatePayload {
   name?: string
   role_type?: 'protagonist' | 'antagonist' | 'supporting' | 'minor'
+  scope_type?: 'core' | 'recurring' | 'chapter' | 'cameo'
   profile?: string
   faction?: string
   metadata?: Record<string, unknown> | null
+}
+
+export interface CharacterMergePayload {
+  target_character_id: string
 }
 
 export interface CharacterRelationCreatePayload {
@@ -467,11 +668,26 @@ export interface CharacterRelationUpdatePayload {
   description?: string
 }
 
+export interface CharacterEventUpsertPayload {
+  appearance_type?: CharacterAppearanceType
+  event_summary?: string | null
+  actions?: string[] | null
+  state_change?: string | null
+  location?: string | null
+  emotion?: string | null
+  importance?: number
+}
+
 export interface OutlineCreatePayload {
   sequence_number: number
   title: string
   summary?: string
   turning_point?: string
+  story_arc_id?: string | null
+  arc_position?: string | null
+  pacing?: string | null
+  tension_level?: number | null
+  target_scene_count?: number | null
 }
 
 export interface OutlineUpdatePayload {
@@ -479,18 +695,60 @@ export interface OutlineUpdatePayload {
   title?: string
   summary?: string
   turning_point?: string
+  story_arc_id?: string | null
+  arc_position?: string | null
+  pacing?: string | null
+  tension_level?: number | null
+  target_scene_count?: number | null
+}
+
+export interface StoryArcCreatePayload {
+  arc_type: string
+  name: string
+  summary?: string
+  goal?: string
+  main_conflict?: string
+  parent_arc_id?: string | null
+  start_chapter?: number | null
+  end_chapter?: number | null
+  order_index?: number
+  status?: string
+}
+
+export interface StoryArcUpdatePayload {
+  arc_type?: string
+  name?: string
+  summary?: string
+  goal?: string
+  main_conflict?: string
+  parent_arc_id?: string | null
+  start_chapter?: number | null
+  end_chapter?: number | null
+  order_index?: number
+  status?: string
 }
 
 export interface HiddenThreadCreatePayload {
   name: string
   description?: string
   chapter_nums?: number[]
+  status?: string
+  thread_type?: string
+  planted_chapter?: number
+  reveal_chapter?: number
 }
 
 export interface HiddenThreadUpdatePayload {
   name?: string
   description?: string
   chapter_nums?: number[]
+  status?: string
+  thread_type?: string | null
+  planted_chapter?: number | null
+  reveal_chapter?: number | null
+  resolved_chapter?: number | null
+  payoff_summary?: string | null
+  risk_level?: string | null
 }
 
 export type StructureExtractMode = 'preview' | 'apply'
@@ -507,6 +765,7 @@ export interface ExtractedOutline {
 export interface ExtractedCharacter {
   name: string
   role_type: StructureRoleType
+  scope_type?: 'core' | 'recurring' | 'chapter' | 'cameo'
   profile?: string | null
   faction?: string | null
   appearance_count?: number
@@ -516,6 +775,7 @@ export interface ExtractedCharacter {
 export interface ExtractedWorldEntry {
   title: string
   category?: string
+  scope_type?: 'global' | 'chapter'
   content: string
   rules?: Record<string, unknown> | null
   confidence?: StructureConfidence
@@ -533,12 +793,25 @@ export interface ExtractedCharacterRelation {
   description: string
 }
 
+export interface ExtractedCharacterEvent {
+  character_name: string
+  sequence_number: number
+  appearance_type?: CharacterAppearanceType
+  event_summary?: string | null
+  actions?: string[] | null
+  state_change?: string | null
+  location?: string | null
+  emotion?: string | null
+  importance?: number
+}
+
 export interface StructureExtractPayload {
   outlines?: ExtractedOutline[]
   characters?: ExtractedCharacter[]
   world_entries?: ExtractedWorldEntry[]
   hidden_threads?: ExtractedHiddenThread[]
   character_relations?: ExtractedCharacterRelation[]
+  character_events?: ExtractedCharacterEvent[]
 }
 
 export interface ChapterStructureExtractRequest {
@@ -559,6 +832,9 @@ export interface ChapterStructureExtractResponse {
 
 export type GenerateMode = 'continue' | 'full_pipeline' | 'enhance' | 'summarize'
 
+// M-1: 生成前交互模式
+export type PreGenerationMode = 'FAST' | 'PLANNING' | 'STRICT'
+
 export interface GenerateRequest {
   chapter_id?: string
   document_id?: string
@@ -569,7 +845,11 @@ export interface GenerateRequest {
   selected_character_ids?: string[]
   selected_world_entry_ids?: string[]
   selected_hidden_thread_ids?: string[]
+  include_knowledge_sources?: boolean
+  include_previous_summary?: boolean
   target_words?: number
+  selected_direction?: string
+  direction_option_id?: string
   enhance_direction?: string
   turn_direction?: string
   user_note?: string
@@ -579,6 +859,10 @@ export interface GenerateRequest {
   content_goal?: string
   tone?: string
   key_points?: string
+  planning_review?: boolean
+  // M-1: 生成前交互模式
+  pre_generation_mode?: PreGenerationMode
+  max_clarification_rounds?: number
 }
 
 export interface ArticleGenerateParams {
@@ -594,7 +878,7 @@ export interface ArticleGenerateParams {
 // ─── SSE types ───
 
 /** SSE event types emitted by the backend generate/test endpoints */
-export type SSEEventType = 'progress' | 'agent_start' | 'agent_output' | 'agent_done' | 'writer_output' | 'content_output' | 'editor_output' | 'critic_output' | 'consistency_check' | 'enhance_directions' | 'turn_suggestions' | 'content_suggestions' | 'article_review' | 'revision_suggestions' | 'skill_pack' | 'generation_record' | 'done' | 'error'
+export type SSEEventType = 'progress' | 'agent_start' | 'agent_output' | 'agent_done' | 'writer_output' | 'content_output' | 'editor_output' | 'architect_output' | 'critic_output' | 'consistency_check' | 'enhance_directions' | 'turn_suggestions' | 'content_suggestions' | 'article_review' | 'revision_suggestions' | 'skill_pack' | 'generation_record' | 'clarification_required' | 'task_card_review_required' | 'quality_check' | 'done' | 'error' | 'run_created' | 'run_status' | 'run_step'
 
 /** SSE envelope parsed from the backend stream */
 export interface SSEEnvelope {
@@ -626,6 +910,22 @@ export interface ProgressPayload {
   chapter_num?: number
 }
 
+export interface HumanEditMetrics {
+  method?: string
+  approximate?: boolean
+  edited: boolean
+  anchor_version_id?: string | null
+  human_version_id?: string | null
+  original_chars: number
+  final_chars: number
+  changed_chars: number
+  changed_original_chars?: number
+  inserted_chars?: number
+  similarity?: number | null
+  edit_ratio: number
+  computed_at?: string
+}
+
 /** Payload for done SSE event */
 export interface DonePayload {
   message: string
@@ -640,6 +940,8 @@ export interface ErrorPayload {
 export interface WriterOutputPayload {
   content?: string
   token?: string
+  /** 写手首次生成的原文；编辑和后续修订均不会覆盖它。 */
+  initial_draft?: string
 }
 
 /** Payload for critic_output SSE event (full_pipeline mode) */
@@ -648,8 +950,46 @@ export interface CriticOutputPayload {
 }
 
 /** Payload for consistency_check SSE event (full_pipeline mode) */
+export interface GuardrailIssue {
+  type?: string
+  description?: string
+  severity?: 'info' | 'low' | 'medium' | 'high' | string
+}
+
+export interface GuardrailResult {
+  issues?: GuardrailIssue[]
+  summary?: string
+  overall_severity?: 'info' | 'low' | 'medium' | 'high' | string
+  parse_error?: boolean
+  raw?: string
+}
+
 export interface ConsistencyCheckPayload {
   report?: string
+  guardrail_result?: GuardrailResult
+}
+
+// --- 写作记忆 staging ---
+export type MemoryStagingStatus = 'GENERATED' | 'CONFIRMED' | 'REJECTED'
+export type MemoryType = 'CHARACTER' | 'WORLD_RULE' | 'PLOT_FACT' | 'EVENT' | 'FORESHADOWING'
+
+export interface ApiWritingMemoryStaging {
+  id: string
+  project_id: string
+  run_id: string | null
+  chapter_id: string | null
+  chapter_version_id: string | null
+  chapter_sequence_number: number | null
+  memory_type: MemoryType | string
+  title: string
+  payload: Record<string, unknown>
+  evidence: string | null
+  status: MemoryStagingStatus | string
+  confirmed_target_type: string | null
+  confirmed_target_id: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+  created_at: string
 }
 
 /** Payload for enhance_directions SSE event */
@@ -680,12 +1020,175 @@ export interface SkillPackPayload {
   expert: string
   skill: string
   skill_dir: string
+  planner?: string
+  planner_reason?: string
+  sources?: Array<Record<string, unknown>>
+  warnings?: string[]
+  token_estimate?: number
+  truncated?: boolean
+  has_content?: boolean
 }
 
 /** Payload for generation_record SSE event */
 export interface GenerationRecordPayload {
   id: string
   status: GenerationRecordStatus
+  langfuse_trace_id?: string | null
+}
+
+// ─── Quality Check ───
+
+/** Individual quality issue from backend QualityIssue */
+export interface QualityIssuePayload {
+  code: string
+  severity: 'ERROR' | 'WARNING'
+  message: string
+  evidence?: string | null
+}
+
+/** QualityReport from backend chapter_quality.py */
+export interface QualityReportPayload {
+  stage: string
+  status: 'running' | 'passed' | 'warning' | 'retrying' | 'failed'
+  target_chars: number
+  actual_chars: number
+  min_chars: number
+  max_chars: number
+  retry_count: number
+  max_retries: number
+  similarity?: number | null
+  changed_chars?: number | null
+  requires_revision?: boolean | null
+  issues: QualityIssuePayload[]
+}
+
+// ─── Clarification Loop (生成前澄清) ───
+
+/** Clarification option */
+export interface ClarificationOption {
+  value: string
+  label: string
+  description?: string
+}
+
+/** Clarification question */
+export interface ClarificationQuestion {
+  id: string
+  type: 'single_choice' | 'multi_choice' | 'free_text' | 'number'
+  question: string
+  options?: ClarificationOption[]
+  required?: boolean
+  reason?: string
+}
+
+/** Clarification 状态响应 (GET /ai-runs/{run_id}/clarification) */
+export interface ClarificationState {
+  run_id: string
+  interrupt_id: string | null
+  status: string
+  round: number
+  max_rounds: number
+  questions: ClarificationQuestion[]
+  assumptions_if_skipped: string[]
+  existing_answers: Record<string, string>
+  clarification_summary: string
+  resolved: boolean
+}
+
+/** Clarification 提交请求 (POST /ai-runs/{run_id}/clarification-answers) */
+export interface ClarificationAnswerRequest {
+  action: 'submit' | 'skip'
+  answers: Record<string, string>
+}
+
+/** Payload for clarification_required SSE event */
+export interface ClarificationRequiredPayload {
+  run_id: string
+  interrupt_id: string | null
+  thread_id?: string
+  round: number
+  max_rounds: number
+  questions: ClarificationQuestion[]
+  assumptions_if_skipped: string[]
+  pre_generation_mode?: PreGenerationMode
+  require_answer?: boolean
+}
+
+// ─── L-1: Task Card Review ───
+
+export interface TaskCardScene {
+  title?: string
+  location?: string
+  characters?: string[]
+  scene_goal?: string
+  conflict?: string
+  must_include?: string[]
+  must_not_include?: string[]
+  word_budget?: number
+}
+
+export interface TaskCardInformationRules {
+  may_reveal?: string[]
+  hint_only?: string[]
+  forbidden?: string[]
+}
+
+export interface TaskCardPayload {
+  chapter_number?: number
+  chapter_title?: string
+  core_task?: string
+  opening_anchor?: string
+  scenes?: TaskCardScene[]
+  character_goals?: string[]
+  information_rules?: TaskCardInformationRules
+  tension_design?: string[]
+  word_budget?: number
+  forbidden?: string[]
+}
+
+export interface ClarificationEmbedded {
+  needs_clarification: boolean
+  questions: ClarificationQuestion[]
+  assumptions_if_skipped: string[]
+  round?: number
+  max_rounds?: number
+  // M-1: 模式控制字段
+  show_user_note?: boolean
+  require_answer?: boolean
+}
+
+export type TaskCardClarificationStatus = 'pending' | 'not_needed' | 'answered' | 'skipped'
+
+export interface TaskCardContextItem {
+  key: string
+  id?: string
+  label: string
+  detail?: string
+  source_type: string
+  selected?: boolean
+  excluded?: boolean
+  chapter_sequence_number?: number | null
+}
+
+export interface TaskCardContextSummary {
+  previous_chapter_ending?: string
+  excluded_context_keys?: string[]
+  outlines?: TaskCardContextItem[]
+  story_arcs?: TaskCardContextItem[]
+  characters?: TaskCardContextItem[]
+  hidden_threads?: TaskCardContextItem[]
+  world_entries?: TaskCardContextItem[]
+  confirmed_memories?: TaskCardContextItem[]
+  knowledge_sources?: TaskCardContextItem[]
+}
+
+export interface TaskCardReviewRequiredPayload {
+  task_card: TaskCardPayload
+  thread_id: string
+  pre_generation_mode?: PreGenerationMode
+  clarification?: ClarificationEmbedded | null
+  clarification_status?: TaskCardClarificationStatus
+  context_summary?: TaskCardContextSummary | null
 }
 
 // ─── Chapter Version History ───
@@ -754,18 +1257,21 @@ export type DocumentVersionDiffResponse = ChapterVersionDiffResponse
 
 // ─── AI Generation History ───
 
-export type GenerationRecordStatus = 'candidate' | 'applied' | 'discarded'
+export type GenerationRecordStatus = 'candidate' | 'applied' | 'discarded' | 'superseded'
 
 export interface ApiGenerationRecordListItem {
   id: string
   project_id: string
   chapter_id: string | null
   document_id: string | null
+  run_id?: string | null
   mode: GenerateMode
   expert_id: string | null
   direction: string | null
   word_count: number
   status: GenerationRecordStatus
+  langfuse_trace_id?: string | null
+  human_edit_metrics?: HumanEditMetrics | null
   created_at: string
 }
 
@@ -779,6 +1285,165 @@ export interface ApiGenerationRecord extends ApiGenerationRecordListItem {
   updated_at: string
 }
 
+// ==================== AI Run ====================
+
+export interface ApiRunListItem {
+  id: string
+  run_type: string
+  mode: string
+  status: string
+  current_step: string | null
+  generation_record_id: string | null
+  started_at: string | null
+  finished_at: string | null
+  created_at: string
+}
+
+export interface ApiRun extends ApiRunListItem {
+  project_id: string
+  chapter_id: string | null
+  document_id: string | null
+  user_goal: string | null
+  thread_id: string | null
+  token_usage: Record<string, unknown> | null
+  cost_usage: Record<string, unknown> | null
+  error_message: string | null
+  updated_at: string
+}
+
+export interface ApiRunStep {
+  id: string
+  run_id: string
+  step_order: number
+  step_name: string
+  agent_name: string | null
+  status: string
+  error_message: string | null
+  started_at: string | null
+  ended_at: string | null
+  llm_call_count: number
+}
+
+export interface ApiRunContextCall {
+  id: string
+  run_id: string | null
+  step_id: string | null
+  step_name: string | null
+  agent_name: string | null
+  provider: string | null
+  model: string | null
+  context_snapshot: Record<string, unknown> | null
+  context_text: string | null
+  prompt_snapshot: string | null
+  prompt_truncated: boolean
+  error_message: string | null
+  created_at: string
+}
+
+export interface ApiRunContext {
+  run_id: string
+  project_id: string
+  mode: string
+  status: string
+  workflow_key: string | null
+  calls: ApiRunContextCall[]
+}
+
+export interface RunCreatedPayload {
+  run_id: string
+  status: string
+}
+
+// ─── Run Trace (F7) ───
+
+export interface RunTraceRun {
+  id: string
+  request_id?: string | null
+  status: string
+  run_type?: string | null
+  mode?: string | null
+  workflow_key?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+  duration_ms?: number | null
+  error_message?: string | null
+}
+
+export interface RunTraceTotals {
+  llm_calls?: number | null
+  input_tokens?: number | null
+  output_tokens?: number | null
+  total_tokens?: number | null
+  cost?: number | null
+  retries?: number | null
+  estimated_calls?: number | null
+  structured_repairs?: number | null
+}
+
+export interface RunTraceFailedStep {
+  step_order: number
+  step_name: string
+  agent_name?: string | null
+  error_message?: string | null
+}
+
+export interface RunTraceStepQuality {
+  stage?: string | null
+  passed?: boolean | null
+  error_codes?: string[] | null
+}
+
+export interface RunTraceStructured {
+  schema?: string | null
+  repairs?: number | null
+  ok?: boolean | null
+}
+
+export interface RunTraceLlmCall {
+  id: string
+  agent_name?: string | null
+  model?: string | null
+  latency_ms?: number | null
+  input_tokens?: number | null
+  output_tokens?: number | null
+  total_tokens?: number | null
+  cost?: number | null
+  retries?: number | null
+  usage_estimated?: boolean | null
+  structured?: RunTraceStructured | null
+  error_message?: string | null
+  rendered_prompt_snapshot?: string | null
+  prompt_truncated?: boolean | null
+}
+
+export interface RunTraceStep {
+  step_order: number
+  step_name: string
+  node_key?: string | null
+  agent_name?: string | null
+  status: string
+  started_at?: string | null
+  ended_at?: string | null
+  duration_ms?: number | null
+  retry_count?: number | null
+  max_retry?: number | null
+  error_message?: string | null
+  quality?: RunTraceStepQuality | null
+  llm_calls?: RunTraceLlmCall[] | null
+}
+
+export interface RunTraceResponse {
+  run: RunTraceRun
+  totals?: RunTraceTotals | null
+  failed_step?: RunTraceFailedStep | null
+  truncated?: boolean | null
+  steps: RunTraceStep[]
+}
+
+export interface GetRunTraceOptions {
+  includePrompts?: boolean
+}
+
 export interface GenerationRecord {
   id: string
   projectId: string
@@ -789,8 +1454,12 @@ export interface GenerationRecord {
   direction: string | null
   wordCount: number
   status: GenerationRecordStatus
+  langfuseTraceId: string | null
+  runId: string | null
   createdAt: string
   content: string | null
+  skillPacks: SkillPackPayload[]
+  humanEditMetrics?: HumanEditMetrics | null
 }
 
 export interface GenerationRecordUpdatePayload {
@@ -806,38 +1475,206 @@ export interface GenerationRecordDiffResponse {
   diff: DiffHunk[]
 }
 
+// ─── Edit Stats ───
+
+export interface EditStatsSummary {
+  count: number
+  edited_count: number
+  mean_edit_ratio: number | null
+  median_edit_ratio: number | null
+  p90_edit_ratio: number | null
+  total_original_chars: number
+  total_changed_chars: number
+}
+
+export interface EditStatsItem {
+  generation_record_id: string
+  chapter_id?: string | null
+  chapter_sequence_number?: number | null
+  run_id?: string | null
+  mode?: string | null
+  applied_at: string
+  original_chars: number
+  final_chars: number
+  changed_chars: number
+  edit_ratio: number
+  similarity?: number | null
+  edited?: boolean
+  approximate?: boolean
+}
+
+export interface GenerationRecordEditMetricsRefreshResponse {
+  human_edit_metrics: HumanEditMetrics | null
+}
+
+export interface EditStatsResponse {
+  summary: EditStatsSummary
+  items: EditStatsItem[]
+  limit: number
+  offset: number
+}
+
+export interface EditStatsParams {
+  limit?: number
+  offset?: number
+  chapter_id?: string
+  since?: string
+  until?: string
+}
+
+export interface GenerationOriginalResponse {
+  id: string
+  content: string
+}
+
+// ─── Evaluation datasets ───
+
+export type EvaluationDatasetMode = 'creative' | 'regression' | 'prompt' | 'model'
+export type EvaluationCaseStatus = 'active' | 'disabled' | 'archived'
+export type EvaluationGenerationMode = 'generate_and_judge' | 'judge_only'
+export type EvaluationRunStatus = 'running' | 'completed' | 'partial' | 'failed'
+
+export interface ApiEvaluationDataset {
+  id: string
+  project_id: string
+  name: string
+  description: string | null
+  mode: EvaluationDatasetMode
+  status: 'active' | 'archived'
+  case_count: number
+  run_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface EvaluationDatasetCreatePayload {
+  name: string
+  description?: string | null
+  mode?: EvaluationDatasetMode
+}
+
+export interface EvaluationDatasetUpdatePayload {
+  name?: string
+  description?: string | null
+  status?: 'active' | 'archived'
+}
+
+export interface ApiEvaluationCase {
+  id: string
+  dataset_id: string
+  project_id: string
+  name: string
+  task_type: string
+  input_text: string
+  actual_output: string | null
+  reference_output: string | null
+  expected_properties: string[] | null
+  rubric: Record<string, string> | null
+  tags: string[] | null
+  status: EvaluationCaseStatus
+  created_at: string
+  updated_at: string
+}
+
+export interface EvaluationCaseCreatePayload {
+  name: string
+  task_type?: string
+  input_text?: string
+  actual_output?: string | null
+  reference_output?: string | null
+  expected_properties?: string[] | null
+  rubric?: Record<string, string> | null
+  tags?: string[] | null
+}
+
+export interface EvaluationCaseUpdatePayload extends Partial<EvaluationCaseCreatePayload> {
+  status?: EvaluationCaseStatus
+}
+
+export interface ApiEvaluationResult {
+  id: string
+  run_id: string
+  case_id: string
+  project_id: string
+  generated_output: string | null
+  scores: Record<string, number> | null
+  score: number | null
+  passed: boolean | null
+  feedback: string | null
+  error: string | null
+  latency_ms: number | null
+  langfuse_trace_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ApiEvaluationRun {
+  id: string
+  dataset_id: string
+  project_id: string
+  name: string
+  generation_mode: EvaluationGenerationMode
+  status: EvaluationRunStatus
+  model_provider: string | null
+  model_id: string | null
+  total_cases: number
+  completed_cases: number
+  failed_cases: number
+  average_score: number | null
+  summary: string | null
+  results: ApiEvaluationResult[]
+  created_at: string
+  updated_at: string
+}
+
+export interface EvaluationRunCreatePayload {
+  name?: string | null
+  generation_mode?: EvaluationGenerationMode
+  case_ids?: string[] | null
+}
+
 // ─── LLM Settings types ───
 
 export type LLMProviderName = 'mock' | 'openai' | 'deepseek' | 'siliconflow' | 'zhipu' | 'moonshot' | 'qwen' | 'yi' | 'minimax' | 'custom'
 
 export interface LLMConfigResponse {
-  id: string
+  id: string | null
+  name: string
   provider: LLMProviderName
   api_key_set: boolean
+  /** 后端生成的安全掩码；完整 API Key 永不返回浏览器。 */
+  api_key_masked?: string | null
   base_url: string | null
   model_id: string | null
-  created_at: string
-  updated_at: string
+  is_active: boolean
+  source: 'user' | 'environment'
+  created_at: string | null
+  updated_at: string | null
 }
 
 export interface LLMConfigCreatePayload {
+  name: string
   provider: LLMProviderName
   api_key?: string
   base_url?: string | null
   model_id?: string | null
+  is_active?: boolean
 }
 
 export interface LLMConfigUpdatePayload {
+  name?: string
   provider?: LLMProviderName
   api_key?: string | null
   base_url?: string | null
   model_id?: string | null
+  is_active?: boolean
 }
 
 export interface ModelListRequest {
-  provider: LLMProviderName
-  api_key: string
+  provider?: LLMProviderName
+  api_key?: string
   base_url?: string | null
+  config_id?: string | null
 }
 
 export interface ModelInfo {
@@ -847,6 +1684,8 @@ export interface ModelInfo {
 
 export interface LLMStatusResponse {
   has_config: boolean
+  config_id: string | null
+  config_name: string
   provider: string
   model_id: string | null
   has_api_key: boolean

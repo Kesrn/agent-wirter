@@ -8,12 +8,18 @@ import VersionHistoryPanel from './VersionHistoryPanel.vue'
 import DocumentRevisionPanel from './DocumentRevisionPanel.vue'
 import GenerationHistoryPanel from './GenerationHistoryPanel.vue'
 import VersionDiffViewer from './VersionDiffViewer.vue'
+import BaseSelect from './BaseSelect.vue'
 import { renderMarkdown } from '../utils/markdown'
 import { formatNovelChapterTitle } from '../utils/chapterTitle'
 
 const props = defineProps<{
   projectId: string
   mode: ProjectMode
+}>()
+
+// 补锁 3：编辑器选中文本 / 光标所在段落上报（供对话意图理解"改这段/改选中部分"）
+const emit = defineEmits<{
+  selectionChange: [payload: { selection: string | null; currentParagraph: string | null }]
 }>()
 
 const chapterStore = useChapterStore()
@@ -24,6 +30,7 @@ const revisionStore = useDocumentRevisionStore()
 const generationHistoryStore = useGenerationHistoryStore()
 const currentUnit = computed(() => props.mode === 'article' ? documentStore.currentDocumentForProject(props.projectId) : chapterStore.currentChapterForProject(props.projectId))
 const currentDraftText = computed(() => currentUnit.value?.draft ?? currentUnit.value?.final_text ?? '')
+const currentWordCount = computed(() => countWritingWords(currentDraftText.value))
 const saving = computed(() => props.mode === 'article' ? documentStore.saving : chapterStore.saving)
 const unitLabel = computed(() => props.mode === 'article' ? '稿件' : '章节')
 const diffResult = computed(() => showGenerationPanel.value ? generationHistoryStore.diffResult : (props.mode === 'article' ? revisionStore.diffResult : versionStore.diffResult))
@@ -37,6 +44,10 @@ const articleViewMode = ref<'edit' | 'preview' | 'split'>('edit')
 const canUseFormatting = computed(() => props.mode === 'article' && articleViewMode.value !== 'preview')
 const articlePreviewEmpty = computed(() => !currentDraftText.value.trim())
 const articlePreviewHtml = computed(() => articlePreviewEmpty.value ? '' : renderMarkdown(currentDraftText.value))
+
+function countWritingWords(text: string): number {
+  return text.replace(/\s+/g, '').length
+}
 
 function unitPosition(unit: WritingUnit): number {
   return 'position' in unit ? unit.position : unit.chapter_num
@@ -96,7 +107,7 @@ async function handleApplyGeneration(recordId: string, content: string) {
   dirty.value = true
   await generationHistoryStore.updateRecordStatus(props.projectId, recordId, 'applied')
   ui.showToast('已应用到编辑器，请确认后保存', 'success')
-  nextTick(syncTextareaHeight)
+  nextTick(() => syncTextareaHeight())
 }
 
 async function handleRestoreVersion(_versionId: string, content: string) {
@@ -181,23 +192,62 @@ function cancelAutoSave() {
 
 onUnmounted(() => cancelAutoSave())
 
-function syncTextareaHeight() {
+let textareaResizeObserver: ResizeObserver | null = null
+let observedTextareaParent: HTMLElement | null = null
+let saveRequestDisposer: (() => void) | undefined
+
+function observeTextareaParent(parent: HTMLElement) {
+  if (typeof ResizeObserver === 'undefined') return
+  if (!textareaResizeObserver) {
+    textareaResizeObserver = new ResizeObserver(() => {
+      requestAnimationFrame(() => syncTextareaHeight())
+    })
+  }
+  if (observedTextareaParent === parent) return
+  if (observedTextareaParent) textareaResizeObserver.unobserve(observedTextareaParent)
+  observedTextareaParent = parent
+  textareaResizeObserver.observe(parent)
+}
+
+function syncTextareaHeight(preserveScroll = true, scrollSnapshot?: ReturnType<typeof snapshotEditorScroll>) {
   const el = textareaRef.value
   const parent = el?.parentElement
   if (!el || !parent) return
 
+  const scroller = parent.classList.contains('editor-content')
+    ? parent
+    : el.closest('.editor-content') as HTMLElement | null
+  const activeScrollSnapshot = scrollSnapshot ?? pendingEditorScroll
+  const preservedScroller = activeScrollSnapshot?.scroller ?? scroller
+  const scrollTop = activeScrollSnapshot?.scrollTop ?? (preserveScroll ? scroller?.scrollTop ?? 0 : null)
+  const scrollLeft = activeScrollSnapshot?.scrollLeft ?? (preserveScroll ? scroller?.scrollLeft ?? 0 : null)
+
+  observeTextareaParent(parent)
   const parentStyle = window.getComputedStyle(parent)
   const verticalPadding =
     parseFloat(parentStyle.paddingTop || '0') + parseFloat(parentStyle.paddingBottom || '0')
-  if (props.mode === 'novel') {
-    const fillHeight = Math.max(360, parent.clientHeight - verticalPadding)
-    el.style.height = `${fillHeight}px`
-    return
-  }
-
-  const minHeight = Math.max(320, parent.clientHeight - verticalPadding)
+  const baseMinHeight = props.mode === 'novel' ? 360 : 320
+  const minHeight = Math.max(baseMinHeight, parent.clientHeight - verticalPadding)
   el.style.height = 'auto'
-  el.style.height = `${Math.max(minHeight, el.scrollHeight)}px`
+  // 全局使用 border-box。scrollHeight 包含 padding、但不包含 border；
+  // 同时向上取整，避免字体行高产生小数像素时最后一行被圆角边框裁掉。
+  const borderBoxAdjustment = el.offsetHeight - el.clientHeight
+  const contentHeight = Math.ceil(el.scrollHeight + borderBoxAdjustment)
+  el.style.height = `${Math.max(minHeight, contentHeight)}px`
+
+  // 重新测量高度会改变 editor-content 的 scrollHeight；浏览器可能因此
+  // 触发滚动锚定，把正在编辑的位置拉回顶部。恢复编辑器滚动位置，
+  // 让输入时的视角由用户和光标位置决定，而不是由布局测量决定。
+  if (preservedScroller && scrollTop != null && scrollLeft != null) {
+    const restoreScroll = () => {
+      if (!preservedScroller.isConnected) return
+      preservedScroller.scrollTop = scrollTop
+      preservedScroller.scrollLeft = scrollLeft
+    }
+    restoreScroll()
+    // 某些浏览器会在本次布局提交后再次执行滚动锚定，下一帧再恢复一次。
+    requestAnimationFrame(restoreScroll)
+  }
 }
 
 // Detect external draft changes (for example, applying an AI candidate from AgentPanel)
@@ -205,7 +255,7 @@ let lastKnownDraft = ''
 let lastUnitId = ''
 watch(currentUnit, (unit) => {
   if (!unit) return
-  // Reset tracking when switching writing units
+  // 切换章节：清空面板状态，不继承上一章的滚动位置，重置到新章节顶部。
   if (unit.id !== lastUnitId) {
     lastUnitId = unit.id
     lastKnownDraft = unit.draft
@@ -214,15 +264,29 @@ watch(currentUnit, (unit) => {
     generationHistoryStore.clearState()
     showDiffViewer.value = false
     showGenerationPanel.value = false
-    nextTick(syncTextareaHeight)
+    nextTick(() => syncTextareaHeight(false))
     return
   }
+  // 保存后 store 会用后端返回对象替换当前章节（id 不变、对象引用变化）。
+  // 即使正文未变化，也要恢复 textarea 高度，让外层 editor-content 继续作为
+  // 唯一滚动层；同时必须保留当前滚动位置，否则保存后视角会被重置到顶部。
+  nextTick(() => syncTextareaHeight())
   if (unit.draft !== lastKnownDraft) {
     lastKnownDraft = unit.draft
     dirty.value = true
-    nextTick(syncTextareaHeight)
+    nextTick(() => syncTextareaHeight())
   }
 }, { immediate: true })
+
+// AI 候选稿可能直接修改 Pinia 中的 draft 对象，而不是替换整个章节对象。
+// 这类更新不会触发上面的 watch(currentUnit)，必须按正文值重新测量高度，
+// 否则新增加的末尾内容会落在旧 textarea 高度之外，被底部圆角裁切。
+watch(currentDraftText, () => {
+  nextTick(() => {
+    syncTextareaHeight()
+    requestAnimationFrame(() => syncTextareaHeight())
+  })
+}, { flush: 'post' })
 
 // Warn before leaving with unsaved changes
 onBeforeRouteLeave(() => {
@@ -236,36 +300,76 @@ onBeforeRouteLeave(() => {
 
 // Font switcher (novel mode)
 const FONT_OPTIONS = [
-  { label: '衬线', value: 'var(--font-serif)' },
-  { label: '宋体', value: "'Songti SC', 'SimSun', serif" },
-  { label: '黑体', value: "'PingFang SC', 'Microsoft YaHei', sans-serif" },
+  { label: '宋体', value: 'var(--editor-font)' },
+  { label: '黑体', value: 'var(--font-sans)' },
   { label: '等宽', value: 'var(--font-mono)' },
 ]
-const selectedFont = ref('var(--font-serif)')
+const HEADING_OPTIONS = [
+  { label: '正文', value: 'paragraph' },
+  { label: 'H1', value: '1' },
+  { label: 'H2', value: '2' },
+  { label: 'H3', value: '3' },
+]
+const selectedFont = ref('var(--editor-font)')
 
 onMounted(() => {
   const saved = localStorage.getItem('novel_font_family')
-  if (saved) selectedFont.value = saved
+  if (saved) {
+    if (saved === 'var(--font-serif)' || saved.includes('Songti') || saved.includes('SimSun')) {
+      selectedFont.value = 'var(--editor-font)'
+    } else {
+      selectedFont.value = saved
+    }
+  }
   const savedArticleView = localStorage.getItem('article_markdown_view')
   if (isArticleViewMode(savedArticleView)) articleViewMode.value = savedArticleView
-  window.addEventListener('resize', syncTextareaHeight)
-  nextTick(syncTextareaHeight)
+  window.addEventListener('resize', handleEditorResize)
+  window.addEventListener('keydown', handleGlobalKeydown)
+  // Electron 桌面端：主进程在浏览器进程层捕获 Cmd/Ctrl+S 后通过 IPC 通知；
+  // 浏览器环境下 desktopApp 不存在，仍由上面的 window keydown 兜底。
+  saveRequestDisposer = window.desktopApp?.onSaveRequested?.(handleManualSave)
+  nextTick(() => syncTextareaHeight())
+  // 字体加载完成后字宽/行高可能发生变化；初次测量过早会让长正文末尾再次被裁切。
+  if (document.fonts?.ready) {
+    void document.fonts.ready.then(() => {
+      nextTick(() => {
+        syncTextareaHeight()
+        requestAnimationFrame(() => syncTextareaHeight())
+      })
+    })
+  }
 })
-onUnmounted(() => window.removeEventListener('resize', syncTextareaHeight))
+onUnmounted(() => {
+  window.removeEventListener('resize', handleEditorResize)
+  window.removeEventListener('keydown', handleGlobalKeydown)
+  saveRequestDisposer?.()
+  saveRequestDisposer = undefined
+  textareaResizeObserver?.disconnect()
+  textareaResizeObserver = null
+  observedTextareaParent = null
+})
 
 function setFont(value: string) {
   selectedFont.value = value
   localStorage.setItem('novel_font_family', value)
+  nextTick(() => {
+    syncTextareaHeight()
+    requestAnimationFrame(() => syncTextareaHeight())
+  })
 }
 
 function setArticleViewMode(mode: 'edit' | 'preview' | 'split') {
   articleViewMode.value = mode
   localStorage.setItem('article_markdown_view', mode)
-  nextTick(syncTextareaHeight)
+  nextTick(() => syncTextareaHeight())
 }
 
 function isArticleViewMode(value: string | null): value is 'edit' | 'preview' | 'split' {
   return value === 'edit' || value === 'preview' || value === 'split'
+}
+
+function handleEditorResize() {
+  syncTextareaHeight()
 }
 
 // Rich text toolbar (article mode)
@@ -307,6 +411,8 @@ function snapshotEditorScroll(el: HTMLTextAreaElement) {
   }
 }
 
+let pendingEditorScroll: ReturnType<typeof snapshotEditorScroll> | null = null
+
 function restoreEditorScroll(snapshot: ReturnType<typeof snapshotEditorScroll>, el?: HTMLTextAreaElement | null) {
   if (snapshot.scroller) {
     snapshot.scroller.scrollTop = snapshot.scrollTop
@@ -317,6 +423,17 @@ function restoreEditorScroll(snapshot: ReturnType<typeof snapshotEditorScroll>, 
     el.scrollLeft = snapshot.textareaScrollLeft
   }
   window.scrollTo(snapshot.windowX, snapshot.windowY)
+}
+
+function holdEditorScroll(snapshot: ReturnType<typeof snapshotEditorScroll>) {
+  pendingEditorScroll = snapshot
+  requestAnimationFrame(() => {
+    restoreEditorScroll(snapshot, textareaRef.value)
+    requestAnimationFrame(() => {
+      restoreEditorScroll(snapshot, textareaRef.value)
+      if (pendingEditorScroll === snapshot) pendingEditorScroll = null
+    })
+  })
 }
 
 function pushEditorHistory(previousText: string) {
@@ -359,16 +476,20 @@ function applyEditorText(
   if (recordHistory && nextText !== previousText) {
     pushEditorHistory(previousText)
   }
+  const scrollSnapshot = textareaRef.value ? snapshotEditorScroll(textareaRef.value) : null
+  if (scrollSnapshot) pendingEditorScroll = scrollSnapshot
   updateCurrentDraft(nextText)
   scheduleAutoSave()
-  const scrollSnapshot = textareaRef.value ? snapshotEditorScroll(textareaRef.value) : null
   requestAnimationFrame(() => {
     const el = textareaRef.value
-    syncTextareaHeight()
+    syncTextareaHeight(true, scrollSnapshot ?? undefined)
     if (!el) return
     el.focus({ preventScroll: true })
     el.setSelectionRange(selectionStart, selectionEnd)
-    if (scrollSnapshot) restoreEditorScroll(scrollSnapshot, el)
+    if (scrollSnapshot) {
+      restoreEditorScroll(scrollSnapshot, el)
+      holdEditorScroll(scrollSnapshot)
+    }
   })
 }
 
@@ -400,6 +521,21 @@ function selectedLineRange(text: string, start: number, end: number) {
   }
 }
 
+/** 补锁 3：上报选中文本与光标所在段落（供对话意图理解上下文） */
+function reportSelection() {
+  const el = textareaRef.value
+  if (!el) return
+  const text = el.value
+  const start = el.selectionStart
+  const end = el.selectionEnd
+  const selected = end > start ? text.slice(start, end) : ''
+  const { block } = selectedLineRange(text, start, end)
+  emit('selectionChange', {
+    selection: selected.trim() || null,
+    currentParagraph: block.trim() || null,
+  })
+}
+
 function transformSelectedLines(transform: (line: string, index: number) => string) {
   const el = textareaRef.value
   if (!el) return
@@ -417,12 +553,9 @@ function setHeading(level: number | null) {
   })
 }
 
-function handleHeadingChange(event: Event) {
-  const select = event.target as HTMLSelectElement
-  const value = select.value
+function handleHeadingSelect(value: string) {
   if (value === 'paragraph') setHeading(null)
   else setHeading(Number(value))
-  select.value = 'heading'
 }
 
 function insertQuote() {
@@ -621,7 +754,7 @@ async function handleImageSelected(event: Event) {
     const nextText = text.slice(0, selection.start) + replacement + text.slice(selection.end)
     applyEditorText(nextText, selection.start + replacement.length, selection.start + replacement.length)
     ui.showToast('图片已插入', 'success')
-    if (!el) nextTick(syncTextareaHeight)
+    if (!el) nextTick(() => syncTextareaHeight())
   } catch (e: unknown) {
     ui.showToast(friendlyError(e, '图片上传失败'), 'error')
   } finally {
@@ -711,6 +844,17 @@ function handleEditorKeydown(event: KeyboardEvent) {
   }
 }
 
+// Cmd/Ctrl+S 全局保存：挂在 window 上，焦点不在 textarea（例如侧栏、预览区）
+// 时也能保存；preventDefault 同时拦截浏览器默认的“保存网页”行为。
+function handleGlobalKeydown(event: KeyboardEvent) {
+  if (event.isComposing) return
+  const mod = event.metaKey || event.ctrlKey
+  if (!mod || event.key.toLowerCase() !== 's') return
+  event.preventDefault()
+  if (!currentUnit.value || saving.value) return
+  handleManualSave()
+}
+
 function handleCompositionStart() {
   isComposing.value = true
   compositionBaseText.value = currentEditorText()
@@ -718,13 +862,18 @@ function handleCompositionStart() {
 
 function handleCompositionEnd(e: CompositionEvent) {
   const nextText = (e.target as HTMLTextAreaElement).value
+  const scrollSnapshot = textareaRef.value ? snapshotEditorScroll(textareaRef.value) : null
+  if (scrollSnapshot) pendingEditorScroll = scrollSnapshot
   isComposing.value = false
   if (nextText !== compositionBaseText.value) {
     clearTypingSnapshot()
     pushEditorHistory(compositionBaseText.value)
   }
   updateCurrentDraft(nextText)
-  syncTextareaHeight()
+  syncTextareaHeight(true, scrollSnapshot ?? undefined)
+  if (scrollSnapshot) {
+    holdEditorScroll(scrollSnapshot)
+  }
   scheduleAutoSave()
   compositionBaseText.value = ''
 }
@@ -733,11 +882,16 @@ function onTextareaInput(e: Event) {
   const previousText = currentEditorText()
   const inputEvent = e as InputEvent
   const nextText = (e.target as HTMLTextAreaElement).value
+  const scrollSnapshot = textareaRef.value ? snapshotEditorScroll(textareaRef.value) : null
+  if (scrollSnapshot) pendingEditorScroll = scrollSnapshot
   if (!isComposing.value && !inputEvent.isComposing && nextText !== previousText) {
     markTypingHistory(previousText)
   }
   updateCurrentDraft(nextText)
-  syncTextareaHeight()
+  syncTextareaHeight(true, scrollSnapshot ?? undefined)
+  if (scrollSnapshot) {
+    holdEditorScroll(scrollSnapshot)
+  }
   scheduleAutoSave()
 }
 </script>
@@ -751,10 +905,13 @@ function onTextareaInput(e: Event) {
       <span v-if="currentUnit" class="editor-status" :class="currentUnit.status">
         {{ currentUnit.status === 'final' ? '终稿' : currentUnit.status === 'reviewing' ? '审核中' : '草稿' }}
       </span>
+      <span v-if="currentUnit" class="editor-word-count" aria-label="当前正文字数">
+        {{ currentWordCount.toLocaleString('zh-CN') }} 字
+      </span>
       <span v-if="!currentUnit" class="editor-title">选择一个{{ unitLabel }}开始写作</span>
 
       <!-- Save button -->
-      <button v-if="currentUnit" class="btn-save" :disabled="saving" @click="handleManualSave">
+      <button v-if="currentUnit" class="btn-save" :disabled="saving" title="保存 (⌘S / Ctrl+S)" @click="handleManualSave">
         {{ saving ? '保存中...' : '保存' }}
       </button>
       <span v-if="dirty && !saving" class="dirty-indicator">未保存</span>
@@ -771,9 +928,13 @@ function onTextareaInput(e: Event) {
 
       <!-- Font switcher (novel mode only) -->
       <div v-if="mode === 'novel' && currentUnit" class="font-switcher">
-        <select v-model="selectedFont" @change="setFont(selectedFont)" class="font-select">
-          <option v-for="f in FONT_OPTIONS" :key="f.value" :value="f.value">{{ f.label }}</option>
-        </select>
+        <BaseSelect
+          v-model="selectedFont"
+          class="font-select"
+          :options="FONT_OPTIONS"
+          compact
+          @change="(value: string) => setFont(value)"
+        />
       </div>
 
       <!-- Rich text toolbar (article mode only) -->
@@ -805,13 +966,15 @@ function onTextareaInput(e: Event) {
           <button class="tb-btn" :disabled="editorHistory.length === 0" @click="undoEdit" title="撤销">↶</button>
           <button class="tb-btn" :disabled="editorRedoStack.length === 0" @click="redoEdit" title="重做">↷</button>
         </div>
-        <select class="tb-select" value="heading" title="段落样式" :disabled="!canUseFormatting" @change="handleHeadingChange">
-          <option value="heading" disabled>段落</option>
-          <option value="paragraph">正文</option>
-          <option value="1">H1</option>
-          <option value="2">H2</option>
-          <option value="3">H3</option>
-        </select>
+        <BaseSelect
+          class="tb-select"
+          model-value="paragraph"
+          title="段落样式"
+          :options="HEADING_OPTIONS"
+          :disabled="!canUseFormatting"
+          compact
+          @change="handleHeadingSelect"
+        />
         <div class="tb-group">
           <button class="tb-btn tb-bold" :disabled="!canUseFormatting" @click="insertBold" title="加粗">B</button>
           <button class="tb-btn tb-italic" :disabled="!canUseFormatting" @click="insertItalic" title="斜体">I</button>
@@ -867,6 +1030,9 @@ function onTextareaInput(e: Event) {
             @keydown="handleEditorKeydown"
             @compositionstart="handleCompositionStart"
             @compositionend="handleCompositionEnd"
+            @select="reportSelection"
+            @keyup="reportSelection"
+            @click="reportSelection"
             :placeholder="`${unitLabel}正文...`"
           />
           <article
@@ -914,7 +1080,7 @@ function onTextareaInput(e: Event) {
       :diff="diffResult.diff"
       @close="handleCloseDiff"
     />
-    <div v-if="showLinkDialog" class="link-dialog-overlay" @click.self="closeLinkDialog">
+    <div v-if="showLinkDialog" class="link-dialog-overlay">
       <form class="link-dialog" @submit.prevent="confirmLinkInsert">
         <div class="link-dialog-header">
           <h3>插入链接</h3>
@@ -961,17 +1127,18 @@ function onTextareaInput(e: Event) {
 .editor-header {
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-5);
-  background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
-  border-bottom: 1px solid var(--border);
+  gap: 10px;
+  min-height: 58px;
+  padding: 10px 24px;
+  background: color-mix(in srgb, var(--bg-panel) 68%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   flex-wrap: wrap;
   flex-shrink: 0;
-  box-shadow: 0 1px 0 rgba(17, 24, 39, 0.03);
-  backdrop-filter: blur(10px);
+  box-shadow: none;
+  backdrop-filter: blur(16px);
 }
 .editor-title {
-  font-weight: 720;
+  font-weight: 780;
   font-size: var(--text-base);
   color: var(--text);
 }
@@ -979,20 +1146,34 @@ function onTextareaInput(e: Event) {
   font-size: 10px;
   font-weight: 700;
   padding: 3px 8px;
-  border-radius: 8px;
+  border-radius: 999px;
 }
 .editor-status.draft { background: var(--status-draft-bg); color: var(--status-draft); }
 .editor-status.reviewing { background: var(--status-reviewing-bg); color: var(--status-reviewing); }
 .editor-status.final { background: var(--status-final-bg); color: var(--status-final); }
+.editor-word-count {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-sidebar) 82%, transparent);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
 
 /* Save button */
 .btn-save {
   margin-left: var(--sp-2);
-  padding: var(--sp-1) var(--sp-3);
+  height: 34px;
+  padding: 0 16px;
   background: var(--accent);
   color: var(--text-inverse);
   border: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
+  border-radius: 10px;
   font-size: var(--text-xs);
   font-weight: 700;
   cursor: pointer;
@@ -1018,11 +1199,12 @@ function onTextareaInput(e: Event) {
 /* Version history toggle */
 .btn-version-toggle {
   margin-left: var(--sp-2);
-  padding: var(--sp-1) var(--sp-3);
-  background: var(--bg-panel);
+  height: 34px;
+  padding: 0 14px;
+  background: color-mix(in srgb, var(--bg-panel) 70%, transparent);
   color: var(--text-secondary);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: 10px;
   font-size: var(--text-xs);
   font-weight: 650;
   cursor: pointer;
@@ -1044,13 +1226,8 @@ function onTextareaInput(e: Event) {
   margin-left: auto;
 }
 .font-select {
-  font-size: var(--text-xs);
-  padding: var(--sp-1) var(--sp-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-panel);
-  color: var(--text-secondary);
-  cursor: pointer;
+  width: 96px;
+  min-width: 96px;
 }
 
 /* Rich text toolbar */
@@ -1070,8 +1247,8 @@ function onTextareaInput(e: Event) {
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg-sidebar) 72%, var(--bg-panel));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-sidebar) 82%, var(--bg-panel));
   box-shadow: var(--shadow-sm);
 }
 .view-segment {
@@ -1079,8 +1256,8 @@ function onTextareaInput(e: Event) {
   align-items: center;
   padding: 2px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg-sidebar) 72%, var(--bg-panel));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-sidebar) 82%, var(--bg-panel));
   box-shadow: var(--shadow-sm);
 }
 .view-segment-btn {
@@ -1088,7 +1265,7 @@ function onTextareaInput(e: Event) {
   height: 26px;
   padding: 0 var(--sp-2);
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 8px;
   background: transparent;
   color: var(--text-secondary);
   font-size: var(--text-xs);
@@ -1103,20 +1280,9 @@ function onTextareaInput(e: Event) {
   color: var(--text-inverse);
 }
 .tb-select {
-  height: 30px;
-  min-width: 72px;
-  padding: 0 var(--sp-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-panel);
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  font-weight: 650;
-  cursor: pointer;
-}
-.tb-select:disabled {
-  opacity: 0.42;
-  cursor: not-allowed;
+  flex: 0 0 auto;
+  width: 74px;
+  min-width: 74px;
 }
 .tb-btn {
   display: inline-flex;
@@ -1127,7 +1293,7 @@ function onTextareaInput(e: Event) {
   padding: 0;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 8px;
   font-size: var(--text-xs);
   font-weight: 700;
   color: var(--text-secondary);
@@ -1136,8 +1302,7 @@ function onTextareaInput(e: Event) {
   line-height: 1;
   white-space: nowrap;
 }
-.tb-btn:hover:not(:disabled),
-.tb-select:hover {
+.tb-btn:hover:not(:disabled) {
   background: var(--bg-hover);
   border-color: var(--border-focus);
   color: var(--accent);
@@ -1166,8 +1331,8 @@ function onTextareaInput(e: Event) {
   align-items: center;
   justify-content: center;
   padding: var(--sp-4);
-  background: color-mix(in srgb, #0f172a 42%, transparent);
-  backdrop-filter: blur(4px);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
 }
 .link-dialog {
   width: min(420px, 100%);
@@ -1236,7 +1401,7 @@ function onTextareaInput(e: Event) {
 }
 .link-dialog-error {
   margin: 0 0 var(--sp-3);
-  color: var(--status-error, #dc2626);
+  color: var(--status-error);
   font-size: var(--text-xs);
 }
 .link-dialog-actions {
@@ -1273,27 +1438,32 @@ function onTextareaInput(e: Event) {
 }
 
 .editor-body {
-  flex: 1;
+  flex: 1 1 0;
   overflow: hidden;
   display: flex;
+  flex-direction: row;
   background:
-    radial-gradient(circle at 50% 0, color-mix(in srgb, var(--bg-panel) 36%, transparent), transparent 44%),
-    var(--paper-stage, #eceff3);
+    radial-gradient(circle at 50% 0, color-mix(in srgb, var(--accent) 8%, transparent), transparent 42%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-panel) 16%, transparent), transparent 28%),
+    var(--paper-stage);
   min-height: 0;
   min-width: 0;
+  position: relative;
 }
 .editor-content {
-  flex: 1;
-  overflow: auto;
+  flex: 1 1 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   min-width: 0;
   min-height: 0;
-  padding: var(--sp-6) var(--sp-6) calc(var(--sp-6) + 88px);
+  padding: 34px 42px 112px;
   scroll-padding-bottom: 96px;
 }
 .editor-content.novel-content {
-  padding: var(--sp-4) var(--sp-5);
-  scroll-padding-bottom: var(--sp-4);
+  padding: 28px 42px 96px;
+  scroll-padding-bottom: 80px;
 }
 .editor-content.with-panel {
   flex: 1;
@@ -1312,26 +1482,30 @@ function onTextareaInput(e: Event) {
 }
 .editor-textarea {
   display: block;
-  width: min(860px, 100%);
+  max-width: var(--editor-width);
+  width: min(var(--editor-width), 100%);
   min-height: 320px;
   margin: 0 auto;
-  padding: 56px 64px 112px;
-  border: 1px solid var(--paper-border, rgba(148, 163, 184, 0.22));
-  border-radius: var(--paper-radius);
+  padding: 52px 66px 112px;
+  border: 1px solid var(--paper-border);
+  border-radius: var(--radius-lg, 12px);
   resize: none;
-  overflow-y: auto;
+  overflow-y: hidden;
   overflow-x: hidden;
   overflow-anchor: none;
-  font-size: var(--text-lg);
-  line-height: 2;
+  font-family: var(--editor-font);
+  font-size: var(--editor-size);
+  line-height: var(--editor-lh);
+  letter-spacing: 0.01em;
   color: var(--text);
-  background:
-    linear-gradient(90deg, rgba(239, 68, 68, 0.14) 0 1px, transparent 1px) 46px 0 / 1px 100% no-repeat,
-    repeating-linear-gradient(to bottom, var(--paper-bg) 0, var(--paper-bg) 37px, var(--paper-line) 38px),
-    var(--paper-bg);
+  background: var(--paper-bg);
   outline: none;
   box-shadow: var(--paper-shadow);
   caret-color: var(--accent);
+}
+.editor-textarea::selection {
+  background: var(--accent-subtle);
+  color: var(--text);
 }
 .editor-textarea:focus {
   border-color: color-mix(in srgb, var(--accent) 42%, var(--paper-border));
@@ -1340,7 +1514,7 @@ function onTextareaInput(e: Event) {
     0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 .novel-content .editor-textarea {
-  padding: 36px 56px 48px;
+  padding: 36px 56px 104px;
 }
 .article-content .editor-textarea {
   font-size: var(--text-base);
@@ -1357,12 +1531,13 @@ function onTextareaInput(e: Event) {
   margin: 0;
 }
 .markdown-preview {
-  width: min(860px, 100%);
+  max-width: var(--editor-width);
+  width: min(var(--editor-width), 100%);
   min-height: 100%;
   margin: 0 auto;
   padding: 56px 64px 112px;
-  border: 1px solid var(--paper-border, rgba(148, 163, 184, 0.22));
-  border-radius: var(--paper-radius);
+  border: 1px solid var(--paper-border);
+  border-radius: var(--radius-lg, 12px);
   background: var(--paper-bg);
   color: var(--text);
   box-shadow: var(--paper-shadow);
@@ -1518,12 +1693,10 @@ function onTextareaInput(e: Event) {
 
   .editor-textarea {
     width: 100%;
-    padding: var(--sp-5) var(--sp-4) 96px;
-    font-size: var(--text-base);
-    line-height: 1.9;
-    background:
-      repeating-linear-gradient(to bottom, var(--paper-bg) 0, var(--paper-bg) 35px, var(--paper-line) 36px),
-      var(--paper-bg);
+    padding: var(--sp-5) var(--sp-4) 104px;
+    font-size: var(--editor-size);
+    line-height: var(--editor-lh);
+    background: var(--paper-bg);
   }
 
   .editor-content.article-content {

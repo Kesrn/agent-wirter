@@ -1,278 +1,468 @@
-"""LLM Provider 抽象层
+"""LLM Provider abstraction for OpenAI-compatible APIs and test mocks."""
 
-支持 mock / openai / deepseek / siliconflow / zhipu / moonshot / qwen / yi / minimax / custom。
-所有非 mock 厂商均走 OpenAI 兼容 API。
-默认 mock，无需 API key 即可运行。
-"""
+from __future__ import annotations
 
 import asyncio
-import logging
-from abc import ABC, abstractmethod
-from typing import AsyncIterator
 import json
-import re
+import logging
+import random
+import time
+from abc import ABC, abstractmethod
+from contextvars import ContextVar
+from typing import Any, AsyncIterator
 
+import httpx
+from openai import APIConnectionError, APIStatusError, APITimeoutError
+
+from agents.llm_types import LLMResult, TokenUsage, ToolCall, ToolSpec
 from config.settings import settings
+from observability.langfuse import current_langfuse_metadata, get_langfuse_async_openai_class
+from utils.crypto import decrypt_api_key
 
 logger = logging.getLogger(__name__)
 
+# LoggedLLMProvider creates a fresh mapping in each call context. Providers update it
+# with retry and finish metadata without sharing mutable state between concurrent calls.
+_CALL_METADATA: ContextVar[dict[str, Any] | None] = ContextVar("llm_call_metadata", default=None)
+
+
+def _set_call_metadata(**values: Any) -> None:
+    metadata = _CALL_METADATA.get()
+    if metadata is None:
+        metadata = {}
+        _CALL_METADATA.set(metadata)
+    metadata.update(values)
+
 
 class LLMProvider(ABC):
+    """Provider interface. Existing callers continue to use string/stream methods."""
+
     @abstractmethod
-    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> str:
+    async def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> str:
         ...
 
     @abstractmethod
-    async def generate_stream(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> AsyncIterator[str]:
+    async def generate_stream(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        *,
+        usage_sink: list[TokenUsage] | None = None,
+    ) -> AsyncIterator[str]:
         ...
 
-
-class MockProvider(LLMProvider):
-    """Mock provider for testing — echoes context-aware responses"""
-
-    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> str:
-        await asyncio.sleep(0.3)
-        prompt_lower = (system_prompt + user_prompt).lower()
-
-        # Extract key context info for more realistic mock output
-        context_chars = []
-        if "角色资料" in user_prompt:
-            char_matches = re.findall(r"- (.+?)\(", user_prompt)
-            context_chars.extend(char_matches)
-        if "世界观设定" in user_prompt:
-            we_matches = re.findall(r"\[.+?\] (.+?):", user_prompt)
-            context_chars.extend(we_matches)
-
-        char_note = f"（涉及角色：{'、'.join(context_chars[:3])}）" if context_chars else ""
-        is_article_request = any(
-            marker in prompt_lower
-            for marker in ("文章/文案", "当前稿件", "内容 brief", "目标受众", "发布平台", "文案")
+    async def complete(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        tools: list[ToolSpec] | None = None,
+        response_format: dict | None = None,
+        timeout: float | None = None,
+    ) -> LLMResult:
+        """Compatibility implementation for providers that only return text."""
+        del tools, response_format, timeout
+        started = time.perf_counter()
+        text = await self.generate(system_prompt, user_prompt, temperature, max_tokens)
+        _set_call_metadata(retries=0, finish_reason=None)
+        return LLMResult(
+            text=text,
+            usage=None,
+            tool_calls=[],
+            finish_reason=None,
+            model=getattr(self, "model", None),
+            retries=0,
+            latency_ms=int((time.perf_counter() - started) * 1000),
         )
 
-        is_direction_request = (
-            ("给出3个" in prompt_lower or "给出5个" in prompt_lower or "json数组" in prompt_lower or "json字符串数组" in prompt_lower)
-            and ("方向" in prompt_lower or "建议" in prompt_lower or "direction" in prompt_lower or "suggestion" in prompt_lower)
-        )
-        is_structure_extraction_request = (
-            "结构提炼" in prompt_lower
-            or ("只输出严格 json" in prompt_lower and "character_relations" in prompt_lower)
-            or ("world_entries" in prompt_lower and "hidden_threads" in prompt_lower)
-        )
-        if is_structure_extraction_request:
-            return self._mock_structure_extraction(user_prompt)
 
-        if is_direction_request:
-            # Direction/suggestion generation requests (step 1 only)
-            if is_article_request:
-                return '["突出目标受众痛点，强化开头吸引力", "重组段落结构，让卖点表达更清晰", "增加行动引导，提升转化意图"]'
-            elif "修改方向" in prompt_lower or "候选章节" in prompt_lower or "候选稿" in prompt_lower:
-                return '["压缩重复段落，增强章节节奏", "补足人物动机，让情绪转折更可信", "强化场景细节，并保持原结尾不变"]'
-            elif "润色" in prompt_lower or "enhance" in prompt_lower:
-                return '["加强氛围描写，让场景更具沉浸感", "精简冗余段落，提升叙事节奏", "深化角色内心，增加情感层次"]'
-            elif "续写" in prompt_lower or "转折" in prompt_lower or "continue" in prompt_lower or "turn" in prompt_lower:
-                return '["主角发现隐藏的秘密，揭开真相", "新角色登场，打破现有格局", "意外事件打乱计划，迫使主角做出艰难选择", "回忆闪回，揭示过去的关键经历", "盟友背叛，信任崩塌引发连锁反应"]'
-            else:
-                return '["方向一", "方向二", "方向三"]'
+class LLMConfigError(ValueError):
+    """Raised when a provider cannot be constructed from the available settings."""
 
-        original_chapter = self._extract_marked_text(user_prompt, ("## 原文章节", "## 待润色文本"))
-        if original_chapter and ("编辑" in prompt_lower or "润色" in prompt_lower or "editor" in prompt_lower):
-            return self._mock_polish(original_chapter)
 
-        original_article = self._extract_marked_text(user_prompt, ("## 原文案/文章", "## 当前稿件"))
-        if is_article_request and original_article and ("改写" in prompt_lower or "优化" in prompt_lower or "编辑" in prompt_lower):
-            return self._mock_article(original_article, rewrite=True)
+def _status_code(error: BaseException) -> int | None:
+    status = getattr(error, "status_code", None)
+    if status is not None:
+        try:
+            return int(status)
+        except (TypeError, ValueError):
+            return None
+    response = getattr(error, "response", None)
+    status = getattr(response, "status_code", None)
+    try:
+        return int(status) if status is not None else None
+    except (TypeError, ValueError):
+        return None
 
-        revision_candidate = self._extract_marked_text(user_prompt, ("## 当前候选稿",))
-        if revision_candidate and ("修改方向" in user_prompt or "完整修改" in user_prompt):
-            return self._mock_polish(revision_candidate)
 
-        elif "审校" in prompt_lower or "critic" in prompt_lower:
-            return f"【审校意见】\n1. 情节推进自然{char_note}\n2. 人物对话可更生动\n3. 建议加强场景描写"
-        elif "一致性" in prompt_lower or "consistency" in prompt_lower:
-            return f"【一致性检查】\n文本与已知设定基本一致{char_note}，未发现明显矛盾。"
-        elif "编辑" in prompt_lower or "润色" in prompt_lower or "editor" in prompt_lower:
-            return f"在月光下，原有段落被打磨得更清晰、更有层次{char_note}。"
-        elif is_article_request:
-            return self._mock_article(user_prompt)
-        else:
-            # Writer: include context references
-            outline_note = ""
-            if "大纲" in user_prompt:
-                ch_matches = re.findall(r"### 第(\d+)章 (.+)", user_prompt)
-                if ch_matches:
-                    outline_note = f"，基于第{ch_matches[0][0]}章「{ch_matches[0][1]}」大纲"
-            return f"（生成内容）{outline_note}{char_note}\n\n夜色渐深，城市的灯火在远处明灭不定。她站在窗前，手指轻轻拂过冰凉的玻璃，心中涌起一股难以名状的情绪。\n\n\"你来了。\"她的声音很轻，像是怕惊扰了什么。\n\n身后的脚步声停顿了一瞬，然后继续靠近。\"我别无选择。\""
+def _is_retryable(error: BaseException) -> bool:
+    if isinstance(error, (asyncio.CancelledError, LLMConfigError)):
+        return False
+    if isinstance(
+        error,
+        (APITimeoutError, APIConnectionError, httpx.TimeoutException, httpx.NetworkError,
+         TimeoutError, ConnectionError),
+    ):
+        return True
+    status = _status_code(error)
+    return status == 429 or (status is not None and 500 <= status <= 599)
 
-    def _extract_original_chapter(self, user_prompt: str) -> str:
-        return self._extract_marked_text(user_prompt, ("## 原文章节", "## 待润色文本"))
 
-    def _extract_marked_text(self, user_prompt: str, markers: tuple[str, ...]) -> str:
-        for marker in markers:
-            if marker not in user_prompt:
-                continue
-            text = user_prompt.split(marker, 1)[1].strip()
-            if "\n\n请" in text:
-                text = text.split("\n\n请", 1)[0]
-            if "\n\n硬性要求" in text:
-                text = text.split("\n\n硬性要求", 1)[0]
-            if text.startswith("（") and "）\n" in text:
-                text = text.split("）\n", 1)[1]
-            return text.strip()
-        return ""
+def _retry_delay(error: BaseException, attempt: int) -> float:
+    maximum = max(0.0, float(settings.LLM_RETRY_MAX_SECONDS))
+    headers = getattr(getattr(error, "response", None), "headers", {}) or {}
+    retry_after = headers.get("Retry-After") or headers.get("retry-after")
+    if retry_after is not None:
+        try:
+            return min(maximum, max(0.0, float(retry_after)))
+        except (TypeError, ValueError):
+            pass
+    base = max(0.0, float(settings.LLM_RETRY_BASE_SECONDS))
+    capped = min(maximum, base * (2**attempt))
+    return min(maximum, capped * random.uniform(0.5, 1.0))
 
-    def _mock_polish(self, text: str) -> str:
-        stripped = text.strip()
-        if not stripped:
-            return ""
-        replacements = {
-            "原始": "经过打磨的",
-            "文本": "文字",
-            "内容": "段落",
-        }
-        polished = stripped
-        for old, new in replacements.items():
-            polished = polished.replace(old, new)
-        if polished == stripped:
-            polished = f"{stripped}\n\n这段文字的节奏被收束得更清晰，语气也更稳定。"
-        return polished
 
-    def _mock_article(self, text: str, rewrite: bool = False) -> str:
-        source = text.strip()
-        if rewrite and source and not source.startswith("（当前稿件为空"):
-            return (
-                f"{source}\n\n"
-                "这版稿件进一步压缩了重复表达，强化了核心卖点，并在结尾补足了清晰的行动引导。"
+def _retry_warning(operation: str, attempt: int, max_retries: int, error: BaseException) -> None:
+    # Provider error bodies can contain user data; log only safe diagnostics.
+    logger.warning(
+        "LLM %s retry attempt=%s/%s error_type=%s status=%s",
+        operation,
+        attempt,
+        max_retries,
+        type(error).__name__,
+        _status_code(error),
+    )
+
+
+def _read_usage(raw_usage: Any) -> TokenUsage | None:
+    if raw_usage is None:
+        return None
+    try:
+        input_tokens = int(raw_usage.prompt_tokens)
+        output_tokens = int(raw_usage.completion_tokens)
+        total = getattr(raw_usage, "total_tokens", None)
+        total_tokens = int(total) if total is not None else input_tokens + output_tokens
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return TokenUsage(input_tokens, output_tokens, total_tokens, estimated=False)
+
+
+def _read_tool_calls(raw_calls: Any) -> list[ToolCall]:
+    calls: list[ToolCall] = []
+    for raw_call in raw_calls or []:
+        function = getattr(raw_call, "function", None)
+        raw_arguments = getattr(function, "arguments", None)
+        arguments_error: str | None = None
+        try:
+            arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+            if not isinstance(arguments, dict):
+                raise ValueError("tool arguments must be a JSON object")
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            arguments = {}
+            arguments_error = f"{type(exc).__name__}: {exc}"
+        calls.append(
+            ToolCall(
+                id=str(getattr(raw_call, "id", "") or ""),
+                name=str(getattr(function, "name", "") or ""),
+                arguments=arguments,
+                arguments_error=arguments_error,
             )
-        return (
-            "如何把一个好想法变成可执行的内容\n\n"
-            "很多内容效果不稳定，并不是因为观点不够好，而是因为表达没有对准受众。"
-            "一篇有效的文章或文案，需要先说明读者为什么应该关心，再给出清晰的信息结构，最后提供明确的下一步行动。\n\n"
-            "建议先用一句话点出核心问题，再用三到四个小段落展开价值、证据和使用场景。"
-            "表达上保持具体，少用空泛形容词，多给读者能立刻理解的例子。\n\n"
-            "如果目标是转化，结尾不要停在总结，而要给出明确行动：了解更多、预约咨询、下载资料或开始试用。"
         )
+    return calls
 
-    def _mock_structure_extraction(self, user_prompt: str) -> str:
-        title_match = re.search(r"###\s*第?(\d+|\?)章\s+(.+)", user_prompt)
-        sequence = 1
-        title = "导入章节"
-        if title_match:
-            try:
-                sequence = int(title_match.group(1))
-            except ValueError:
-                sequence = 1
-            title = title_match.group(2).strip()[:80] or title
 
-        return json.dumps(
-            {
-                "outlines": [
-                    {
-                        "sequence_number": sequence,
-                        "title": title,
-                        "summary": "主角在关键场景中面对新的信息与选择。",
-                        "turning_point": "隐藏线索浮出水面。",
-                    }
-                ],
-                "characters": [
-                    {
-                        "name": "林澈",
-                        "role_type": "protagonist",
-                        "profile": "冷静敏锐的主角，正在追查事件真相。",
-                        "faction": None,
-                        "appearance_count": 1,
-                        "metadata": {},
-                    }
-                ],
-                "world_entries": [
-                    {
-                        "title": "旧城档案馆",
-                        "category": "地点",
-                        "content": "保存旧城历史记录的场所，可能藏有关键资料。",
-                        "rules": {},
-                        "confidence": "medium",
-                    }
-                ],
-                "hidden_threads": [
-                    {
-                        "name": "失踪档案",
-                        "description": "多年前遗失的档案与当前事件存在关联。",
-                        "chapter_nums": [sequence],
-                    }
-                ],
-                "character_relations": [],
-            },
-            ensure_ascii=False,
-        )
-
-    async def generate_stream(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> AsyncIterator[str]:
-        result = await self.generate(system_prompt, user_prompt, temperature, max_tokens)
-        for i in range(0, len(result), 5):
-            yield result[i:i+5]
-            await asyncio.sleep(0.05)
+def _stream_options_unsupported(error: BaseException) -> bool:
+    if _status_code(error) != 400:
+        return False
+    message = str(error).lower()
+    if "stream_options" not in message:
+        return False
+    return any(word in message for word in ("unsupported", "unknown", "unrecognized", "not support", "invalid"))
 
 
 class OpenAIProvider(LLMProvider):
-    """OpenAI 兼容 API Provider（DeepSeek / SiliconFlow 等也走此路径）"""
+    """OpenAI-compatible chat completions provider with safe retry behavior."""
 
-    def __init__(self, api_key: str, base_url: str | None = None, model: str = "gpt-4o-mini"):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str | None = None,
+        model: str = "gpt-4o-mini",
+        *,
+        http_client: httpx.AsyncClient | None = None,
+    ):
         if not api_key:
-            raise ValueError("LLM_API_KEY 未设置，无法使用 OpenAI Provider")
-        from openai import AsyncOpenAI
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url or None)
+            raise LLMConfigError("当前模型配置缺少 API Key，请在设置里重新保存 API Key 后再试")
+        langfuse_async_openai = get_langfuse_async_openai_class()
+        self._use_langfuse_metadata = langfuse_async_openai is not None
+        async_openai = langfuse_async_openai
+        if async_openai is None:
+            from openai import AsyncOpenAI
+            async_openai = AsyncOpenAI
+        timeout_seconds = float(settings.LLM_TIMEOUT_SECONDS)
+        client = http_client or httpx.AsyncClient(
+            follow_redirects=False,
+            timeout=timeout_seconds,
+        )
+        self.client = async_openai(
+            api_key=api_key,
+            base_url=base_url or None,
+            timeout=timeout_seconds,
+            # The provider owns retry policy and reporting; disable SDK retries so
+            # attempts, jitter, cancellation, and Retry-After remain deterministic.
+            max_retries=0,
+            http_client=client,
+        )
         self.model = model
+        self._stream_options_supported: bool | None = None
 
-    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> str:
-        resp = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
+    def _metadata(self, *, stream: bool) -> dict | None:
+        if not self._use_langfuse_metadata:
+            return None
+        return current_langfuse_metadata({"llm_model": self.model, "stream": stream})
+
+    async def complete(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        tools: list[ToolSpec] | None = None,
+        response_format: dict | None = None,
+        timeout: float | None = None,
+    ) -> LLMResult:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return resp.choices[0].message.content or ""
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if tools:
+            payload["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    },
+                }
+                for tool in tools
+            ]
+        if response_format is not None:
+            payload["response_format"] = response_format
+        metadata = self._metadata(stream=False)
+        if metadata:
+            payload["metadata"] = metadata
 
-    async def generate_stream(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = 4096) -> AsyncIterator[str]:
-        stream = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
+        request_timeout = float(timeout) if timeout is not None else float(settings.LLM_TIMEOUT_SECONDS)
+        max_retries = max(0, int(settings.LLM_MAX_RETRIES))
+        retries = 0
+        started = time.perf_counter()
+        for attempt in range(max_retries + 1):
+            try:
+                response = await self.client.chat.completions.create(
+                    **payload,
+                    timeout=request_timeout,
+                )
+                choice = response.choices[0] if response.choices else None
+                message = choice.message if choice else None
+                raw_text = getattr(message, "content", None) if message else None
+                text = raw_text if isinstance(raw_text, str) else ""
+                finish_reason = getattr(choice, "finish_reason", None) if choice else None
+                _set_call_metadata(retries=retries, finish_reason=finish_reason)
+                return LLMResult(
+                    text=text,
+                    usage=_read_usage(getattr(response, "usage", None)),
+                    tool_calls=_read_tool_calls(getattr(message, "tool_calls", None) if message else None),
+                    finish_reason=finish_reason,
+                    model=getattr(response, "model", None) or self.model,
+                    retries=retries,
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                )
+            except asyncio.CancelledError:
+                _set_call_metadata(retries=retries, finish_reason=None)
+                raise
+            except Exception as exc:
+                _set_call_metadata(retries=retries, finish_reason=None)
+                if attempt >= max_retries or not _is_retryable(exc):
+                    raise
+                retries += 1
+                _set_call_metadata(retries=retries)
+                _retry_warning("complete", retries, max_retries, exc)
+                await asyncio.sleep(_retry_delay(exc, attempt))
+        raise AssertionError("unreachable retry loop")
+
+    async def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> str:
+        """Legacy string API backed by the structured completion method."""
+        return (
+            await self.complete(
+                system_prompt,
+                user_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        ).text
+
+    async def generate_stream(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        *,
+        usage_sink: list[TokenUsage] | None = None,
+    ) -> AsyncIterator[str]:
+        """Yield text chunks; retries are forbidden after the first visible character."""
+        base_payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=True,
-        )
-        async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        metadata = self._metadata(stream=True)
+        if metadata:
+            base_payload["metadata"] = metadata
+        request_timeout = float(settings.LLM_TIMEOUT_SECONDS)
+        max_retries = max(0, int(settings.LLM_MAX_RETRIES))
+        retries = 0
+        transient_retries = 0
+        yielded_character = False
+        did_stream_options_fallback = False
+        _set_call_metadata(retries=0, finish_reason=None)
+
+        while True:
+            payload = dict(base_payload)
+            include_stream_options = self._stream_options_supported is not False
+            if include_stream_options:
+                payload["stream_options"] = {"include_usage": True}
+            attempt_usage: TokenUsage | None = None
+            attempt_finish_reason: str | None = None
+            try:
+                stream = await self.client.chat.completions.create(
+                    **payload,
+                    timeout=request_timeout,
+                )
+                if include_stream_options:
+                    self._stream_options_supported = True
+                async for chunk in stream:
+                    chunk_usage = _read_usage(getattr(chunk, "usage", None))
+                    if chunk_usage is not None:
+                        attempt_usage = chunk_usage
+                    for choice in getattr(chunk, "choices", None) or []:
+                        if getattr(choice, "finish_reason", None):
+                            attempt_finish_reason = choice.finish_reason
+                        content = getattr(getattr(choice, "delta", None), "content", None)
+                        if isinstance(content, str) and content:
+                            yielded_character = True
+                            yield content
+                if usage_sink is not None and attempt_usage is not None:
+                    usage_sink.append(attempt_usage)
+                _set_call_metadata(retries=retries, finish_reason=attempt_finish_reason)
+                return
+            except asyncio.CancelledError:
+                _set_call_metadata(retries=retries, finish_reason=attempt_finish_reason)
+                raise
+            except Exception as exc:
+                if (
+                    not yielded_character
+                    and include_stream_options
+                    and not did_stream_options_fallback
+                    and _stream_options_unsupported(exc)
+                ):
+                    self._stream_options_supported = False
+                    did_stream_options_fallback = True
+                    retries += 1
+                    _set_call_metadata(retries=retries, finish_reason=None)
+                    continue
+                if (
+                    not yielded_character
+                    and transient_retries < max_retries
+                    and _is_retryable(exc)
+                ):
+                    delay = _retry_delay(exc, transient_retries)
+                    transient_retries += 1
+                    retries += 1
+                    _set_call_metadata(retries=retries, finish_reason=None)
+                    _retry_warning("stream", retries, max_retries, exc)
+                    await asyncio.sleep(delay)
+                    continue
+                _set_call_metadata(retries=retries, finish_reason=attempt_finish_reason)
+                raise
 
 
 def get_llm_provider(config: dict | None = None) -> LLMProvider:
-    """根据配置返回 LLM Provider 实例
-
-    Args:
-        config: 用户 LLM 配置字典 {"provider", "api_key", "base_url", "model"}。
-            若为 None，走 settings 默认值（向后兼容）。
-    """
+    """Construct the configured Provider while preserving the old selection API."""
     if config:
         provider = config.get("provider", settings.LLM_PROVIDER)
         if provider == "mock":
-            return MockProvider()
-        else:
-            return OpenAIProvider(
-                api_key=config.get("api_key", ""),
-                base_url=config.get("base_url"),
-                model=config.get("model") or settings.LLM_MODEL,
-            )
-
-    # 无 config → 走 settings 默认值
-    if settings.LLM_PROVIDER == "mock":
-        return MockProvider()
-    else:
+            if settings.ALLOW_MOCK_PROVIDER:
+                from agents.mock_provider import MockProvider
+                return MockProvider()
+            logger.warning("检测到 mock provider 配置，但 mock 已被禁用，将抛出错误")
+            raise LLMConfigError("Mock provider 已被禁用，请配置真实的 LLM provider (OpenAI/DeepSeek等)")
+        api_key = (config.get("api_key") or "").strip()
+        if not api_key and config.get("encrypted_api_key"):
+            try:
+                api_key = decrypt_api_key(str(config["encrypted_api_key"])).strip()
+            except Exception as exc:
+                raise LLMConfigError(
+                    "当前模型配置的 API Key 无法解密，请在设置里重新保存后再试"
+                ) from exc
+        if not api_key:
+            raise LLMConfigError("当前模型配置缺少 API Key，请在设置里重新保存 API Key 后再试")
         return OpenAIProvider(
-            api_key=settings.LLM_API_KEY,
-            base_url=settings.LLM_BASE_URL or None,
-            model=settings.LLM_MODEL,
+            api_key=api_key,
+            base_url=config.get("base_url"),
+            model=config.get("model") or settings.LLM_MODEL,
         )
+
+    if settings.LLM_PROVIDER == "mock":
+        if settings.ALLOW_MOCK_PROVIDER:
+            from agents.mock_provider import MockProvider
+            return MockProvider()
+        logger.warning("检测到 mock provider 配置，但 mock 已被禁用，将抛出错误")
+        raise LLMConfigError("Mock provider 已被禁用，请在 .env 或前端设置中配置真实的 LLM provider")
+    if not settings.LLM_API_KEY.strip():
+        raise LLMConfigError("当前模型配置缺少 API Key，请在设置里重新保存 API Key 后再试")
+    return OpenAIProvider(
+        api_key=settings.LLM_API_KEY,
+        base_url=settings.LLM_BASE_URL or None,
+        model=settings.LLM_MODEL,
+    )
+
+
+def __getattr__(name: str):
+    """Preserve ``from agents.llm_provider import MockProvider`` lazily.
+
+    A lazy alias avoids a module-import cycle when ``agents.mock_provider`` itself is
+    imported first.
+    """
+    if name == "MockProvider":
+        from agents.mock_provider import MockProvider
+        return MockProvider
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

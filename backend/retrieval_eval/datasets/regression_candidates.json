@@ -1,0 +1,3142 @@
+{
+  "meta": {
+    "generator": "generate_regression.py",
+    "generated_at": "2026-08-03T03:30:13+00:00",
+    "db_path": "/Users/zcx/ai-creative-platform/backend/dev-web.sqlite3",
+    "table_row_counts": {
+      "ability_profile": 5,
+      "event_timeline": 27,
+      "character_profile": 4,
+      "world_rule": 2
+    },
+    "difficulty_override_count": 3,
+    "hard_sample_counts": {
+      "alias": 12,
+      "typo": 13,
+      "homophone": 14,
+      "same_name": 9,
+      "conflict": 8,
+      "cross_chapter": 13,
+      "no_result": 9
+    },
+    "hard_sample_warnings": [],
+    "caveats": [
+      "character_alias_clusters 表当前为空(0行)，alias 类困难样本的别名全部从正文提取核对（猴子/泥猴子/大魔头/全校公敌/冲榜狂魔/绿茶男/黑白无常妇/冷面判官/移动电灯泡/凡哥/莫凡哥）",
+      "typo 类样本前 5 条（张小候/张候/慕白/雷息/风鬼）的错别字来自语料自身（SELECT 核对有命中），其余为近形字构造",
+      "homophone 类样本为同音字构造（凡→烦/侯→猴/满→曼/穆→木/唐→汤 等），其中『张小猴』与真实别名『猴子』重合，用于检验别名误导",
+      "same_name/conflict 样本涉及三个项目：d62d4447(全职法师全文) 与 49aee26a(E2E)、de04afc8(测试小说) 存在同名角色(莫凡/张小侯/赵满延)，设定不同",
+      "张小侯风系 first_seen_chapter 在主项目为 16、E2E 项目为 1、正文第19章才首次展示风轨，三处不一致，相关样本 difficulty=conflict",
+      "project_knowledge_facts 主语噪声大（'一些'/'一位'/'一名'等），未作为本数据集证据来源",
+      "expected.source_ids 为 source 级 id(project_sources.id)，基线命中规则 A 可命中；record_ids 为结构化表行 id，仅溯源用",
+      "no_result 样本期望检索不召回（hit=False 为正确行为），生成时已对实体词做全库 0 命中核对"
+    ]
+  },
+  "samples": [
+    {
+      "query_id": "reg-001",
+      "category": "ability_query",
+      "query": "莫凡的火系是什么等级？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "火系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "8ce03ee6-7e7d-41b2-8d40-0a30893b6225"
+        ]
+      },
+      "notes": "生成自 ability_profile：莫凡 掌握 火系（初阶，状态=new）",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-001b",
+      "category": "character_first_appearance",
+      "query": "莫凡是什么时候掌握火系的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "火系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "8ce03ee6-7e7d-41b2-8d40-0a30893b6225"
+        ]
+      },
+      "notes": "生成自 ability_profile.first_seen_chapter=1（莫凡 掌握 火系 的章节）",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-002",
+      "category": "ability_query",
+      "query": "莫凡的雷系是什么等级？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "雷系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "aedbd685-9bd5-49fd-905a-47a0cec042d1"
+        ]
+      },
+      "notes": "生成自 ability_profile：莫凡 掌握 雷系（初阶，状态=new）",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-002b",
+      "category": "character_first_appearance",
+      "query": "莫凡是什么时候掌握雷系的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "雷系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "aedbd685-9bd5-49fd-905a-47a0cec042d1"
+        ]
+      },
+      "notes": "生成自 ability_profile.first_seen_chapter=1（莫凡 掌握 雷系 的章节）",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-003",
+      "category": "ability_query",
+      "query": "张小侯的风系是什么等级？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "风系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "46707d57-5ee9-4c6d-85f6-a711239b6f81"
+        ]
+      },
+      "notes": "张小侯风系 first_seen_chapter=16 与 E2E 项目第1章、正文第19章(风之力，风轨)不一致，属跨来源时间冲突；生成自 ability_profile：张小侯 掌握 风系（初阶，状态=used）",
+      "difficulty": "conflict"
+    },
+    {
+      "query_id": "reg-003b",
+      "category": "character_first_appearance",
+      "query": "张小侯是什么时候掌握风系的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "风系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "46707d57-5ee9-4c6d-85f6-a711239b6f81"
+        ]
+      },
+      "notes": "张小侯风系 first_seen_chapter=16 与 E2E 项目第1章、正文第19章(风之力，风轨)不一致，属跨来源时间冲突；生成自 ability_profile.first_seen_chapter=16（张小侯 掌握 风系 的章节）",
+      "difficulty": "conflict"
+    },
+    {
+      "query_id": "reg-004",
+      "category": "ability_query",
+      "query": "莫凡的火系是什么等级？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡",
+          "火系"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "516d3dd9-b660-4386-9524-e2d212831877"
+        ]
+      },
+      "notes": "E2E 项目莫凡与主项目(全职法师)莫凡为同名不同角色，能力设定不同，需项目上下文消歧；生成自 ability_profile：莫凡 掌握 火系（初阶，状态=new）",
+      "difficulty": "same_name"
+    },
+    {
+      "query_id": "reg-004b",
+      "category": "character_first_appearance",
+      "query": "莫凡是什么时候掌握火系的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡",
+          "火系"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "516d3dd9-b660-4386-9524-e2d212831877"
+        ]
+      },
+      "notes": "E2E 项目莫凡与主项目(全职法师)莫凡为同名不同角色，能力设定不同，需项目上下文消歧；生成自 ability_profile.first_seen_chapter=1（莫凡 掌握 火系 的章节）",
+      "difficulty": "same_name"
+    },
+    {
+      "query_id": "reg-005",
+      "category": "ability_query",
+      "query": "张小侯的风系是什么等级？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "张小侯",
+          "风系"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "07e8bde0-f06a-487e-8ac5-6869469eb0a1"
+        ]
+      },
+      "notes": "E2E 项目张小侯与主项目张小侯同名，风系掌握时间(第1章)与主项目(第16章)不同，需项目上下文消歧；生成自 ability_profile：张小侯 掌握 风系（初阶，状态=used）",
+      "difficulty": "same_name"
+    },
+    {
+      "query_id": "reg-005b",
+      "category": "character_first_appearance",
+      "query": "张小侯是什么时候掌握风系的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "chapter_no": 1,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "张小侯",
+          "风系"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "07e8bde0-f06a-487e-8ac5-6869469eb0a1"
+        ]
+      },
+      "notes": "E2E 项目张小侯与主项目张小侯同名，风系掌握时间(第1章)与主项目(第16章)不同，需项目上下文消歧；生成自 ability_profile.first_seen_chapter=1（张小侯 掌握 风系 的章节）",
+      "difficulty": "same_name"
+    },
+    {
+      "query_id": "reg-006",
+      "category": "timeline_event",
+      "query": "第1章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "8286dba1-e83d-4eb8-a9f0-7984d766d1d5"
+        ]
+      },
+      "notes": "生成自 event_timeline：第1章『第1章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-006b",
+      "category": "timeline_event",
+      "query": "第1章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "8286dba1-e83d-4eb8-a9f0-7984d766d1d5"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第1章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-007",
+      "category": "timeline_event",
+      "query": "第2章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 2,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "1db1618f-39db-4d36-815e-527c338f95ac"
+        ]
+      },
+      "notes": "生成自 event_timeline：第2章『第2章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-007b",
+      "category": "timeline_event",
+      "query": "第2章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 2,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "1db1618f-39db-4d36-815e-527c338f95ac"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第2章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-008",
+      "category": "timeline_event",
+      "query": "第3章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 3,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "9a4d3acb-4ff5-4d73-8a3f-424e9f59e04e"
+        ]
+      },
+      "notes": "生成自 event_timeline：第3章『第3章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-008b",
+      "category": "timeline_event",
+      "query": "第3章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 3,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "9a4d3acb-4ff5-4d73-8a3f-424e9f59e04e"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第3章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-009",
+      "category": "timeline_event",
+      "query": "第4章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 4,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "99c36128-7106-436b-96b7-c6d26432050a"
+        ]
+      },
+      "notes": "生成自 event_timeline：第4章『第4章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-009b",
+      "category": "timeline_event",
+      "query": "第4章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 4,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "99c36128-7106-436b-96b7-c6d26432050a"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第4章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-010",
+      "category": "timeline_event",
+      "query": "第5章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 5,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "146a50c6-c45f-407d-b28d-93a2e27cc497"
+        ]
+      },
+      "notes": "生成自 event_timeline：第5章『第5章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-010b",
+      "category": "timeline_event",
+      "query": "第5章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 5,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "146a50c6-c45f-407d-b28d-93a2e27cc497"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第5章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-011",
+      "category": "timeline_event",
+      "query": "第6章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 6,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "dbb95632-e365-4a5b-b71b-b868dbc54f52"
+        ]
+      },
+      "notes": "生成自 event_timeline：第6章『第6章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-011b",
+      "category": "timeline_event",
+      "query": "第6章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 6,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "dbb95632-e365-4a5b-b71b-b868dbc54f52"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第6章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-012",
+      "category": "timeline_event",
+      "query": "第7章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 7,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "75d85f5b-8c38-475b-8999-b7c3aa3b8577"
+        ]
+      },
+      "notes": "生成自 event_timeline：第7章『第7章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-012b",
+      "category": "timeline_event",
+      "query": "第7章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 7,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "75d85f5b-8c38-475b-8999-b7c3aa3b8577"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第7章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-013",
+      "category": "timeline_event",
+      "query": "第8章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 8,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "2e3b4fe8-dcd1-42fa-a6aa-13ef75c58b8f"
+        ]
+      },
+      "notes": "生成自 event_timeline：第8章『第8章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-013b",
+      "category": "timeline_event",
+      "query": "第8章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 8,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "2e3b4fe8-dcd1-42fa-a6aa-13ef75c58b8f"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第8章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-014",
+      "category": "timeline_event",
+      "query": "第9章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 9,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "d000a75b-bf9b-47f6-87df-68c13ddaa7ca"
+        ]
+      },
+      "notes": "生成自 event_timeline：第9章『第9章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-014b",
+      "category": "timeline_event",
+      "query": "第9章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 9,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "d000a75b-bf9b-47f6-87df-68c13ddaa7ca"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第9章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-015",
+      "category": "timeline_event",
+      "query": "第10章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 10,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "6c6cfe93-1af0-4588-97bc-f9fa9e308103"
+        ]
+      },
+      "notes": "生成自 event_timeline：第10章『第10章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-015b",
+      "category": "timeline_event",
+      "query": "第10章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 10,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "6c6cfe93-1af0-4588-97bc-f9fa9e308103"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第10章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-016",
+      "category": "timeline_event",
+      "query": "第11章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 11,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "6a66cb70-71b5-4532-b600-c7649bd060cf"
+        ]
+      },
+      "notes": "生成自 event_timeline：第11章『第11章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-016b",
+      "category": "timeline_event",
+      "query": "第11章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 11,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "6a66cb70-71b5-4532-b600-c7649bd060cf"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第11章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-017",
+      "category": "timeline_event",
+      "query": "第12章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 12,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "fdf5c63c-d5be-4c69-80ab-747a5bbcc4cb"
+        ]
+      },
+      "notes": "生成自 event_timeline：第12章『第12章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-017b",
+      "category": "timeline_event",
+      "query": "第12章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 12,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "fdf5c63c-d5be-4c69-80ab-747a5bbcc4cb"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第12章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-018",
+      "category": "timeline_event",
+      "query": "第13章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 13,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "0a84fb42-4be1-4ee0-b4c5-2d3f43224dec"
+        ]
+      },
+      "notes": "生成自 event_timeline：第13章『第13章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-018b",
+      "category": "timeline_event",
+      "query": "第13章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 13,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "0a84fb42-4be1-4ee0-b4c5-2d3f43224dec"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第13章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-019",
+      "category": "timeline_event",
+      "query": "第14章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 14,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "2d2d456a-9f86-4d82-bc94-1301eb2e4ee4"
+        ]
+      },
+      "notes": "生成自 event_timeline：第14章『第14章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-019b",
+      "category": "timeline_event",
+      "query": "第14章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 14,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "2d2d456a-9f86-4d82-bc94-1301eb2e4ee4"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第14章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-020",
+      "category": "timeline_event",
+      "query": "第15章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 15,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "6189b7f5-6aef-43e6-8ebf-b4972ca50747"
+        ]
+      },
+      "notes": "生成自 event_timeline：第15章『第15章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-020b",
+      "category": "timeline_event",
+      "query": "第15章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 15,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "6189b7f5-6aef-43e6-8ebf-b4972ca50747"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第15章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-021",
+      "category": "timeline_event",
+      "query": "第16章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "2519d144-a0bd-4d39-9f9d-d83033039dbd"
+        ]
+      },
+      "notes": "生成自 event_timeline：第16章『第16章事件』，出场角色=['莫凡', '张小侯']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-021b",
+      "category": "timeline_event",
+      "query": "第16章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 16,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "2519d144-a0bd-4d39-9f9d-d83033039dbd"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第16章出场角色=['莫凡', '张小侯']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-022",
+      "category": "timeline_event",
+      "query": "第17章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 17,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "78eb5e3f-cfca-442c-b081-974bfb5efed5"
+        ]
+      },
+      "notes": "生成自 event_timeline：第17章『第17章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-022b",
+      "category": "timeline_event",
+      "query": "第17章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 17,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "78eb5e3f-cfca-442c-b081-974bfb5efed5"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第17章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-023",
+      "category": "timeline_event",
+      "query": "第18章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 18,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "b2bf6619-39e1-41d7-ace1-8f7ad6e4e2c5"
+        ]
+      },
+      "notes": "生成自 event_timeline：第18章『第18章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-023b",
+      "category": "timeline_event",
+      "query": "第18章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 18,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "b2bf6619-39e1-41d7-ace1-8f7ad6e4e2c5"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第18章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-024",
+      "category": "timeline_event",
+      "query": "第19章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 19,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "1f29378f-36b4-4940-9548-f2e2500e0355"
+        ]
+      },
+      "notes": "生成自 event_timeline：第19章『第19章事件』，出场角色=['莫凡', '张小侯']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-024b",
+      "category": "timeline_event",
+      "query": "第19章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 19,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "1f29378f-36b4-4940-9548-f2e2500e0355"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第19章出场角色=['莫凡', '张小侯']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-025",
+      "category": "timeline_event",
+      "query": "第20章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 20,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "12f3b4f0-e395-440a-9b19-f1a841ce2684"
+        ]
+      },
+      "notes": "生成自 event_timeline：第20章『第20章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-025b",
+      "category": "timeline_event",
+      "query": "第20章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 20,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "12f3b4f0-e395-440a-9b19-f1a841ce2684"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第20章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-026",
+      "category": "timeline_event",
+      "query": "第1章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 1,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "9a67bf8d-1c18-4fd8-becd-69686a299e62"
+        ]
+      },
+      "notes": "生成自 event_timeline：第1章『第1章事件』，出场角色=['莫凡', '张小侯']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-026b",
+      "category": "timeline_event",
+      "query": "第1章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 1,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "9a67bf8d-1c18-4fd8-becd-69686a299e62"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第1章出场角色=['莫凡', '张小侯']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-027",
+      "category": "timeline_event",
+      "query": "第2章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 2,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "be2e2bbe-bb67-4356-8f96-7e56939beaf4"
+        ]
+      },
+      "notes": "生成自 event_timeline：第2章『第2章事件』，出场角色=['莫凡', '张小侯']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-027b",
+      "category": "timeline_event",
+      "query": "第2章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 2,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "be2e2bbe-bb67-4356-8f96-7e56939beaf4"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第2章出场角色=['莫凡', '张小侯']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-028",
+      "category": "timeline_event",
+      "query": "第21章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 21,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "c291f237-7c1e-40c8-8356-ffc7e146af08"
+        ]
+      },
+      "notes": "生成自 event_timeline：第21章『第21章事件』，出场角色=['莫凡', '张小侯']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-028b",
+      "category": "timeline_event",
+      "query": "第21章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 21,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "c291f237-7c1e-40c8-8356-ffc7e146af08"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第21章出场角色=['莫凡', '张小侯']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-029",
+      "category": "timeline_event",
+      "query": "第22章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 22,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "44bb5097-a21d-45df-b525-0128fb9ad58b"
+        ]
+      },
+      "notes": "生成自 event_timeline：第22章『第22章事件』，出场角色=['莫凡', '张小侯']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-029b",
+      "category": "timeline_event",
+      "query": "第22章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 22,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "44bb5097-a21d-45df-b525-0128fb9ad58b"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第22章出场角色=['莫凡', '张小侯']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-030",
+      "category": "timeline_event",
+      "query": "第23章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 23,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "16c7cd2b-042b-4917-b9fa-f7230b240ed0"
+        ]
+      },
+      "notes": "生成自 event_timeline：第23章『第23章事件』，出场角色=['莫凡', '张小侯']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-030b",
+      "category": "timeline_event",
+      "query": "第23章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 23,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "16c7cd2b-042b-4917-b9fa-f7230b240ed0"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第23章出场角色=['莫凡', '张小侯']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-031",
+      "category": "timeline_event",
+      "query": "第24章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 24,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "95436c6e-4467-446c-8dbb-6a3d263f7cf6"
+        ]
+      },
+      "notes": "生成自 event_timeline：第24章『第24章事件』，出场角色=['莫凡', '张小侯']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-031b",
+      "category": "timeline_event",
+      "query": "第24章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 24,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "95436c6e-4467-446c-8dbb-6a3d263f7cf6"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第24章出场角色=['莫凡', '张小侯']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-032",
+      "category": "timeline_event",
+      "query": "第25章发生了什么？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 25,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "5ba89f68-de17-4e9f-b0c8-e3489172f2f4"
+        ]
+      },
+      "notes": "生成自 event_timeline：第25章『第25章事件』，出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-032b",
+      "category": "timeline_event",
+      "query": "第25章有哪些角色出场？",
+      "expected": {
+        "evidence_type": "event_timeline",
+        "chapter_no": 25,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "5ba89f68-de17-4e9f-b0c8-e3489172f2f4"
+        ]
+      },
+      "notes": "生成自 event_timeline.characters：第25章出场角色=['莫凡']",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-033",
+      "category": "character_profile",
+      "query": "介绍下莫凡",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "bab0dfbc-3df5-48d4-9879-7d3bfa254903"
+        ]
+      },
+      "notes": "生成自 character_profile：莫凡（法师，状态=觉醒，别名=[]）",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-033b",
+      "category": "character_profile",
+      "query": "莫凡是什么角色？",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "bab0dfbc-3df5-48d4-9879-7d3bfa254903"
+        ]
+      },
+      "notes": "生成自 character_profile：莫凡",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-034",
+      "category": "character_profile",
+      "query": "介绍下张小侯",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "efeec82a-c416-4b4f-bb2e-4ad6a5484f96"
+        ]
+      },
+      "notes": "生成自 character_profile：张小侯（法师，状态=活跃，别名=[]）",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-034b",
+      "category": "character_profile",
+      "query": "张小侯是什么角色？",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "efeec82a-c416-4b4f-bb2e-4ad6a5484f96"
+        ]
+      },
+      "notes": "生成自 character_profile：张小侯",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-035",
+      "category": "character_profile",
+      "query": "介绍下莫凡",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "848fe767-5e30-4abe-903c-7d7ca45ba0b0"
+        ]
+      },
+      "notes": "生成自 character_profile：莫凡（法师，状态=觉醒，别名=[]）",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-035b",
+      "category": "character_profile",
+      "query": "莫凡是什么角色？",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "848fe767-5e30-4abe-903c-7d7ca45ba0b0"
+        ]
+      },
+      "notes": "生成自 character_profile：莫凡",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-036",
+      "category": "character_profile",
+      "query": "介绍下张小侯",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "张小侯"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "32dbea5e-1dc5-427a-bfc6-c6f613663dbf"
+        ]
+      },
+      "notes": "生成自 character_profile：张小侯（法师，状态=活跃，别名=[]）",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-036b",
+      "category": "character_profile",
+      "query": "张小侯是什么角色？",
+      "expected": {
+        "evidence_type": "character_profile",
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "张小侯"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "32dbea5e-1dc5-427a-bfc6-c6f613663dbf"
+        ]
+      },
+      "notes": "生成自 character_profile：张小侯",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-037",
+      "category": "world_rule",
+      "query": "这个世界里魔法体系的规则是什么？",
+      "expected": {
+        "evidence_type": "world_rule",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "魔法体系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "63fa8b18-52ed-4b16-958d-c52071b2d680"
+        ]
+      },
+      "notes": "生成自 world_rule：魔法体系 / 法师可觉醒多种魔法系别（priority=medium）",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-037b",
+      "category": "world_rule",
+      "query": "这个世界的魔法体系设定是怎么样的？",
+      "expected": {
+        "evidence_type": "world_rule",
+        "chapter_no": 1,
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "魔法体系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541",
+        "record_ids": [
+          "63fa8b18-52ed-4b16-958d-c52071b2d680"
+        ]
+      },
+      "notes": "生成自 world_rule：魔法体系 / 法师可觉醒多种魔法系别",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-038",
+      "category": "world_rule",
+      "query": "这个世界里魔法体系的规则是什么？",
+      "expected": {
+        "evidence_type": "world_rule",
+        "chapter_no": 1,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "魔法体系"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "bb317bcb-1c1d-425f-a4f3-b7c74150ca8e"
+        ]
+      },
+      "notes": "生成自 world_rule：魔法体系 / 法师可觉醒多种魔法系别（priority=medium）",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-038b",
+      "category": "world_rule",
+      "query": "这个世界的魔法体系设定是怎么样的？",
+      "expected": {
+        "evidence_type": "world_rule",
+        "chapter_no": 1,
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "魔法体系"
+        ],
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00",
+        "record_ids": [
+          "bb317bcb-1c1d-425f-a4f3-b7c74150ca8e"
+        ]
+      },
+      "notes": "生成自 world_rule：魔法体系 / 法师可觉醒多种魔法系别",
+      "difficulty": "normal"
+    },
+    {
+      "query_id": "reg-al-001",
+      "category": "ability_query",
+      "query": "猴子是什么系的法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "猴子",
+          "风系"
+        ],
+        "chapter_no": 9,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：正文多处称张小侯为『猴子』（第9章『猴子说他每个星期最多只能够练习1个小时的把控』），答案=风系"
+    },
+    {
+      "query_id": "reg-al-002",
+      "category": "character_profile",
+      "query": "泥猴子指的是谁？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "泥猴子"
+        ],
+        "chapter_no": 2,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：第2章『这泥猴子叫张候』；第345章『张小侯好不容易才把自己收拾的稍微干净一些，这会又变成了泥猴子』"
+    },
+    {
+      "query_id": "reg-al-003",
+      "category": "character_profile",
+      "query": "大魔头是谁？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "大魔头"
+        ],
+        "chapter_no": 171,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：第171章『大魔头莫凡真就将大家的东西给抢空了』；第417章『用不了一个月这个明珠学府就会知道自己大魔头特么又回来了』"
+    },
+    {
+      "query_id": "reg-al-004",
+      "category": "character_profile",
+      "query": "全校公敌说的是谁？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "全校公敌"
+        ],
+        "chapter_no": 188,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：第188章『在这青校区，莫凡这个名字早就成为了全校公敌』；第202/206章亦有"
+    },
+    {
+      "query_id": "reg-al-005",
+      "category": "source_chunk",
+      "query": "冲榜狂魔是谁的外号？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "冲榜狂魔"
+        ],
+        "chapter_no": 519,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：第519章『顷刻间人们便又给莫凡取了一个外号，冲榜狂魔！』"
+    },
+    {
+      "query_id": "reg-al-006",
+      "category": "character_profile",
+      "query": "绿茶男是哪个角色？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "穆白",
+          "绿茶男"
+        ],
+        "chapter_no": 7,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：第7章标题即『绿茶男』；第10章『慕白你这绿茶男怎么跟你爷爷我斗』；第574章『绿茶男，好久不见』莫凡打量着穆白"
+    },
+    {
+      "query_id": "reg-al-007",
+      "category": "source_chunk",
+      "query": "黑白无常妇是莫凡给谁取的绰号？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "撒朗",
+          "伊之纱",
+          "黑白无常妇"
+        ],
+        "chapter_no": 1232,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：第1232章『黑白无常妇，那是莫凡给撒朗和伊之纱取的绰号。黑无常妇，自然是撒朗。白无常妇是伊之纱』"
+    },
+    {
+      "query_id": "reg-al-008",
+      "category": "character_profile",
+      "query": "冷面判官是谁？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "杰西",
+          "冷面判官"
+        ],
+        "chapter_no": 1102,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：第1102章『有外号叫冷面判官。主修植物系，次修诅咒系，辅修光系』（杰西）"
+    },
+    {
+      "query_id": "reg-al-009",
+      "category": "source_chunk",
+      "query": "光系初阶学生的技能外号是什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "光系",
+          "移动电灯泡"
+        ],
+        "chapter_no": 47,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名（技能外号）：第47章『光系学生们施展了他们的能力…他们初阶的技能外号确实是「移动电灯泡」』"
+    },
+    {
+      "query_id": "reg-al-010",
+      "category": "character_profile",
+      "query": "凡哥是哪个角色？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "凡哥"
+        ],
+        "chapter_no": 2,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：正文中张候等邻里少年称莫凡为『凡哥』/『莫凡哥』（第2章『莫凡哥，回来了啊』），全库凡哥 236 处"
+    },
+    {
+      "query_id": "reg-al-011",
+      "category": "character_profile",
+      "query": "莫凡哥是谁？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "莫凡哥"
+        ],
+        "chapter_no": 2,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名：『莫凡哥』是正文对莫凡的称呼（第2章起，全库 94 处），此处为别名查询"
+    },
+    {
+      "query_id": "reg-al-012",
+      "category": "source_chunk",
+      "query": "莫凡都有哪些外号？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "大魔头",
+          "全校公敌",
+          "冲榜狂魔"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "alias",
+      "notes": "别名聚合：莫凡的外号随时间变化——大魔头（第171章起）、全校公敌（第188章）、冲榜狂魔（第519章），需跨章节聚合"
+    },
+    {
+      "query_id": "reg-ty-001",
+      "category": "ability_query",
+      "query": "张小候是什么系的法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "张小候",
+          "风系"
+        ],
+        "chapter_no": 19,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 侯→候：语料自身即误写『张小候』（全库 3 处），正确写法张小侯，风系"
+    },
+    {
+      "query_id": "reg-ty-002",
+      "category": "character_first_appearance",
+      "query": "张小候第一次出现在第几章？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "张小候"
+        ],
+        "chapter_no": 16,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 侯→候：正确角色张小侯第16章（新女老师，唐月）首次在正文出场"
+    },
+    {
+      "query_id": "reg-ty-003",
+      "category": "ability_query",
+      "query": "张候觉醒了什么系？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "张候",
+          "风系"
+        ],
+        "chapter_no": 5,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 侯→候：第5章『泥猴子张候…一股奇异的风旋涡在觉醒石上显现…很好，风系』（语料自身误写）"
+    },
+    {
+      "query_id": "reg-ty-004",
+      "category": "character_profile",
+      "query": "泥猴子张候是哪个角色？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "泥猴子",
+          "张候"
+        ],
+        "chapter_no": 2,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 侯→候：第2章『这泥猴子叫张候』，即张小侯（语料自身误写）"
+    },
+    {
+      "query_id": "reg-ty-005",
+      "category": "character_profile",
+      "query": "慕白是哪个角色？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "穆白",
+          "慕白"
+        ],
+        "chapter_no": 10,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 穆→慕：语料多处误写『慕白』（全库 23 处），正确写法穆白"
+    },
+    {
+      "query_id": "reg-ty-006",
+      "category": "ability_query",
+      "query": "慕白是什么系的法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "穆白",
+          "慕白",
+          "冰系"
+        ],
+        "chapter_no": 25,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 穆→慕：穆白为冰系法师（第25章『穆白…好期待冰系技能啊』），慕白为语料误写"
+    },
+    {
+      "query_id": "reg-ty-007",
+      "category": "character_first_appearance",
+      "query": "莫凡的雷息是什么时候觉醒的？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "雷系",
+          "雷息"
+        ],
+        "chapter_no": 4,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 系→息（同音）：语料含『雷息』（全库 6 处），正确词雷系，莫凡第4章法系觉醒仪式觉醒"
+    },
+    {
+      "query_id": "reg-ty-008",
+      "category": "source_chunk",
+      "query": "风鬼是谁释放的？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "风轨",
+          "风鬼"
+        ],
+        "chapter_no": 19,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 轨→鬼（同音）：正确技能名『风轨』，第19章张小侯在宿舍走廊释放风轨"
+    },
+    {
+      "query_id": "reg-ty-009",
+      "category": "ability_query",
+      "query": "赵满廷是什么系的法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "赵满延",
+          "赵满廷",
+          "光系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 延→廷（近形）：正确写法赵满延，主修光系（facts：赵满延是光系魔法师，拥有光佑·圣盾）"
+    },
+    {
+      "query_id": "reg-ty-010",
+      "category": "ability_query",
+      "query": "穆百是什么系的法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "穆白",
+          "穆百",
+          "冰系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 白→百（近形）：正确写法穆白，冰系法师（第25章释放冰系技能-冰蔓）"
+    },
+    {
+      "query_id": "reg-ty-011",
+      "category": "character_profile",
+      "query": "唐朋老师是第几章出现的？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "唐月",
+          "唐朋"
+        ],
+        "chapter_no": 16,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 月→朋（近形）：正确写法唐月，第16章『新女老师，唐月』成为新老师"
+    },
+    {
+      "query_id": "reg-ty-012",
+      "category": "ability_query",
+      "query": "冰曼是穆白释放的技能吗？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "穆白",
+          "冰系",
+          "冰蔓",
+          "冰曼"
+        ],
+        "chapter_no": 25,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 蔓→曼（近形）：正确技能名『冰蔓』，第25章穆白释放冰系技能-冰蔓"
+    },
+    {
+      "query_id": "reg-ty-013",
+      "category": "character_profile",
+      "query": "陆晓斌是张小侯的室友吗？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "陆小斌",
+          "张小侯"
+        ],
+        "chapter_no": 19,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "typo",
+      "notes": "错别字 小→晓（近形）：正确写法陆小斌，第19章『同宿舍的陆小斌说道』，与张小侯同宿舍"
+    },
+    {
+      "query_id": "reg-ho-001",
+      "category": "ability_query",
+      "query": "莫烦的火系是什么等级？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "莫烦",
+          "火系"
+        ],
+        "chapter_no": 1,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 凡→烦：莫凡 火系 初阶（ability_profile first_seen_chapter=1）"
+    },
+    {
+      "query_id": "reg-ho-002",
+      "category": "character_first_appearance",
+      "query": "莫烦是什么时候觉醒火系的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "莫烦",
+          "火系",
+          "雷系"
+        ],
+        "chapter_no": 1,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 凡→烦：莫凡第1章觉醒（ability_profile），正文第4章觉醒仪式详写火苗"
+    },
+    {
+      "query_id": "reg-ho-003",
+      "category": "ability_query",
+      "query": "张小猴掌握风系吗？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "张小猴",
+          "风系"
+        ],
+        "chapter_no": 16,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 侯→猴：且『猴子』恰是张小侯的真实别名（第19章），检索容易误配到别名而非本人"
+    },
+    {
+      "query_id": "reg-ho-004",
+      "category": "source_chunk",
+      "query": "张小猴释放过什么技能？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "张小猴",
+          "风轨"
+        ],
+        "chapter_no": 19,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 侯→猴：张小侯第19章释放风系初阶技能-风轨"
+    },
+    {
+      "query_id": "reg-ho-005",
+      "category": "ability_query",
+      "query": "赵曼延是什么系的法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "赵满延",
+          "赵曼延",
+          "光系",
+          "水系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 满→曼：赵满延主修光系、次修水系（facts），与 E2E 项目同名角色设定不同"
+    },
+    {
+      "query_id": "reg-ho-006",
+      "category": "character_profile",
+      "query": "木白是哪个角色？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "穆白",
+          "木白"
+        ],
+        "chapter_no": 7,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 穆→木：穆白，第7章起被称为『绿茶男』"
+    },
+    {
+      "query_id": "reg-ho-007",
+      "category": "ability_query",
+      "query": "汤月老师是什么系的？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "唐月",
+          "汤月",
+          "火系"
+        ],
+        "chapter_no": 16,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 唐→汤：唐月老师，facts『看上去温柔贤良的唐月老师竟然是一位火魔法师』"
+    },
+    {
+      "query_id": "reg-ho-008",
+      "category": "source_chunk",
+      "query": "冰漫是谁释放的技能？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "穆白",
+          "冰系",
+          "冰蔓",
+          "冰漫"
+        ],
+        "chapter_no": 25,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 蔓→漫：正确技能名冰蔓，第25章『穆白考释放了…好期待冰系技能啊』"
+    },
+    {
+      "query_id": "reg-ho-009",
+      "category": "source_chunk",
+      "query": "星晨魔器是什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "星尘魔器",
+          "星晨魔器"
+        ],
+        "chapter_no": 20,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 尘→晨：第20章标题『星尘魔器』，一件魔器（唐月老师处理过星尘魔器事件）"
+    },
+    {
+      "query_id": "reg-ho-010",
+      "category": "ability_query",
+      "query": "火姿是火系初阶技能吗？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "火滋",
+          "火姿",
+          "火系"
+        ],
+        "chapter_no": 25,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 滋→姿：正确技能名火滋，第25章『莫凡完成火滋的释放后所有人的反应比穆白的冰蔓更加强烈十倍』"
+    },
+    {
+      "query_id": "reg-ho-011",
+      "category": "ability_query",
+      "query": "水玉是什么系的初阶技能？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "水御",
+          "水玉",
+          "水系"
+        ],
+        "chapter_no": 19,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 御→玉：正确技能名水御，水系初阶技能（第19章『离释放水系技能-水御还远着呢』）"
+    },
+    {
+      "query_id": "reg-ho-012",
+      "category": "character_profile",
+      "query": "莫佳兴是谁？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫家兴",
+          "莫佳兴",
+          "莫凡"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 家→佳：莫家兴，莫凡的父亲（全库 74 处）"
+    },
+    {
+      "query_id": "reg-ho-013",
+      "category": "character_first_appearance",
+      "query": "木宁雪什么时候降临学校的？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "穆宁雪",
+          "木宁雪"
+        ],
+        "chapter_no": 21,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 穆→木：穆宁雪，第21章标题『降临学校，穆宁雪』"
+    },
+    {
+      "query_id": "reg-ho-014",
+      "category": "character_profile",
+      "query": "叶心瑕是谁？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "叶心夏",
+          "叶心瑕"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "homophone",
+      "notes": "同音字 夏→瑕：叶心夏，正文主要女性角色（全库 207 处）"
+    },
+    {
+      "query_id": "reg-sn-001",
+      "category": "ability_query",
+      "query": "莫凡觉醒了什么系？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5",
+          "06f34d62-2c85-4dac-958b-41a0254da46b"
+        ],
+        "entities": [
+          "莫凡",
+          "火系",
+          "雷系"
+        ],
+        "chapter_no": 1,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "same_name",
+      "notes": "同名不同人：主项目(全职法师)莫凡=火系+雷系（天生双系），E2E 项目与测试小说=仅火系；无项目上下文时答案不唯一"
+    },
+    {
+      "query_id": "reg-sn-002",
+      "category": "ability_query",
+      "query": "张小侯是什么系的法师？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "张小侯",
+          "风系",
+          "土系"
+        ],
+        "chapter_no": 1,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "same_name",
+      "notes": "同名不同人：主项目张小侯=风系（facts 另有辅修土系/水系说法），E2E 项目=仅风系；需项目上下文消歧"
+    },
+    {
+      "query_id": "reg-sn-003",
+      "category": "ability_query",
+      "query": "赵满延是什么系的法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "赵满延",
+          "光系",
+          "水系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "same_name",
+      "notes": "同名不同人：主项目赵满延=主修光系次修水系（facts 另有雷系灵种说法），E2E 项目=光系；需项目上下文消歧"
+    },
+    {
+      "query_id": "reg-sn-004",
+      "category": "ability_query",
+      "query": "莫凡会雷系魔法吗？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5",
+          "06f34d62-2c85-4dac-958b-41a0254da46b"
+        ],
+        "entities": [
+          "莫凡",
+          "雷系"
+        ],
+        "chapter_no": 1,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "same_name",
+      "notes": "同名不同人：主项目莫凡第1章觉醒雷系，E2E 项目与测试小说中的莫凡没有雷系；答案取决于项目"
+    },
+    {
+      "query_id": "reg-sn-005",
+      "category": "source_chunk",
+      "query": "测试小说里的莫凡觉醒了什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "06f34d62-2c85-4dac-958b-41a0254da46b"
+        ],
+        "entities": [
+          "莫凡",
+          "火系"
+        ],
+        "project_id": "de04afc8-306e-41b6-97c9-904b4a0da9bd"
+      },
+      "difficulty": "same_name",
+      "notes": "测试小说（de04afc8）仅一章：『第一章 觉醒 莫凡觉醒了火系』，与主项目双系莫凡不同"
+    },
+    {
+      "query_id": "reg-sn-006",
+      "category": "source_chunk",
+      "query": "E2E小说里张小侯掌握的技能是什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "张小侯",
+          "风轨",
+          "风系"
+        ],
+        "chapter_no": 1,
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00"
+      },
+      "difficulty": "same_name",
+      "notes": "E2E 小说第一章：『张小侯自己觉醒的是风系。张小侯释放风轨，证明他掌握风系』"
+    },
+    {
+      "query_id": "reg-sn-007",
+      "category": "character_first_appearance",
+      "query": "张小侯的风系在E2E项目里第几章掌握的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5",
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "风系"
+        ],
+        "chapter_no": 1,
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00"
+      },
+      "difficulty": "same_name",
+      "notes": "同名不同人+时间差异：E2E 项目张小侯第1章即掌握风系，主项目 ability_profile=第16章，正文第19章才展示风轨"
+    },
+    {
+      "query_id": "reg-sn-008",
+      "category": "source_chunk",
+      "query": "赵满延的光系魔法在哪个项目里保护了张小侯？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "赵满延",
+          "光系",
+          "张小侯"
+        ],
+        "chapter_no": 1,
+        "project_id": "49aee26a-3535-4ad9-85f2-2f235d663e00"
+      },
+      "difficulty": "same_name",
+      "notes": "E2E 小说第一章：『赵满延的光系魔法保护了张小侯』；主项目无此情节，需项目上下文"
+    },
+    {
+      "query_id": "reg-sn-009",
+      "category": "ability_query",
+      "query": "莫凡的火系等级在不同项目里一致吗？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "莫凡",
+          "火系",
+          "初阶"
+        ],
+        "chapter_no": 1,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "same_name",
+      "notes": "同名核对：主项目与 E2E 项目莫凡火系都是初阶（ability_profile.level_desc=初阶），但仍需跨项目核对才能作答"
+    },
+    {
+      "query_id": "reg-cf-001",
+      "category": "character_first_appearance",
+      "query": "张小侯是什么时候掌握风系的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "张小侯",
+          "风系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "conflict",
+      "notes": "多来源冲突：主项目 ability_profile=第16章、E2E 项目=第1章、正文第19章才首次展示风轨；三处时间互相冲突，需按 source_priority 仲裁"
+    },
+    {
+      "query_id": "reg-cf-002",
+      "category": "ability_query",
+      "query": "张小侯掌握哪些魔法系？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "风系",
+          "土系",
+          "水系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "conflict",
+      "notes": "结构化表与自由文本不一致：ability_profile 仅登记风系，但 facts 含『张小侯作为一个兼备风系和土系』『张小侯辅修的是土系』『张小侯和赵满延都是水系法师』"
+    },
+    {
+      "query_id": "reg-cf-003",
+      "category": "ability_query",
+      "query": "赵满延是水系还是光系法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5"
+        ],
+        "entities": [
+          "赵满延",
+          "水系",
+          "光系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "conflict",
+      "notes": "多来源矛盾：facts 有『张小侯和赵满延都是水系法师』，也有『赵满延是光系魔法师，拥有光佑·圣盾』『雷系灵种』；E2E 小说又只写其光系"
+    },
+    {
+      "query_id": "reg-cf-004",
+      "category": "source_chunk",
+      "query": "谁杀死了鳞皮母妖？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "赵满延",
+          "莫凡",
+          "鳞皮母妖"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "conflict",
+      "notes": "事实冲突：校方/媒体公布赵满延杀死鳞皮母妖立功，学生流传版本『光系赵满延才是协助者，真正杀死鳞皮母妖的一定是那个莫凡』"
+    },
+    {
+      "query_id": "reg-cf-005",
+      "category": "ability_query",
+      "query": "莫凡是几系法师？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482",
+          "36cdfeeb-4016-4f90-85c8-b920e06405d5",
+          "06f34d62-2c85-4dac-958b-41a0254da46b"
+        ],
+        "entities": [
+          "莫凡",
+          "火系",
+          "雷系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "conflict",
+      "notes": "多来源矛盾：主项目=火+雷双系（天生双系），E2E 项目=仅火系，测试小说=仅火系；答案取决于数据源"
+    },
+    {
+      "query_id": "reg-cf-006",
+      "category": "ability_query",
+      "query": "张小侯是不是水系法师？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "水系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "conflict",
+      "notes": "事实冲突：facts『张小侯和赵满延都是水系法师，他们在海里活动非常自如』vs ability_profile 仅登记风系；另有『张小侯不是冰系法师』"
+    },
+    {
+      "query_id": "reg-cf-007",
+      "category": "source_chunk",
+      "query": "莫凡是全校公敌还是见义勇为者？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "全校公敌"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "conflict",
+      "notes": "多来源矛盾评价：第188章『莫凡这个名字早就成为了全校公敌』vs 第202章表彰大会『这个一度被认为全校公敌的大魔头莫凡竟然做了一次惊人的见义勇为之举』"
+    },
+    {
+      "query_id": "reg-cf-008",
+      "category": "character_first_appearance",
+      "query": "莫凡的雷系是什么时候觉醒的？",
+      "expected": {
+        "evidence_type": "ability_profile",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "雷系"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "conflict",
+      "notes": "时间冲突：ability_profile first_seen_chapter=1，但正文第4章『法系觉醒』才写觉醒仪式火苗、第5-6章『天生双系』才揭示雷系，结构化表与正文时间不一致"
+    },
+    {
+      "query_id": "reg-cc-001",
+      "category": "ability_query",
+      "query": "莫凡第4章觉醒仪式觉醒了什么系？第5章揭示的天生双系是什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "火系",
+          "雷系"
+        ],
+        "chapter_no": 4,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节聚合：第4章『法系觉醒』觉醒仪式（莫凡觉醒石出现火苗+雷系），第5/6章『天生双系（上/下）』揭示双系"
+    },
+    {
+      "query_id": "reg-cc-002",
+      "category": "timeline_event",
+      "query": "从莫凡觉醒到张小侯第一次在正文出现隔了几章？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "张小侯"
+        ],
+        "chapter_no": 16,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节推理：莫凡觉醒=第4章（法系觉醒），张小侯首次正文出场=第16章（新女老师，唐月），间隔约12章"
+    },
+    {
+      "query_id": "reg-cc-003",
+      "category": "timeline_event",
+      "query": "张小侯第16章首次出现，第19章做了什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "风轨"
+        ],
+        "chapter_no": 16,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节事件：张小侯首现=第16章（新女老师，唐月），第19章『风之力，风轨！』在宿舍走廊释放风轨"
+    },
+    {
+      "query_id": "reg-cc-004",
+      "category": "timeline_event",
+      "query": "穆白第7章被称为绿茶男，第25章释放的冰系技能是什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "穆白",
+          "绿茶男",
+          "冰系",
+          "冰蔓"
+        ],
+        "chapter_no": 25,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节聚合：第7章标题『绿茶男』；第25章『冰系，冰蔓！』穆白释放冰系技能-冰蔓"
+    },
+    {
+      "query_id": "reg-cc-005",
+      "category": "timeline_event",
+      "query": "莫凡从觉醒火系到释放雷印经历了多长时间？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "雷印",
+          "雷系"
+        ],
+        "chapter_no": 10,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节推理：第4章觉醒，第10章『释放，雷印』（正文：从开学到现在学期结束，莫凡一共只用了5个月）"
+    },
+    {
+      "query_id": "reg-cc-006",
+      "category": "timeline_event",
+      "query": "张小侯第19章释放风轨，第44章在飞崖上施展的又是什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "张小侯",
+          "风轨"
+        ],
+        "chapter_no": 44,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节事件：第19章风轨首次展示，第44章标题『风轨，飞崖！』风轨进阶使用"
+    },
+    {
+      "query_id": "reg-cc-007",
+      "category": "character_profile",
+      "query": "唐月第16章成为新老师，正文里她主修什么系？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "唐月",
+          "火系",
+          "暗影系"
+        ],
+        "chapter_no": 16,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节聚合：第16章『新女老师，唐月』；facts 称唐月主修火系，另有施展暗影系技能描述"
+    },
+    {
+      "query_id": "reg-cc-008",
+      "category": "source_chunk",
+      "query": "莫凡的大魔头外号出现在哪章？冲榜狂魔呢？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "大魔头",
+          "冲榜狂魔"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节聚合：大魔头=第171章起，全校公敌=第188章，冲榜狂魔=第519章；需聚合多个章节的外号证据"
+    },
+    {
+      "query_id": "reg-cc-009",
+      "category": "timeline_event",
+      "query": "第3章开学大典与第4章法系觉醒相隔多久？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "开学大典",
+          "法系觉醒"
+        ],
+        "chapter_no": 3,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节推理：第3章『开学大典』九月一号开学，第4章『法系觉醒』20个班级同时进行觉醒仪式，开学后随即觉醒"
+    },
+    {
+      "query_id": "reg-cc-010",
+      "category": "character_first_appearance",
+      "query": "莫凡第1章得知魔法觉醒在开学典礼开启，第4章实际觉醒了什么系？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "火系",
+          "雷系"
+        ],
+        "chapter_no": 4,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节聚合：第1章『世界大变』交代魔法觉醒在高中开学典礼开启，第4章『法系觉醒』莫凡实际觉醒火系+雷系"
+    },
+    {
+      "query_id": "reg-cc-011",
+      "category": "ability_query",
+      "query": "穆白第25章释放冰蔓时，莫凡释放的技能是什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "火滋",
+          "穆白",
+          "冰蔓"
+        ],
+        "chapter_no": 25,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节对比：第25章『冰系，冰蔓！』穆白释放冰蔓，同章莫凡完成火滋的释放（华丽大翻身）"
+    },
+    {
+      "query_id": "reg-cc-012",
+      "category": "ability_query",
+      "query": "莫凡的天生双系是哪两系？他在第10章用雷系释放了什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "雷系",
+          "火系",
+          "雷印"
+        ],
+        "chapter_no": 10,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节聚合：第5/6章揭示天生双系=火系+雷系，第10章『释放，雷印』用雷系释放雷印"
+    },
+    {
+      "query_id": "reg-cc-013",
+      "category": "timeline_event",
+      "query": "莫凡觉醒火系（第4章）到完成火滋释放（第25章）经历了多少章？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [
+          "e6b5ec9a-2b87-428d-aa42-124a8ffa2482"
+        ],
+        "entities": [
+          "莫凡",
+          "火系",
+          "火滋"
+        ],
+        "chapter_no": 25,
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "cross_chapter",
+      "notes": "跨章节推理：第4章觉醒火系 → 第25章完成火滋释放，间隔约21章；需跨章节聚合作答"
+    },
+    {
+      "query_id": "reg-nr-001",
+      "category": "no_result",
+      "query": "王小明是什么系的法师？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "王小明"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_result",
+      "notes": "查无结果：『王小明』全库 0 命中，期望检索不召回任何证据（hit=False 为正确行为）"
+    },
+    {
+      "query_id": "reg-nr-002",
+      "category": "no_result",
+      "query": "李小雨是哪个角色？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "李小雨"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_result",
+      "notes": "查无结果：『李小雨』全库 0 命中，期望检索不召回证据"
+    },
+    {
+      "query_id": "reg-nr-003",
+      "category": "no_result",
+      "query": "林黛玉在这个世界会魔法吗？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "林黛玉"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_result",
+      "notes": "查无结果：『林黛玉』全库 0 命中（异世界角色），期望检索不召回证据"
+    },
+    {
+      "query_id": "reg-nr-004",
+      "category": "no_result",
+      "query": "莫凡的爷爷叫什么名字？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "莫凡",
+          "爷爷"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_result",
+      "notes": "查无结果：短语『莫凡的爷爷』全库 0 命中（正文只提莫家兴，无爷爷信息；单词莫凡/爷爷在语料中存在，检索需按组合不召回）"
+    },
+    {
+      "query_id": "reg-nr-005",
+      "category": "no_result",
+      "query": "乾坤袋是什么法器？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "乾坤袋"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_result",
+      "notes": "查无结果：『乾坤袋』全库 0 命中（小说无此设定），期望检索不召回证据"
+    },
+    {
+      "query_id": "reg-nr-006",
+      "category": "no_result",
+      "query": "金丹期是什么境界？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "金丹期"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_result",
+      "notes": "查无结果：『金丹期』全库 0 命中（非本世界修炼体系），期望检索不召回证据"
+    },
+    {
+      "query_id": "reg-nr-007",
+      "category": "no_result",
+      "query": "炼丹术在这个世界存在吗？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "炼丹术"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_result",
+      "notes": "查无结果：『炼丹术』全库 0 命中，期望检索不召回证据"
+    },
+    {
+      "query_id": "reg-nr-008",
+      "category": "no_result",
+      "query": "查克拉是什么？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "查克拉"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_result",
+      "notes": "查无结果：『查克拉』全库 0 命中（外来世界观名词），期望检索不召回证据"
+    },
+    {
+      "query_id": "reg-nr-009",
+      "category": "no_result",
+      "query": "张伟是谁？",
+      "expected": {
+        "evidence_type": "source_chunk",
+        "source_ids": [],
+        "entities": [
+          "张伟"
+        ],
+        "project_id": "d62d4447-b8d7-4fc3-9193-a6d363d8f541"
+      },
+      "difficulty": "no_result",
+      "notes": "查无结果：『张伟』全库 0 命中，期望检索不召回证据"
+    }
+  ]
+}

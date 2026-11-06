@@ -1,15 +1,7 @@
-fastapi>=0.115.0
-python-multipart>=0.0.9
-uvicorn>=0.34.0
-sqlalchemy[asyncio]>=2.0.0
-asyncpg>=0.30.0
-pydantic>=2.0.0
-langgraph>=0.2.0
-langchain-core>=0.3.0
-httpx>=0.28.0
-python-dotenv>=1.0.0
-aiosqlite>=0.20.0
-pytest>=8.0.0
-PyJWT>=2.8.0
-pgvector>=0.3.0
-bcrypt>=4.0.0
+# 薄入口：不要手改本文件，也不要直接往里加包。
+# 改 backend/requirements.in（运行依赖）或 backend/requirements-dev.in（测试/开发依赖），
+# 然后重新编译锁文件：
+#   uv pip compile requirements.in -o requirements.lock --universal --python-version 3.10
+#   uv pip compile requirements-dev.in -o requirements-dev.lock --universal --python-version 3.10
+# 详见 DEPENDENCIES.md。
+-r requirements.lock

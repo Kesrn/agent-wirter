@@ -1,4 +1,14 @@
-"""API 请求/响应 Schema"""
+"""API 请求/响应 Schema。
+
+Pydantic schema 是前后端之间的“接口合同”：
+- *Create：创建接口需要的字段；
+- *Update：PATCH 接口可选字段，通常配合 exclude_unset=True；
+- *Response：返回给前端的结构，model_config.from_attributes=True 允许从 ORM 对象转换；
+- Request 类：生成、评测、知识库问答等复杂操作的入参。
+
+字段级校验尽量放在这里，例如字符串长度、枚举 pattern、数值范围。业务级校验
+（是否属于当前项目、关系是否存在）放在 routes/service 层。
+"""
 
 import uuid
 from datetime import datetime
@@ -9,14 +19,30 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 class ProjectCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str | None = None
+    overall_outline: str | None = Field(default=None, max_length=50000)
+    genre: str | None = Field(default=None, max_length=200)
+    style: str | None = Field(default=None, max_length=200)
     target_words: int = 200000
     mode: str = Field(default="novel", pattern=r"^(novel|article)$")
+
+
+class ProjectUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = None
+    overall_outline: str | None = Field(default=None, max_length=50000)
+    genre: str | None = Field(default=None, max_length=200)
+    style: str | None = Field(default=None, max_length=200)
+    target_words: int | None = Field(default=None, ge=1)
+    status: str | None = Field(default=None, pattern=r"^(active|archived|completed)$")
 
 
 class ProjectResponse(BaseModel):
     id: uuid.UUID
     title: str
     description: str | None
+    overall_outline: str | None
+    genre: str | None
+    style: str | None
     target_words: int
     status: str
     mode: str
@@ -49,6 +75,7 @@ class ExpertCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=500)
     role_type: str = Field(pattern=r"^(writer|critic|editor|researcher|custom)$")
+    skill_dir: str | None = Field(default=None, max_length=100)
     system_prompt: str = Field(default="", max_length=2000)
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     max_tokens: int = Field(default=4096, ge=100, le=8192)
@@ -84,6 +111,7 @@ class ExpertCreate(BaseModel):
 class ExpertUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=500)
+    skill_dir: str | None = Field(default=None, max_length=100)
     system_prompt: str | None = Field(default=None, max_length=2000)
     temperature: float | None = Field(default=None, ge=0.0, le=1.0)
     max_tokens: int | None = Field(default=None, ge=100, le=8192)
@@ -95,6 +123,7 @@ class ExpertUpdate(BaseModel):
     trigger: str | None = Field(default=None, pattern=r"^(manual|auto_on_draft|auto_on_save|auto_on_chapter_complete)$")
     is_enabled: bool | None = None
     color: str | None = Field(default=None, max_length=20)
+    deprecated: bool | None = None  # Expert System v2: 标记旧大师
 
     @field_validator("system_prompt")
     @classmethod
@@ -119,6 +148,7 @@ class ExpertResponse(BaseModel):
     name: str
     description: str
     role_type: str
+    skill_dir: str | None
     system_prompt: str
     temperature: float
     max_tokens: int
@@ -128,6 +158,10 @@ class ExpertResponse(BaseModel):
     is_builtin: bool
     is_enabled: bool
     color: str
+    # Expert System v2
+    expert_key: str | None = None
+    version: int = 1
+    deprecated: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -147,6 +181,12 @@ class ChapterUpdate(BaseModel):
     status: str | None = Field(default=None, pattern=r"^(draft|reviewing|revision|final|approved)$")
 
 
+class ChapterFinalizeRequest(BaseModel):
+    """最后人工审核确认的章节定稿请求。"""
+
+    content: str | None = Field(default=None, min_length=1)
+
+
 class ChapterResponse(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID
@@ -156,9 +196,42 @@ class ChapterResponse(BaseModel):
     sequence_number: int
     word_count: int
     status: str
+    final_version_id: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ChapterReviewNoteCreate(BaseModel):
+    source_type: str = Field(default="manual", pattern=r"^[a-z][a-z0-9_]{0,29}$")
+    severity: str = Field(default="info", pattern=r"^(info|warning|critical)$")
+    content: str = Field(min_length=1, max_length=20000)
+    resolved: bool = False
+    metadata_: dict | None = Field(default=None, alias="metadata")
+
+
+class ChapterReviewNoteUpdate(BaseModel):
+    source_type: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,29}$")
+    severity: str | None = Field(default=None, pattern=r"^(info|warning|critical)$")
+    content: str | None = Field(default=None, min_length=1, max_length=20000)
+    resolved: bool | None = None
+    metadata_: dict | None = Field(default=None, alias="metadata")
+
+
+class ChapterReviewNoteResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    chapter_id: uuid.UUID
+    chapter_sequence_number: int
+    source_type: str
+    severity: str
+    content: str
+    resolved: bool
+    metadata_: dict | None = Field(None, serialization_alias="metadata")
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 class TxtImportResponse(BaseModel):
@@ -168,7 +241,7 @@ class TxtImportResponse(BaseModel):
 
 
 class ChapterStructureExtractRequest(BaseModel):
-    targets: list[str] = Field(default_factory=lambda: ["outlines", "characters", "world_entries", "hidden_threads"])
+    targets: list[str] = Field(default_factory=lambda: ["outlines", "characters", "world_entries", "hidden_threads", "character_relations", "character_events"])
     mode: str = Field(default="preview", pattern=r"^(preview|apply)$")
     merge_strategy: str = Field(default="upsert", pattern=r"^(upsert|create_only)$")
     include_existing_context: bool = True
@@ -190,13 +263,17 @@ class GenerateRequest(BaseModel):
     chapter_id: str | None = None
     document_id: str | None = None
     chapter_num: int | None = Field(default=None, ge=1)
-    mode: str = Field(default="continue", pattern=r"^(continue|full_pipeline|enhance|summarize)$")
+    mode: str = Field(default="full_pipeline", pattern=r"^(continue|full_pipeline|enhance|summarize)$")
     expert_id: str | None = None
     selected_outline_ids: list[str] | None = None
     selected_character_ids: list[str] | None = None
     selected_world_entry_ids: list[str] | None = None
     selected_hidden_thread_ids: list[str] | None = None
+    include_knowledge_sources: bool = False
+    include_previous_summary: bool = False
     target_words: int | None = None
+    selected_direction: str | None = None
+    direction_option_id: str | None = None
     enhance_direction: str | None = None
     turn_direction: str | None = None
     user_note: str | None = None
@@ -206,6 +283,9 @@ class GenerateRequest(BaseModel):
     content_goal: str | None = Field(default=None, max_length=200)
     tone: str | None = Field(default=None, max_length=120)
     key_points: str | None = Field(default=None, max_length=2000)
+    planning_review: bool = False  # L-1: 是否启用任务卡预览
+    pre_generation_mode: str = Field(default="PLANNING", pattern=r"^(FAST|PLANNING|STRICT)$")  # M-1: 生成前交互模式
+    max_clarification_rounds: int = Field(default=3, ge=1, le=10)  # M-1: 最大澄清轮数
 
 
 # --- 专家测试请求 ---
@@ -223,6 +303,8 @@ class SSEEvent(BaseModel):
 class WorldEntryCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     category: str = Field(default="general", max_length=50)
+    scope_type: str = Field(default="global", pattern=r"^(global|chapter)$")
+    chapter_sequence_number: int | None = Field(default=None, ge=1)
     content: str = Field(default="", max_length=10000)
     rules: dict | None = None
     confidence: str = Field(default="medium", pattern=r"^(low|medium|high)$")
@@ -231,6 +313,8 @@ class WorldEntryCreate(BaseModel):
 class WorldEntryUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     category: str | None = Field(default=None, max_length=50)
+    scope_type: str | None = Field(default=None, pattern=r"^(global|chapter)$")
+    chapter_sequence_number: int | None = Field(default=None, ge=1)
     content: str | None = Field(default=None, max_length=10000)
     rules: dict | None = None
     confidence: str | None = Field(default=None, pattern=r"^(low|medium|high)$")
@@ -241,6 +325,8 @@ class WorldEntryResponse(BaseModel):
     project_id: uuid.UUID
     title: str
     category: str
+    scope_type: str
+    chapter_sequence_number: int | None
     content: str
     rules: dict | None
     confidence: str
@@ -254,6 +340,7 @@ class WorldEntryResponse(BaseModel):
 class CharacterCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     role_type: str = Field(default="supporting", pattern=r"^(protagonist|antagonist|supporting|minor)$")
+    scope_type: str = Field(default="recurring", pattern=r"^(core|recurring|chapter|cameo)$")
     profile: str | None = Field(default=None, max_length=5000)
     faction: str | None = Field(default=None, max_length=100)
     metadata_: dict | None = Field(default=None, alias="metadata")
@@ -262,9 +349,14 @@ class CharacterCreate(BaseModel):
 class CharacterUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     role_type: str | None = Field(default=None, pattern=r"^(protagonist|antagonist|supporting|minor)$")
+    scope_type: str | None = Field(default=None, pattern=r"^(core|recurring|chapter|cameo)$")
     profile: str | None = Field(default=None, max_length=5000)
     faction: str | None = Field(default=None, max_length=100)
     metadata_: dict | None = Field(default=None, alias="metadata")
+
+
+class CharacterMergeRequest(BaseModel):
+    target_character_id: uuid.UUID
 
 
 class CharacterResponse(BaseModel):
@@ -272,6 +364,7 @@ class CharacterResponse(BaseModel):
     project_id: uuid.UUID
     name: str
     role_type: str
+    scope_type: str
     profile: str | None
     faction: str | None
     appearance_count: int
@@ -282,12 +375,69 @@ class CharacterResponse(BaseModel):
     model_config = {"from_attributes": True, "populate_by_name": True}
 
 
+class CharacterEventUpsert(BaseModel):
+    appearance_type: str = Field(default="appeared", pattern=r"^(appeared|mentioned|absent)$")
+    event_summary: str | None = Field(default=None, max_length=10000)
+    actions: list[str] | None = None
+    state_change: str | None = Field(default=None, max_length=10000)
+    location: str | None = Field(default=None, max_length=200)
+    emotion: str | None = Field(default=None, max_length=100)
+    importance: int = Field(default=3, ge=1, le=5)
+
+
+class CharacterEventResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    character_id: uuid.UUID
+    chapter_sequence_number: int
+    appearance_type: str
+    appeared: bool
+    event_summary: str | None
+    actions: list[str] | None
+    state_change: str | None
+    location: str | None
+    emotion: str | None
+    importance: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# --- 角色弧线 (K-5) ---
+
+class CharacterArcItem(BaseModel):
+    """角色弧线中的单个事件"""
+    chapter_sequence_number: int | None
+    source_type: str  # CharacterEvent / WritingMemory
+    title: str
+    summary: str = ""
+    state_change: str | None = None
+    emotion: str | None = None
+    importance: int = 3
+    confidence: str = "confirmed"  # confirmed / ai_extracted
+
+
+class CharacterArcResponse(BaseModel):
+    """角色弧线聚合视图"""
+    character_id: uuid.UUID
+    character_name: str
+    role_type: str
+    items: list[CharacterArcItem]
+    chapter_range: str = ""
+
+
 # --- 大纲 ---
 class OutlineCreate(BaseModel):
     sequence_number: int = Field(ge=1)
     title: str = Field(min_length=1, max_length=200)
     summary: str | None = Field(default=None, max_length=10000)
     turning_point: str | None = Field(default=None, max_length=5000)
+    story_arc_id: str | None = None
+    arc_position: str | None = Field(default=None, pattern=r"^(SETUP|BUILDUP|TURNING_POINT|CLIMAX|AFTERMATH)$")
+    pacing: str | None = Field(default=None, pattern=r"^(SETUP|BUILDUP|REVERSAL|CLIMAX|AFTERMATH|TRANSITION|SLICE)$")
+    tension_level: int | None = Field(default=None, ge=1, le=5)
+    target_scene_count: int | None = Field(default=None, ge=1)
 
 
 class OutlineUpdate(BaseModel):
@@ -295,6 +445,11 @@ class OutlineUpdate(BaseModel):
     summary: str | None = Field(default=None, max_length=10000)
     turning_point: str | None = Field(default=None, max_length=5000)
     hidden_thread_ids: list[str] | None = None
+    story_arc_id: str | None = None
+    arc_position: str | None = Field(default=None, pattern=r"^(SETUP|BUILDUP|TURNING_POINT|CLIMAX|AFTERMATH)$")
+    pacing: str | None = Field(default=None, pattern=r"^(SETUP|BUILDUP|REVERSAL|CLIMAX|AFTERMATH|TRANSITION|SLICE)$")
+    tension_level: int | None = Field(default=None, ge=1, le=5)
+    target_scene_count: int | None = Field(default=None, ge=1)
 
 
 class OutlineResponse(BaseModel):
@@ -305,6 +460,11 @@ class OutlineResponse(BaseModel):
     summary: str | None
     turning_point: str | None
     hidden_thread_ids: list[str] | None
+    story_arc_id: uuid.UUID | None = None
+    arc_position: str | None = None
+    pacing: str | None = None
+    tension_level: int | None = None
+    target_scene_count: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -316,12 +476,23 @@ class HiddenThreadCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=10000)
     chapter_nums: list[int] | None = None
+    status: str = Field(default="PLANNED", pattern=r"^(PLANNED|PLANTED|ACTIVE|REVEALED|RESOLVED|DROPPED)$")
+    thread_type: str | None = Field(default=None, pattern=r"^(FORESHADOWING|SECRET|RELATIONSHIP|WORLD_RULE)$")
+    planted_chapter: int | None = Field(default=None, ge=1)
+    reveal_chapter: int | None = Field(default=None, ge=1)
 
 
 class HiddenThreadUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=10000)
     chapter_nums: list[int] | None = None
+    status: str | None = Field(default=None, pattern=r"^(PLANNED|PLANTED|ACTIVE|REVEALED|RESOLVED|DROPPED)$")
+    thread_type: str | None = Field(default=None, pattern=r"^(FORESHADOWING|SECRET|RELATIONSHIP|WORLD_RULE)$")
+    planted_chapter: int | None = Field(default=None, ge=1)
+    reveal_chapter: int | None = Field(default=None, ge=1)
+    resolved_chapter: int | None = Field(default=None, ge=1)
+    payoff_summary: str | None = None
+    risk_level: str | None = Field(default=None, pattern=r"^(LOW|MEDIUM|HIGH)$")
 
 
 class HiddenThreadResponse(BaseModel):
@@ -330,10 +501,64 @@ class HiddenThreadResponse(BaseModel):
     name: str
     description: str | None
     chapter_nums: list[int] | None
+    status: str
+    thread_type: str | None = None
+    planted_chapter: int | None = None
+    reveal_chapter: int | None = None
+    resolved_chapter: int | None = None
+    payoff_summary: str | None = None
+    risk_level: str | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# --- 长线结构 (Story Arc) ---
+class StoryArcCreate(BaseModel):
+    arc_type: str = Field(pattern=r"^(VOLUME|ACT|ARC)$")
+    name: str = Field(min_length=1, max_length=200)
+    summary: str | None = Field(default=None, max_length=10000)
+    goal: str | None = Field(default=None, max_length=10000)
+    main_conflict: str | None = Field(default=None, max_length=10000)
+    parent_arc_id: str | None = None
+    start_chapter: int | None = Field(default=None, ge=1)
+    end_chapter: int | None = Field(default=None, ge=1)
+    order_index: int = Field(default=0, ge=0)
+    status: str = Field(default="PLANNED", pattern=r"^(PLANNED|ACTIVE|COMPLETED|PAUSED|ARCHIVED)$")
+
+
+class StoryArcUpdate(BaseModel):
+    arc_type: str | None = Field(default=None, pattern=r"^(VOLUME|ACT|ARC)$")
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    summary: str | None = Field(default=None, max_length=10000)
+    goal: str | None = Field(default=None, max_length=10000)
+    main_conflict: str | None = Field(default=None, max_length=10000)
+    parent_arc_id: str | None = None
+    start_chapter: int | None = Field(default=None, ge=1)
+    end_chapter: int | None = Field(default=None, ge=1)
+    order_index: int | None = Field(default=None, ge=0)
+    status: str | None = Field(default=None, pattern=r"^(PLANNED|ACTIVE|COMPLETED|PAUSED|ARCHIVED)$")
+
+
+class StoryArcResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    parent_arc_id: uuid.UUID | None = None
+    arc_type: str
+    name: str
+    summary: str | None
+    goal: str | None
+    main_conflict: str | None
+    start_chapter: int | None
+    end_chapter: int | None
+    order_index: int
+    status: str
+    metadata_: dict | None = Field(default=None, serialization_alias="metadata")
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 # --- 角色关系 ---
@@ -360,36 +585,48 @@ class CharacterRelationResponse(BaseModel):
 
 
 # --- LLM 配置 ---
+LLM_PROVIDER_PATTERN = r"^(mock|openai|deepseek|siliconflow|zhipu|moonshot|qwen|yi|minimax|custom)$"
+
+
 class LLMConfigCreate(BaseModel):
-    provider: str = Field(pattern=r"^(mock|openai|deepseek|siliconflow|zhipu|moonshot|qwen|yi|minimax|custom)$")
+    name: str = Field(min_length=1, max_length=100)
+    provider: str = Field(pattern=LLM_PROVIDER_PATTERN)
     api_key: str = Field(default="", max_length=500)
     base_url: str | None = Field(default=None, max_length=500)
     model_id: str | None = Field(default=None, max_length=100)
+    is_active: bool = True
 
 
 class LLMConfigUpdate(BaseModel):
-    provider: str | None = Field(default=None, pattern=r"^(mock|openai|deepseek|siliconflow|zhipu|moonshot|qwen|yi|minimax|custom)$")
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    provider: str | None = Field(default=None, pattern=LLM_PROVIDER_PATTERN)
     api_key: str | None = Field(default=None, max_length=500)  # null=keep existing, ""=clear
     base_url: str | None = Field(default=None, max_length=500)
     model_id: str | None = Field(default=None, max_length=100)
+    is_active: bool | None = None
 
 
 class LLMConfigResponse(BaseModel):
-    id: uuid.UUID
+    id: uuid.UUID | None = None
+    name: str
     provider: str
     api_key_set: bool
+    api_key_masked: str | None = None
     base_url: str | None
     model_id: str | None
-    created_at: datetime
-    updated_at: datetime
+    is_active: bool = False
+    source: str = "user"
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
 
 class ModelListRequest(BaseModel):
-    provider: str = Field(pattern=r"^(openai|deepseek|siliconflow|zhipu|moonshot|qwen|yi|minimax|custom)$")
-    api_key: str = Field(min_length=1, max_length=500)
+    provider: str | None = Field(default=None, pattern=LLM_PROVIDER_PATTERN)
+    api_key: str | None = Field(default=None, max_length=500)
     base_url: str | None = Field(default=None, max_length=500)
+    config_id: uuid.UUID | None = None
 
 
 class ModelInfo(BaseModel):
@@ -443,6 +680,9 @@ class ChapterVersionListItemResponse(BaseModel):
     word_count: int
     version_number: int
     source: str
+    run_id: uuid.UUID | None = None
+    parent_version_id: uuid.UUID | None = None
+    rollback_from_version_id: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -455,6 +695,9 @@ class ChapterVersionResponse(BaseModel):
     word_count: int
     version_number: int
     source: str
+    run_id: uuid.UUID | None = None
+    parent_version_id: uuid.UUID | None = None
+    rollback_from_version_id: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -548,17 +791,36 @@ class DocumentVersionDiffResponse(BaseModel):
 
 
 # --- AI 生成历史 ---
+class HumanEditMetricsResponse(BaseModel):
+    method: str
+    approximate: bool = False
+    edited: bool
+    anchor_version_id: str
+    human_version_id: str | None
+    original_chars: int
+    final_chars: int
+    changed_chars: int
+    changed_original_chars: int
+    inserted_chars: int
+    similarity: float
+    edit_ratio: float
+    computed_at: datetime
+
+
 class GenerationRecordListItemResponse(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID
     chapter_id: uuid.UUID | None
     document_id: uuid.UUID | None
+    run_id: uuid.UUID | None = None
     mode: str
     expert_id: uuid.UUID | None
     direction: str | None
     word_count: int
     status: str
+    langfuse_trace_id: str | None = None
     created_at: datetime
+    human_edit_metrics: HumanEditMetricsResponse | None = None
 
     model_config = {"from_attributes": True}
 
@@ -586,3 +848,584 @@ class GenerationRecordDiffRequest(BaseModel):
 class GenerationRecordDiffResponse(BaseModel):
     generation_id: uuid.UUID
     diff: list[dict]
+
+
+class GenerationRecordOriginalResponse(BaseModel):
+    id: uuid.UUID
+    content: str
+
+
+class GenerationRecordEditMetricsRefreshResponse(BaseModel):
+    human_edit_metrics: HumanEditMetricsResponse | None
+
+
+class EditStatsSummaryResponse(BaseModel):
+    count: int
+    edited_count: int
+    mean_edit_ratio: float | None
+    median_edit_ratio: float | None
+    p90_edit_ratio: float | None
+    total_original_chars: int
+    total_changed_chars: int
+
+
+class EditStatsItemResponse(BaseModel):
+    generation_record_id: uuid.UUID
+    chapter_id: uuid.UUID
+    chapter_sequence_number: int
+    run_id: uuid.UUID | None
+    mode: str
+    applied_at: datetime
+    original_chars: int
+    final_chars: int
+    changed_chars: int
+    edit_ratio: float
+    similarity: float
+    edited: bool
+    approximate: bool = False
+
+
+class EditStatsResponse(BaseModel):
+    summary: EditStatsSummaryResponse
+    items: list[EditStatsItemResponse]
+    limit: int
+    offset: int
+
+
+# --- 评测集 ---
+class EvaluationDatasetCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=5000)
+    mode: str = Field(default="creative", pattern=r"^(creative|regression|prompt|model)$")
+
+
+class EvaluationDatasetUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=5000)
+    status: str | None = Field(default=None, pattern=r"^(active|archived)$")
+
+
+# --- 写作记忆 staging ---
+
+class WritingMemoryStagingResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    run_id: uuid.UUID | None = None
+    chapter_id: uuid.UUID | None = None
+    chapter_version_id: uuid.UUID | None = None
+    chapter_sequence_number: int | None = None
+    memory_type: str
+    title: str
+    payload: dict = Field(default_factory=dict)
+    evidence: str | None = None
+    status: str
+    confirmed_target_type: str | None = None
+    confirmed_target_id: uuid.UUID | None = None
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class EvaluationDatasetResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    description: str | None
+    mode: str
+    status: str
+    case_count: int = 0
+    run_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class EvaluationCaseCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    task_type: str = Field(default="creative_generation", max_length=50)
+    input_text: str = Field(default="", max_length=20000)
+    actual_output: str | None = Field(default=None, max_length=30000)
+    reference_output: str | None = Field(default=None, max_length=30000)
+    expected_properties: list[str] | None = None
+    rubric: dict | None = None
+    tags: list[str] | None = None
+
+
+class EvaluationCaseUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    task_type: str | None = Field(default=None, max_length=50)
+    input_text: str | None = Field(default=None, max_length=20000)
+    actual_output: str | None = Field(default=None, max_length=30000)
+    reference_output: str | None = Field(default=None, max_length=30000)
+    expected_properties: list[str] | None = None
+    rubric: dict | None = None
+    tags: list[str] | None = None
+    status: str | None = Field(default=None, pattern=r"^(active|disabled|archived)$")
+
+
+class EvaluationCaseResponse(BaseModel):
+    id: uuid.UUID
+    dataset_id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    task_type: str
+    input_text: str
+    actual_output: str | None
+    reference_output: str | None
+    expected_properties: list[str] | None
+    rubric: dict | None
+    tags: list[str] | None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class EvaluationRunCreate(BaseModel):
+    name: str | None = Field(default=None, max_length=200)
+    generation_mode: str = Field(default="generate_and_judge", pattern=r"^(generate_and_judge|judge_only)$")
+    case_ids: list[uuid.UUID] | None = None
+
+
+class EvaluationResultResponse(BaseModel):
+    id: uuid.UUID
+    run_id: uuid.UUID
+    case_id: uuid.UUID
+    project_id: uuid.UUID
+    generated_output: str | None
+    scores: dict | None
+    score: float | None
+    passed: bool | None
+    feedback: str | None
+    error: str | None
+    latency_ms: int | None
+    langfuse_trace_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class EvaluationRunResponse(BaseModel):
+    id: uuid.UUID
+    dataset_id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    generation_mode: str
+    status: str
+    model_provider: str | None
+    model_id: str | None
+    total_cases: int
+    completed_cases: int
+    failed_cases: int
+    average_score: float | None
+    summary: str | None
+    results: list[EvaluationResultResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── 资料库 (Project Knowledge) ─────────────────────────────────────
+
+class ProjectSourceCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    source_type: str = Field(default="upload", pattern=r"^(upload|fanfic_rule|timeline|note|reference|novel)$")
+    content: str = Field(default="", max_length=50_000_000)
+    tags: list[str] | None = None
+    always_inject: bool = False
+    metadata_: dict | None = None
+    # 小说抽取相关（仅 source_type=novel 时有意义，存入 metadata_）
+    genre: str | None = Field(default=None, pattern=r"^(magic_fantasy|historical)$")
+    canon_level: str | None = Field(default=None, pattern=r"^(manual|fanfic|original)$")
+
+
+class ProjectSourceUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    source_type: str | None = Field(default=None, pattern=r"^(upload|fanfic_rule|timeline|note|reference|novel)$")
+    content: str | None = Field(default=None, max_length=50_000_000)
+    tags: list[str] | None = None
+    always_inject: bool | None = None
+
+
+class ProjectSourceResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    title: str
+    source_type: str
+    content: str
+    summary: str | None = None
+    key_facts: list | None = None
+    constraints: list | None = None
+    characters: list | None = None
+    keywords: list | None = None
+    tags: list | None = None
+    always_inject: bool
+    chunk_count: int
+    token_count: int
+    metadata_: dict | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ProjectSourceListResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    title: str
+    source_type: str
+    content_preview: str = ""
+    content_truncated: bool = False
+    summary: str | None = None
+    key_facts: list | None = None
+    constraints: list | None = None
+    characters: list | None = None
+    keywords: list | None = None
+    tags: list | None = None
+    always_inject: bool
+    chunk_count: int
+    token_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProjectSourceChunkResponse(BaseModel):
+    id: uuid.UUID
+    source_id: uuid.UUID
+    chunk_index: int
+    content: str
+    summary: str | None = None
+    facts: list | None = None
+    constraints: list | None = None
+    keywords: list | None = None
+    token_count: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class KnowledgeQaSessionResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    title: str
+    summary: str | None = None
+    message_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class KnowledgeQaSessionUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+
+
+class KnowledgeQaMessageResponse(BaseModel):
+    id: uuid.UUID
+    session_id: uuid.UUID
+    role: str
+    content: str
+    citations: list | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class KnowledgeAskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=4000)
+    conversation_id: str | None = None
+    chapter_num: int | None = None
+    include_structured: bool = True
+    include_web: bool = False
+    web_provider: str | None = Field(default=None, max_length=50)
+    web_api_key: str | None = Field(default=None, max_length=500)
+    web_base_url: str | None = Field(default=None, max_length=500)
+
+
+class KnowledgeSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=2000)
+    source_type: str | None = None
+    chapter_num: int | None = None
+    limit: int = Field(default=10, ge=1, le=50)
+
+
+class Citation(BaseModel):
+    source_kind: str  # project_source_chunk | character | character_event | outline | world_entry | hidden_thread | chapter | web_search
+    source_id: str
+    chunk_id: str | None = None
+    title: str
+    snippet: str
+    url: str | None = None
+    evidence_type: str | None = None
+    matched_query: str | None = None
+    score: float | None = None
+
+
+class KnowledgeAskResponse(BaseModel):
+    answer: str
+    citations: list[Citation]
+    conversation_id: str
+    conversation_summary_updated: bool = False
+    query_plan: dict | None = None
+    retrieval_stats: dict | None = None
+
+
+# ==================== AI Run ====================
+
+class AiRunResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    chapter_id: uuid.UUID | None = None
+    document_id: uuid.UUID | None = None
+    generation_record_id: uuid.UUID | None = None
+    run_type: str
+    mode: str
+    status: str
+    current_step: str | None = None
+    user_goal: str | None = None
+    thread_id: str | None = None
+    token_usage: dict | None = None
+    cost_usage: dict | None = None
+    error_message: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AiRunListItemResponse(BaseModel):
+    id: uuid.UUID
+    run_type: str
+    mode: str
+    status: str
+    current_step: str | None = None
+    generation_record_id: uuid.UUID | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AiRunStepResponse(BaseModel):
+    """step 摘要——不含 input/output 等大字段，避免 API 响应变重。"""
+    id: uuid.UUID
+    run_id: uuid.UUID
+    step_order: int
+    step_name: str
+    agent_name: str | None = None
+    status: str
+    error_message: str | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    llm_call_count: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+class AiRunContextCallResponse(BaseModel):
+    """一次 LLM 调用的可解释上下文快照。
+
+    只暴露用户需要复盘的上下文与调用摘要，不返回模型配置密钥等敏感信息。
+    """
+    id: uuid.UUID
+    run_id: uuid.UUID | None = None
+    step_id: uuid.UUID | None = None
+    step_name: str | None = None
+    agent_name: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    context_snapshot: dict | None = None
+    context_text: str | None = None
+    prompt_snapshot: str | None = None
+    prompt_truncated: bool = False
+    error_message: str | None = None
+    created_at: datetime
+
+
+class AiRunContextResponse(BaseModel):
+    run_id: uuid.UUID
+    project_id: uuid.UUID
+    mode: str
+    status: str
+    workflow_key: str | None = None
+    calls: list[AiRunContextCallResponse]
+
+
+class AiRunTraceRunResponse(BaseModel):
+    id: uuid.UUID
+    request_id: str | None = None
+    status: str
+    run_type: str
+    mode: str
+    workflow_key: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    duration_ms: int | None = None
+    error_message: str | None = None
+
+
+class AiRunTraceTotalsResponse(BaseModel):
+    llm_calls: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    cost: float | None = None
+    retries: int
+    estimated_calls: int
+    structured_repairs: int
+
+
+class AiRunTraceFailedStepResponse(BaseModel):
+    step_order: int
+    step_name: str
+    agent_name: str | None = None
+    error_message: str | None = None
+
+
+class AiRunTraceLlmCallResponse(BaseModel):
+    id: uuid.UUID
+    agent_name: str | None = None
+    model: str | None = None
+    latency_ms: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    cost: float | None = None
+    retries: int = 0
+    usage_estimated: bool = False
+    structured: dict | None = None
+    error_message: str | None = None
+    rendered_prompt_snapshot: str | None = None
+    prompt_truncated: bool | None = None
+
+
+class AiRunTraceStepResponse(BaseModel):
+    step_order: int
+    step_name: str
+    node_key: str | None = None
+    agent_name: str | None = None
+    status: str
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    duration_ms: int | None = None
+    retry_count: int
+    max_retry: int
+    error_message: str | None = None
+    quality: dict | None = None
+    llm_calls: list[AiRunTraceLlmCallResponse]
+
+
+class AiRunTraceResponse(BaseModel):
+    run: AiRunTraceRunResponse
+    totals: AiRunTraceTotalsResponse
+    failed_step: AiRunTraceFailedStepResponse | None = None
+    steps: list[AiRunTraceStepResponse]
+    truncated: bool = False
+
+
+# ==================== Human Interrupt ====================
+
+class HumanDecisionRequest(BaseModel):
+    """人工审核决策请求"""
+    decision: str = Field(..., pattern=r"^(APPROVE|REJECT|EDIT|REGENERATE)$")
+    feedback: str | None = None
+
+
+class HumanDecisionResponse(BaseModel):
+    """人工审核决策响应"""
+    run_id: str
+    interrupt_id: str
+    status: str
+    message: str
+
+
+# ── Clarification Loop ──
+
+
+class ClarificationAnswerRequest(BaseModel):
+    """提交澄清回答请求"""
+    action: str = Field(..., pattern=r"^(submit|skip)$")
+    answers: dict[str, str] = Field(default_factory=dict)
+
+
+class ClarificationResponse(BaseModel):
+    """澄清状态响应"""
+    run_id: str
+    interrupt_id: str | None = None
+    status: str
+    round: int = 1
+    max_rounds: int = 3
+    questions: list[dict] = Field(default_factory=list)
+    assumptions_if_skipped: list[str] = Field(default_factory=list)
+    existing_answers: dict[str, str] = Field(default_factory=dict)
+    clarification_summary: str = ""
+    resolved: bool = False
+
+    model_config = {"from_attributes": True}
+
+
+# ==================== 对话式创作（chat） ====================
+# 契约草案：方案 §12。响应字段用 dict 保持前端契约稳定，
+# 仅对请求做 pydantic 参数校验。
+
+
+class ChatSessionCreateRequest(BaseModel):
+    project_id: str = Field(..., min_length=1)
+
+
+class ChatSessionResponse(BaseModel):
+    session_id: str
+    project_id: str
+    title: str | None = None
+    summary: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ChatContextRequest(BaseModel):
+    """当前工作区上下文，不替代正文事实，只用于定位当前操作对象。"""
+    chapter_no: int | None = Field(default=None, ge=0)
+    chapter_title: str | None = None
+    current_version_id: str | None = None
+    draft: str | None = None
+    # 补锁 3：用户选中的文本与光标所在段落（供 LLM 理解"改这段/改选中部分"）
+    selection: str | None = Field(default=None, max_length=2000)
+    current_paragraph: str | None = Field(default=None, max_length=2000)
+
+
+class ChatSendMessageRequest(BaseModel):
+    content: str = Field(..., min_length=1, max_length=20000)
+    idempotency_key: str | None = Field(default=None, max_length=64)
+    context: ChatContextRequest | None = None
+
+
+class ChatConfirmRequest(BaseModel):
+    confirmed: bool = True
+    overrides: dict | None = None
+    idempotency_key: str | None = Field(default=None, max_length=64)
+    # 重新生成场景：显式传入基于的最新正式版本（覆盖任务卡中的旧 base_version_id）
+    base_version_id: str | None = Field(default=None, max_length=36)
+
+
+class ChatReviseRequest(BaseModel):
+    revise_instruction: str = Field(..., min_length=1, max_length=20000)
+    idempotency_key: str | None = Field(default=None, max_length=64)
+
+
+class ChatSessionDetailResponse(BaseModel):
+    session_id: str
+    project_id: str
+    title: str | None = None
+    summary: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    messages: list[dict] = Field(default_factory=list)

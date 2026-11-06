@@ -1,0 +1,1019 @@
+{
+  "version": 1,
+  "differences": [
+    {
+      "type": "foreign_key",
+      "table": "extraction_jobs",
+      "object": "fk_extraction_jobs_split_generation",
+      "description": "remove_fk; target=split_generations.id"
+    },
+    {
+      "type": "foreign_key",
+      "table": "project_source_chapters",
+      "object": "fk_source_chapters_generation",
+      "description": "remove_fk; target=split_generations.id"
+    },
+    {
+      "type": "foreign_key",
+      "table": "source_split_state",
+      "object": "fk_source_split_state_active",
+      "description": "remove_fk; target=split_generations.id"
+    },
+    {
+      "type": "foreign_key",
+      "table": "source_split_state",
+      "object": "fk_source_split_state_source",
+      "description": "remove_fk; target=project_sources.id"
+    },
+    {
+      "type": "foreign_key",
+      "table": "split_exclusions",
+      "object": "fk_split_exclusions_generation",
+      "description": "remove_fk; target=split_generations.id"
+    },
+    {
+      "type": "foreign_key",
+      "table": "split_generations",
+      "object": "fk_split_generations_source",
+      "description": "remove_fk; target=project_sources.id"
+    },
+    {
+      "type": "foreign_key",
+      "table": "story_arcs",
+      "object": "story_arcs_project_id_fkey",
+      "description": "remove_fk; target=projects.id"
+    },
+    {
+      "type": "json_jsonb",
+      "table": "character_alias_clusters",
+      "object": "aliases",
+      "description": "database JSON(JSON); ORM JSONValue(JSON)"
+    },
+    {
+      "type": "json_jsonb",
+      "table": "generation_records",
+      "object": "human_edit_metrics",
+      "description": "database JSON(JSON); ORM JSONValue(JSON)"
+    },
+    {
+      "type": "nullability",
+      "table": "ability_profile",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "ability_profile",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "ai_run_steps",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "ai_run_steps",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "ai_runs",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "ai_runs",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "change_sets",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "change_sets",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "chapter_review_notes",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "chapter_review_notes",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "chapter_versions",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "chapter_versions",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "chapter_versions",
+      "object": "word_count",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "chapters",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "chapters",
+      "object": "sequence_number",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "chapters",
+      "object": "status",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "chapters",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "chapters",
+      "object": "word_count",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "character_alias_clusters",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "character_alias_clusters",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "character_appearance",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "character_appearance",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "character_events",
+      "object": "appearance_type",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "character_events",
+      "object": "appeared",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "character_events",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "character_events",
+      "object": "importance",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "character_events",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "character_profile",
+      "object": "appearance_count",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "character_profile",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "character_profile",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "character_relations",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "character_relations",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "characters",
+      "object": "appearance_count",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "characters",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "characters",
+      "object": "role_type",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "characters",
+      "object": "scope_type",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "characters",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "chat_messages",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "chat_messages",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "chat_sessions",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "chat_sessions",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "document_versions",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "document_versions",
+      "object": "source",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "document_versions",
+      "object": "word_count",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "documents",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "documents",
+      "object": "position",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "documents",
+      "object": "status",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "documents",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "documents",
+      "object": "word_count",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "evaluation_cases",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "evaluation_cases",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "evaluation_datasets",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "evaluation_datasets",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "evaluation_results",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "evaluation_results",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "evaluation_runs",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "evaluation_runs",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "event_timeline",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "event_timeline",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "experts",
+      "object": "color",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "experts",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "experts",
+      "object": "description",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "experts",
+      "object": "is_builtin",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "experts",
+      "object": "is_enabled",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "experts",
+      "object": "max_tokens",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "experts",
+      "object": "system_prompt",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "experts",
+      "object": "temperature",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "experts",
+      "object": "trigger",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "experts",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "extraction_jobs",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "extraction_jobs",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "extraction_staging",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "extraction_staging",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "generation_records",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "generation_records",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "generation_records",
+      "object": "word_count",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "hidden_threads",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "hidden_threads",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "human_interrupts",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "knowledge_qa_messages",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "knowledge_qa_messages",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "knowledge_qa_sessions",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "knowledge_qa_sessions",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "llm_call_logs",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "llm_configs",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "llm_configs",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "outlines",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "outlines",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "project_knowledge_facts",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "project_knowledge_facts",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "project_source_chapters",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "project_source_chapters",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "project_source_chunks",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "project_source_chunks",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "project_sources",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "project_sources",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "projects",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "projects",
+      "object": "mode",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "projects",
+      "object": "status",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "projects",
+      "object": "target_words",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "projects",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "retrieval_chunks",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "retrieval_chunks",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "retrieval_index_generation",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "retrieval_index_generation",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "retrieval_index_jobs",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "retrieval_index_jobs",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "retrieval_index_source_state",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "retrieval_index_source_state",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "retrieval_vectors",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "retrieval_vectors",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "split_exclusions",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "split_exclusions",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "split_generations",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "split_generations",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "story_arcs",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "story_arcs",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "task_constraints",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "task_constraints",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "users",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "users",
+      "object": "is_active",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "users",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "world_entries",
+      "object": "confidence",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "world_entries",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "world_entries",
+      "object": "scope_type",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "world_entries",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "world_rule",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "world_rule",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "writing_memory_staging",
+      "object": "created_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "nullability",
+      "table": "writing_memory_staging",
+      "object": "updated_at",
+      "description": "database nullable=True; ORM nullable=False"
+    },
+    {
+      "type": "old_index",
+      "table": "ai_runs",
+      "object": "ix_ai_runs_status",
+      "description": "remove_index; columns=status; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "chapter_versions",
+      "object": "ix_chapter_versions_chapter_id_version_number",
+      "description": "remove_index; columns=chapter_id,version_number; unique=True"
+    },
+    {
+      "type": "old_index",
+      "table": "generation_records",
+      "object": "ix_generation_records_chapter_created",
+      "description": "remove_index; columns=chapter_id,created_at; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "generation_records",
+      "object": "ix_generation_records_document_created",
+      "description": "remove_index; columns=document_id,created_at; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "generation_records",
+      "object": "ix_generation_records_project_created",
+      "description": "remove_index; columns=project_id,created_at; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "generation_records",
+      "object": "ix_generation_records_superseded_by",
+      "description": "remove_index; columns=superseded_by_execution_id; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "retrieval_chunks",
+      "object": "ix_retrieval_chunks_search_tsv",
+      "description": "remove_index; columns=search_tsv; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "source_split_state",
+      "object": "ix_source_split_state_active",
+      "description": "remove_index; columns=active_split_generation_id; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "source_split_state",
+      "object": "ix_source_split_state_active_split_generation_id",
+      "description": "add_index; columns=active_split_generation_id; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "users",
+      "object": "ix_users_username",
+      "description": "add_index; columns=username; unique=True"
+    },
+    {
+      "type": "old_index",
+      "table": "users",
+      "object": "users_username_key",
+      "description": "remove_constraint; constraint=UniqueConstraint"
+    },
+    {
+      "type": "old_index",
+      "table": "writing_memory_staging",
+      "object": "ix_wms_chapter_id",
+      "description": "remove_index; columns=chapter_id; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "writing_memory_staging",
+      "object": "ix_wms_chapter_seq",
+      "description": "remove_index; columns=chapter_sequence_number; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "writing_memory_staging",
+      "object": "ix_wms_memory_type",
+      "description": "remove_index; columns=memory_type; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "writing_memory_staging",
+      "object": "ix_wms_project_id",
+      "description": "remove_index; columns=project_id; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "writing_memory_staging",
+      "object": "ix_wms_run_id",
+      "description": "remove_index; columns=run_id; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "writing_memory_staging",
+      "object": "ix_wms_status",
+      "description": "remove_index; columns=status; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "writing_memory_staging",
+      "object": "ix_writing_memory_staging_chapter_id",
+      "description": "add_index; columns=chapter_id; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "writing_memory_staging",
+      "object": "ix_writing_memory_staging_chapter_sequence_number",
+      "description": "add_index; columns=chapter_sequence_number; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "writing_memory_staging",
+      "object": "ix_writing_memory_staging_memory_type",
+      "description": "add_index; columns=memory_type; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "writing_memory_staging",
+      "object": "ix_writing_memory_staging_project_id",
+      "description": "add_index; columns=project_id; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "writing_memory_staging",
+      "object": "ix_writing_memory_staging_run_id",
+      "description": "add_index; columns=run_id; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "writing_memory_staging",
+      "object": "ix_writing_memory_staging_status",
+      "description": "add_index; columns=status; unique=False"
+    },
+    {
+      "type": "old_index",
+      "table": "writing_memory_staging",
+      "object": "ux_wms_idempotency",
+      "description": "remove_index; columns=idempotency_key; unique=True"
+    },
+    {
+      "type": "uuid_string",
+      "table": "character_alias_clusters",
+      "object": "id",
+      "description": "database VARCHAR(VARCHAR(36)); ORM GUID(CHAR(36))"
+    },
+    {
+      "type": "uuid_string",
+      "table": "character_appearance",
+      "object": "chapter_id",
+      "description": "database VARCHAR(VARCHAR(36)); ORM GUID(CHAR(36))"
+    },
+    {
+      "type": "uuid_string",
+      "table": "character_appearance",
+      "object": "character_id",
+      "description": "database VARCHAR(VARCHAR(36)); ORM GUID(CHAR(36))"
+    },
+    {
+      "type": "uuid_string",
+      "table": "character_appearance",
+      "object": "id",
+      "description": "database VARCHAR(VARCHAR(36)); ORM GUID(CHAR(36))"
+    },
+    {
+      "type": "uuid_string",
+      "table": "character_appearance",
+      "object": "project_id",
+      "description": "database VARCHAR(VARCHAR(36)); ORM GUID(CHAR(36))"
+    },
+    {
+      "type": "uuid_string",
+      "table": "character_appearance",
+      "object": "source_id",
+      "description": "database VARCHAR(VARCHAR(36)); ORM GUID(CHAR(36))"
+    }
+  ]
+}

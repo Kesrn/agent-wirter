@@ -1,14 +1,20 @@
 """最小冒烟测试 — 使用 SQLite 内存数据库，无需 PostgreSQL"""
 
+import asyncio
+import json
 import os
 import re
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event, JSON, String, Float
+from sqlalchemy import event, JSON, String, Float, func, select
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID, ARRAY
 from sqlalchemy.dialects.sqlite.base import SQLiteTypeCompiler
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+# 普通测试跨多个 TestClient 事件循环运行，使用 MemorySaver 避免把持久化
+# checkpointer 的连接生命周期混入业务断言；重启恢复由专门测试覆盖。
+os.environ.setdefault("CHECKPOINTER_BACKEND", "memory")
 
 # Monkey-patch SQLite type compiler for PostgreSQL-specific types
 # (must happen before importing models / main, which trigger type registration)
@@ -24,13 +30,15 @@ def compile_uuid_sqlite(type_, compiler, **kw):
 
 
 from models.base import Base
-from models import Project, Chapter, Expert, WorldEntry, Character, User, ChapterVersion, Document, DocumentVersion  # noqa: F401
+from models import Project, Chapter, Expert, WorldEntry, Character, User, ChapterVersion, Document, DocumentVersion, EvaluationDataset, EvaluationCase, EvaluationRun, EvaluationResult, ProjectSource, ProjectSourceChunk, ProjectKnowledgeFact, KnowledgeQaSession, KnowledgeQaMessage  # noqa: F401
 from db.session import get_db, set_engine
 from main import app
 from services.diff_service import compute_diff
 from services.version_service import create_version
-from skills.runner import build_expert_system_prompt
+from services.skill_pack_planner import plan_direct_skill_pack, plan_workflow_skill_pack
+from skills.runner import build_expert_skill_pack, build_expert_system_prompt
 from api.routes import _article_system_prompt, _article_brief
+from api.auth import _create_token
 from config.settings import settings
 
 # SQLite 内存数据库
@@ -97,6 +105,7 @@ def test_health():
 # ==================== Auth ====================
 
 def test_auth_login_success():
+    client.post("/api/auth/register", json={"username": "testuser", "password": "testpass"})
     resp = client.post("/api/auth/login", json={"username": "testuser", "password": "testpass"})
     assert resp.status_code == 200
     data = resp.json()
@@ -155,6 +164,19 @@ def test_auth_me_invalid_token_detail():
     assert resp.json()["detail"] == "登录已失效"
 
 
+def test_auth_me_rejects_missing_or_malformed_token_subject():
+    """A signed token must still resolve to an existing UUID-backed user."""
+    ghost_token = _create_token("00000000-0000-0000-0000-000000000000", "ghost")
+    missing_user = client.get("/api/auth/me", headers={"Authorization": f"Bearer {ghost_token}"})
+    assert missing_user.status_code == 401
+    assert missing_user.json()["detail"] == "登录已失效"
+
+    malformed_token = _create_token("not-a-uuid", "ghost")
+    malformed_user = client.get("/api/auth/me", headers={"Authorization": f"Bearer {malformed_token}"})
+    assert malformed_user.status_code == 401
+    assert malformed_user.json()["detail"] == "登录已失效"
+
+
 def test_auth_login_token_type_bearer():
     client.post("/api/auth/register", json={"username": "bearertest", "password": "bearpass"})
     resp = client.post("/api/auth/login", json={"username": "bearertest", "password": "bearpass"})
@@ -175,22 +197,44 @@ def test_list_projects_empty():
 
 def test_create_project():
     headers = _auth_headers()
-    resp = client.post("/api/projects", json={"title": "测试小说", "description": "一部测试小说", "target_words": 50000}, headers=headers)
+    resp = client.post(
+        "/api/projects",
+        json={
+            "title": "测试小说",
+            "description": "一部测试小说",
+            "genre": "科幻、悬疑",
+            "style": "硬核、暗黑",
+            "target_words": 50000,
+        },
+        headers=headers,
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert data["title"] == "测试小说"
     assert data["status"] == "active"
+    assert data["genre"] == "科幻、悬疑"
+    assert data["style"] == "硬核、暗黑"
     assert data["target_words"] == 50000
     project_id = data["id"]
 
     resp2 = client.get(f"/api/projects/{project_id}", headers=headers)
     assert resp2.status_code == 200
+    assert resp2.json()["genre"] == "科幻、悬疑"
 
     resp3 = client.get(f"/api/projects/{project_id}/experts", headers=headers)
     assert resp3.status_code == 200
     experts = resp3.json()
-    assert len(experts) == 6
-    assert experts[0]["name"] == "创意大师"
+    # v2(6) + 旧大师(6 deprecated) = 12
+    assert len(experts) == 12
+    builtin_skills = {e["name"]: e["skill_dir"] for e in experts}
+    # v2 专家
+    assert builtin_skills["正文写手"] == "chapter-writer"
+    assert builtin_skills["章节策划师"] == "chapter-architect"
+    # 旧大师仍保留（deprecated=true）
+    assert builtin_skills["创意大师"] == "creative-master"
+    assert builtin_skills["情节转折大师"] == "plot-twister"
+    assert builtin_skills["渲染大师"] == "sensory-renderer"
+    assert builtin_skills["概括者"] == "summarizer"
 
 
 def test_project_mode_default_novel():
@@ -248,6 +292,39 @@ def test_delete_project_removes_project_and_children():
     )
     assert character_resp.status_code == 200
 
+    source_resp = client.post(
+        f"/api/projects/{project_id}/knowledge/sources",
+        json={"title": "待删除资料", "content": "张小侯是风系。需要一起删除的资料库内容。" * 20},
+        headers=headers,
+    )
+    assert source_resp.status_code == 200
+
+    session_resp = client.post(f"/api/projects/{project_id}/knowledge/sessions", headers=headers)
+    assert session_resp.status_code == 200
+    session_id = session_resp.json()["id"]
+
+    async def _insert_message_and_count():
+        async with test_session_factory() as session:
+            session.add(
+                KnowledgeQaMessage(
+                    session_id=session_id,
+                    project_id=project_id,
+                    role="user",
+                    content="这条问答消息也应随项目删除。",
+                )
+            )
+            await session.commit()
+            counts = {}
+            for model in (ProjectSource, ProjectSourceChunk, ProjectKnowledgeFact, KnowledgeQaSession, KnowledgeQaMessage):
+                result = await session.execute(
+                    select(func.count()).select_from(model).where(model.project_id == project_id)
+                )
+                counts[model.__tablename__] = result.scalar_one()
+            return counts
+
+    knowledge_counts = asyncio.run(_insert_message_and_count())
+    assert all(count > 0 for count in knowledge_counts.values())
+
     other_headers = _auth_headers("otherdeleter", "deletepass")
     forbidden_resp = client.delete(f"/api/projects/{project_id}", headers=other_headers)
     assert forbidden_resp.status_code == 404
@@ -259,6 +336,74 @@ def test_delete_project_removes_project_and_children():
     list_resp = client.get("/api/projects", headers=headers)
     assert all(item["id"] != project_id for item in list_resp.json())
     assert client.get(f"/api/projects/{project_id}/chapters", headers=headers).status_code == 404
+
+    async def _knowledge_counts():
+        async with test_session_factory() as session:
+            counts = {}
+            for model in (ProjectSource, ProjectSourceChunk, ProjectKnowledgeFact, KnowledgeQaSession, KnowledgeQaMessage):
+                result = await session.execute(
+                    select(func.count()).select_from(model).where(model.project_id == project_id)
+                )
+                counts[model.__tablename__] = result.scalar_one()
+            return counts
+
+    assert asyncio.run(_knowledge_counts()) == {
+        "project_sources": 0,
+        "project_source_chunks": 0,
+        "project_knowledge_facts": 0,
+        "knowledge_qa_sessions": 0,
+        "knowledge_qa_messages": 0,
+    }
+
+
+def test_evaluation_dataset_case_and_run():
+    headers = _auth_headers("eval_user", "eval_pass")
+    project_resp = client.post("/api/projects", json={"title": "评测项目"}, headers=headers)
+    project_id = project_resp.json()["id"]
+
+    dataset_resp = client.post(
+        f"/api/projects/{project_id}/eval-datasets",
+        json={"name": "小说回归评测", "description": "基础创作质量", "mode": "regression"},
+        headers=headers,
+    )
+    assert dataset_resp.status_code == 200, dataset_resp.text
+    dataset = dataset_resp.json()
+    assert dataset["name"] == "小说回归评测"
+    dataset_id = dataset["id"]
+
+    case_resp = client.post(
+        f"/api/projects/{project_id}/eval-datasets/{dataset_id}/cases",
+        json={
+            "name": "角色一致性",
+            "task_type": "novel_chapter",
+            "input_text": "主角林澈在旧城档案馆发现线索。",
+            "actual_output": "林澈在旧城档案馆翻到缺页档案，并意识到线索被人故意藏起。",
+            "expected_properties": ["必须出现林澈", "必须出现旧城档案馆"],
+            "rubric": {"requirement_following": "是否遵守硬性要求", "prose_quality": "文字质量"},
+        },
+        headers=headers,
+    )
+    assert case_resp.status_code == 200, case_resp.text
+    case = case_resp.json()
+    assert case["rubric"]["requirement_following"]
+
+    list_resp = client.get(f"/api/projects/{project_id}/eval-datasets", headers=headers)
+    assert list_resp.status_code == 200
+    assert list_resp.json()[0]["case_count"] == 1
+
+    run_resp = client.post(
+        f"/api/projects/{project_id}/eval-datasets/{dataset_id}/runs",
+        json={"generation_mode": "judge_only"},
+        headers=headers,
+    )
+    assert run_resp.status_code == 200, run_resp.text
+    run = run_resp.json()
+    assert run["status"] == "completed"
+    assert run["total_cases"] == 1
+    assert run["completed_cases"] == 1
+    assert run["average_score"] >= 1
+    assert len(run["results"]) == 1
+    assert run["results"][0]["passed"] is True
 
 
 def test_import_txt_project_creates_novel_chapters():
@@ -399,6 +544,7 @@ def test_extract_chapter_structure_preview_and_apply():
     assert extraction["outlines"]
     assert extraction["characters"]
     assert extraction["world_entries"]
+    assert extraction["character_events"]
 
     apply_resp = client.post(
         f"/api/projects/{project_id}/chapters/1/extract-structure",
@@ -409,19 +555,211 @@ def test_extract_chapter_structure_preview_and_apply():
     counts = apply_resp.json()["applied"]["counts"]
     assert counts["outlines"] >= 1
     assert counts["characters"] >= 1
+    assert counts["character_events"] >= 1
 
     outlines_resp = client.get(f"/api/projects/{project_id}/outlines", headers=headers)
     chars_resp = client.get(f"/api/projects/{project_id}/characters", headers=headers)
     world_resp = client.get(f"/api/projects/{project_id}/world-entries", headers=headers)
     hidden_resp = client.get(f"/api/projects/{project_id}/hidden-threads", headers=headers)
+    events_resp = client.get(f"/api/projects/{project_id}/character-events", headers=headers)
     assert outlines_resp.status_code == 200
     assert chars_resp.status_code == 200
     assert world_resp.status_code == 200
     assert hidden_resp.status_code == 200
+    assert events_resp.status_code == 200
     assert len(outlines_resp.json()) >= 1
     assert len(chars_resp.json()) >= 1
     assert len(world_resp.json()) >= 1
     assert len(hidden_resp.json()) >= 1
+    assert len(events_resp.json()) >= 1
+
+
+def test_extract_chapter_structure_respects_targets():
+    headers = _auth_headers("extract-targets", "extractpass")
+    project_resp = client.post("/api/projects", json={"title": "提炼范围测试"}, headers=headers)
+    project_id = project_resp.json()["id"]
+
+    chapter_resp = client.post(
+        f"/api/projects/{project_id}/chapters",
+        json={"title": "第一章", "sequence_number": 1},
+        headers=headers,
+    )
+    assert chapter_resp.status_code == 200
+
+    patch_resp = client.patch(
+        f"/api/projects/{project_id}/chapters/1",
+        json={"content": "林澈在旧城档案馆发现了失踪档案。"},
+        headers=headers,
+    )
+    assert patch_resp.status_code == 200
+
+    preview_resp = client.post(
+        f"/api/projects/{project_id}/chapters/1/extract-structure",
+        json={"mode": "preview", "targets": ["characters"]},
+        headers=headers,
+    )
+    assert preview_resp.status_code == 200, preview_resp.text
+    extraction = preview_resp.json()["extraction"]
+    assert extraction["characters"]
+    assert extraction["outlines"] == []
+    assert extraction["world_entries"] == []
+    assert extraction["character_events"] == []
+
+    apply_resp = client.post(
+        f"/api/projects/{project_id}/chapters/1/extract-structure",
+        json={"mode": "apply", "targets": ["characters"], "extraction": extraction},
+        headers=headers,
+    )
+    assert apply_resp.status_code == 200, apply_resp.text
+    counts = apply_resp.json()["applied"]["counts"]
+    assert counts["characters"] >= 1
+    assert counts["world_entries"] == 0
+    assert counts["character_events"] == 0
+
+    world_resp = client.get(f"/api/projects/{project_id}/world-entries", headers=headers)
+    assert world_resp.status_code == 200
+    assert world_resp.json() == []
+
+
+def test_character_chapter_event_can_be_updated():
+    headers = _auth_headers("event-editor", "eventpass")
+    project_resp = client.post("/api/projects", json={"title": "角色轨迹测试"}, headers=headers)
+    project_id = project_resp.json()["id"]
+
+    char_resp = client.post(
+        f"/api/projects/{project_id}/characters",
+        json={"name": "林澈", "role_type": "protagonist"},
+        headers=headers,
+    )
+    assert char_resp.status_code == 200
+    character_id = char_resp.json()["id"]
+
+    first_resp = client.put(
+        f"/api/projects/{project_id}/characters/{character_id}/chapter-events/1",
+        json={
+            "appearance_type": "appeared",
+            "event_summary": "林澈发现旧档案。",
+            "actions": ["发现旧档案"],
+            "state_change": "获得线索",
+            "importance": 4,
+        },
+        headers=headers,
+    )
+    assert first_resp.status_code == 200, first_resp.text
+    event_id = first_resp.json()["id"]
+
+    update_resp = client.put(
+        f"/api/projects/{project_id}/characters/{character_id}/chapter-events/1",
+        json={
+            "appearance_type": "mentioned",
+            "event_summary": "林澈只在他人口中被提及。",
+            "actions": ["被提及"],
+            "importance": 2,
+        },
+        headers=headers,
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    updated = update_resp.json()
+    assert updated["id"] == event_id
+    assert updated["appearance_type"] == "mentioned"
+    assert updated["event_summary"] == "林澈只在他人口中被提及。"
+
+    events_resp = client.get(
+        f"/api/projects/{project_id}/character-events?character_id={character_id}",
+        headers=headers,
+    )
+    assert events_resp.status_code == 200
+    events = events_resp.json()
+    assert len(events) == 1
+    assert events[0]["chapter_sequence_number"] == 1
+
+    char_after_resp = client.get(f"/api/projects/{project_id}/characters", headers=headers)
+    assert char_after_resp.status_code == 200
+    assert char_after_resp.json()[0]["appearance_count"] == 1
+
+
+def test_extract_chapter_structure_falls_back_when_model_returns_empty():
+    headers = _auth_headers("extract-fallback", "extractpass")
+    project_resp = client.post("/api/projects", json={"title": "兜底提炼测试"}, headers=headers)
+    project_id = project_resp.json()["id"]
+
+    char_resp = client.post(
+        f"/api/projects/{project_id}/characters",
+        json={"name": "程璇", "role_type": "protagonist"},
+        headers=headers,
+    )
+    assert char_resp.status_code == 200
+
+    chapter_resp = client.post(
+        f"/api/projects/{project_id}/chapters",
+        json={"title": "硬刚穆卓云！", "sequence_number": 6},
+        headers=headers,
+    )
+    assert chapter_resp.status_code == 200
+
+    patch_resp = client.patch(
+        f"/api/projects/{project_id}/chapters/6",
+        json={"content": "程璇站在训练场中央，抬头直视穆卓云。穆卓云沉声质问，程璇当场反驳。"},
+        headers=headers,
+    )
+    assert patch_resp.status_code == 200
+
+    preview_resp = client.post(
+        f"/api/projects/{project_id}/chapters/6/extract-structure",
+        json={"mode": "preview", "extraction": {}},
+        headers=headers,
+    )
+    assert preview_resp.status_code == 200, preview_resp.text
+    extraction = preview_resp.json()["extraction"]
+    assert extraction["outlines"]
+    assert extraction["characters"]
+    assert extraction["character_events"]
+    assert extraction["character_events"][0]["character_name"] == "程璇"
+
+
+def test_extract_chapter_structure_fills_missing_groups_from_fallback():
+    headers = _auth_headers("extract-partial-fallback", "extractpass")
+    project_resp = client.post("/api/projects", json={"title": "分组兜底测试"}, headers=headers)
+    project_id = project_resp.json()["id"]
+
+    char_resp = client.post(
+        f"/api/projects/{project_id}/characters",
+        json={"name": "程璇", "role_type": "protagonist"},
+        headers=headers,
+    )
+    assert char_resp.status_code == 200
+
+    chapter_resp = client.post(
+        f"/api/projects/{project_id}/chapters",
+        json={"title": "硬刚穆卓云！", "sequence_number": 6},
+        headers=headers,
+    )
+    assert chapter_resp.status_code == 200
+
+    patch_resp = client.patch(
+        f"/api/projects/{project_id}/chapters/6",
+        json={"content": "程璇站在训练场中央，抬头直视穆卓云。穆卓云沉声质问，程璇当场反驳。"},
+        headers=headers,
+    )
+    assert patch_resp.status_code == 200
+
+    preview_resp = client.post(
+        f"/api/projects/{project_id}/chapters/6/extract-structure",
+        json={
+            "mode": "preview",
+            "extraction": {
+                "outlines": [{"sequence_number": 6, "title": "硬刚穆卓云！", "summary": "模型只给了大纲"}],
+                "characters": [],
+                "character_events": [],
+            },
+        },
+        headers=headers,
+    )
+    assert preview_resp.status_code == 200, preview_resp.text
+    extraction = preview_resp.json()["extraction"]
+    assert extraction["outlines"][0]["summary"] == "模型只给了大纲"
+    assert extraction["characters"]
+    assert extraction["character_events"]
 
 
 def test_same_sequence_number_different_projects():
@@ -474,7 +812,9 @@ def test_chapter_detail_and_update():
     }, headers=headers)
     assert resp6.status_code == 200
     assert resp6.json()["title"] == "第一章（修改版）"
-    assert resp6.json()["status"] == "approved"
+    # approved 是旧客户端兼容输入；后端统一落为 final，并生成定稿快照。
+    assert resp6.json()["status"] == "final"
+    assert resp6.json()["final_version_id"] is not None
 
 
 def test_chapter_detail_isolation():
@@ -592,6 +932,103 @@ def test_skill_prompt_strips_output_templates():
     assert "【听觉】" not in renderer_prompt
 
 
+def test_expert_skill_pack_summary_is_traceable():
+    pack = build_expert_skill_pack(
+        "writer",
+        project_id="project-1",
+        chapter_id="chapter-1",
+        context="上下文",
+        draft="草稿",
+        mode="full_pipeline",
+    )
+    summary = pack.to_summary()
+
+    assert summary["expert"] == "writer"
+    assert summary["skill_dir"] == "creative-master"
+    assert summary["has_content"] is True
+    assert summary["token_estimate"] > 0
+    assert {"type": "project", "id": "project-1"} in summary["sources"]
+    assert {"type": "chapter", "id": "chapter-1"} in summary["sources"]
+    assert {"type": "mode", "value": "full_pipeline"} in summary["sources"]
+
+
+def test_expert_skill_pack_explicit_skill_dir_overrides_role_mapping():
+    pack = build_expert_skill_pack("writer", skill_dir="sensory-renderer")
+    summary = pack.to_summary()
+
+    assert summary["expert"] == "writer"
+    assert summary["skill_dir"] == "sensory-renderer"
+    assert summary["skill"] == "sensory_renderer"
+    assert pack.has_content is True
+
+
+def test_rule_based_skill_pack_planner_maps_novel_branches():
+    enhance_plan = plan_direct_skill_pack(project_mode="novel", generate_mode="enhance", action="enhance_apply")
+    continue_plan = plan_direct_skill_pack(project_mode="novel", generate_mode="continue", action="continue_suggest")
+    expert_plan = plan_direct_skill_pack(
+        project_mode="novel",
+        generate_mode="continue",
+        action="expert_generate",
+        expert_role_type="writer",
+        expert_skill_dir="creative-master",
+        expert_name="创意大师",
+    )
+
+    assert enhance_plan is not None
+    assert enhance_plan.role_type == "editor"
+    assert enhance_plan.event_expert == "editor"
+    assert enhance_plan.reason == "enhance_apply"
+
+    assert continue_plan is not None
+    assert continue_plan.role_type == "twister"
+    assert continue_plan.event_expert == "writer"
+
+    assert expert_plan is not None
+    assert expert_plan.role_type == "writer"
+    assert expert_plan.skill_dir == "creative-master"
+    assert expert_plan.event_expert == "创意大师"
+
+
+def test_rule_based_skill_pack_planner_maps_article_branches():
+    continue_plan = plan_direct_skill_pack(project_mode="article", generate_mode="continue", action="continue_generate")
+    enhance_plan = plan_direct_skill_pack(project_mode="article", generate_mode="enhance", action="enhance_apply")
+    summarize_plan = plan_direct_skill_pack(project_mode="article", generate_mode="summarize", action="summarize")
+
+    assert continue_plan is not None
+    assert continue_plan.role_type == "writer"
+    assert continue_plan.skill_dir == "article-copywriter"
+    assert continue_plan.event_expert == "article_writer"
+
+    assert enhance_plan is not None
+    assert enhance_plan.role_type == "editor"
+    assert enhance_plan.skill_dir == "article-editor"
+    assert enhance_plan.event_expert == "article_editor"
+
+    assert summarize_plan is not None
+    assert summarize_plan.role_type == "summarizer"
+    assert summarize_plan.skill_dir == "article-summarizer"
+    assert summarize_plan.event_expert == "article_reader"
+
+
+def test_rule_based_skill_pack_planner_maps_workflow_nodes():
+    plan = plan_workflow_skill_pack(node_name="writer", role_type="writer")
+    custom_plan = plan_workflow_skill_pack(
+        node_name="post_writer_0",
+        role_type="renderer",
+        skill_dir="sensory-renderer",
+        expert_name="渲染大师",
+    )
+
+    assert plan.role_type == "writer"
+    assert plan.event_expert == "writer"
+    assert plan.reason == "workflow:writer"
+
+    assert custom_plan.role_type == "renderer"
+    assert custom_plan.skill_dir == "sensory-renderer"
+    assert custom_plan.event_expert == "渲染大师"
+    assert custom_plan.reason == "workflow:post_writer_0"
+
+
 def test_chapter_patch_empty_title_rejected():
     headers = _auth_headers()
     resp = client.post("/api/projects", json={"title": "空标题测试"}, headers=headers)
@@ -615,10 +1052,21 @@ def test_chapter_patch_invalid_status_rejected():
     resp2 = client.patch(f"/api/projects/{project_id}/chapters/1", json={"status": "bad"}, headers=headers)
     assert resp2.status_code == 422
 
-    for valid_status in ("draft", "reviewing", "revision", "final", "approved"):
+    for valid_status in ("draft", "reviewing", "revision"):
         resp3 = client.patch(f"/api/projects/{project_id}/chapters/1", json={"status": valid_status}, headers=headers)
         assert resp3.status_code == 200
         assert resp3.json()["status"] == valid_status
+
+    # final/approved 都要求有正文，并统一返回 final。
+    for compatible_final_status in ("final", "approved"):
+        resp3 = client.patch(
+            f"/api/projects/{project_id}/chapters/1",
+            json={"status": compatible_final_status, "content": "可定稿的章节正文。"},
+            headers=headers,
+        )
+        assert resp3.status_code == 200
+        assert resp3.json()["status"] == "final"
+        assert resp3.json()["final_version_id"] is not None
 
 
 def test_duplicate_sequence_number_detail():
@@ -695,6 +1143,90 @@ def test_character_update_persists_and_can_clear_fields():
     assert listed_after_clear["metadata"] is None
 
 
+def test_character_merge_moves_events_and_deletes_duplicate():
+    headers = _auth_headers("merge-character", "mergepass")
+    project_resp = client.post("/api/projects", json={"title": "角色合并测试"}, headers=headers)
+    project_id = project_resp.json()["id"]
+
+    target_resp = client.post(
+        f"/api/projects/{project_id}/characters",
+        json={"name": "程璇", "role_type": "protagonist", "scope_type": "core", "profile": "主角"},
+        headers=headers,
+    )
+    source_resp = client.post(
+        f"/api/projects/{project_id}/characters",
+        json={"name": "程旋", "role_type": "supporting", "scope_type": "recurring", "profile": "误提取的同名角色"},
+        headers=headers,
+    )
+    assert target_resp.status_code == 200
+    assert source_resp.status_code == 200
+    target_id = target_resp.json()["id"]
+    source_id = source_resp.json()["id"]
+
+    event_resp = client.put(
+        f"/api/projects/{project_id}/characters/{source_id}/chapter-events/1",
+        json={"appearance_type": "appeared", "event_summary": "程旋在本章觉醒。", "actions": ["觉醒"], "importance": 4},
+        headers=headers,
+    )
+    assert event_resp.status_code == 200
+
+    merge_resp = client.post(
+        f"/api/projects/{project_id}/characters/{source_id}/merge",
+        json={"target_character_id": target_id},
+        headers=headers,
+    )
+    assert merge_resp.status_code == 200, merge_resp.text
+    assert merge_resp.json()["id"] == target_id
+    assert "程旋" in merge_resp.json()["metadata"]["aliases"]
+
+    chars_resp = client.get(f"/api/projects/{project_id}/characters", headers=headers)
+    assert chars_resp.status_code == 200
+    names = [item["name"] for item in chars_resp.json()]
+    assert names == ["程璇"]
+
+    events_resp = client.get(f"/api/projects/{project_id}/character-events?character_id={target_id}", headers=headers)
+    assert events_resp.status_code == 200
+    events = events_resp.json()
+    assert len(events) == 1
+    assert events[0]["event_summary"] == "程旋在本章觉醒。"
+
+
+def test_story_layer_fields_roundtrip():
+    headers = _auth_headers("story_layers_user", "layer_pass")
+    project_resp = client.post(
+        "/api/projects",
+        json={"title": "分层小说", "overall_outline": "全书主线：主角团从觉醒走向决战。"},
+        headers=headers,
+    )
+    assert project_resp.status_code == 200
+    project_id = project_resp.json()["id"]
+    assert project_resp.json()["overall_outline"] == "全书主线：主角团从觉醒走向决战。"
+
+    patch_resp = client.patch(
+        f"/api/projects/{project_id}",
+        json={"overall_outline": "更新后的全书大纲"},
+        headers=headers,
+    )
+    assert patch_resp.status_code == 200
+    assert patch_resp.json()["overall_outline"] == "更新后的全书大纲"
+
+    char_resp = client.post(
+        f"/api/projects/{project_id}/characters",
+        json={"name": "程璇", "role_type": "protagonist", "scope_type": "core"},
+        headers=headers,
+    )
+    assert char_resp.status_code == 200
+    assert char_resp.json()["scope_type"] == "core"
+
+    world_resp = client.post(
+        f"/api/projects/{project_id}/world-entries",
+        json={"title": "魔法体系", "category": "规则", "scope_type": "global", "content": "全书通用规则"},
+        headers=headers,
+    )
+    assert world_resp.status_code == 200
+    assert world_resp.json()["scope_type"] == "global"
+
+
 # ==================== Experts ====================
 
 def test_create_custom_expert():
@@ -706,6 +1238,7 @@ def test_create_custom_expert():
         "name": "悬疑大师",
         "description": "擅长悬疑推理",
         "role_type": "writer",
+        "skill_dir": "plot-twister",
         "system_prompt": "你是一位悬疑推理大师。",
         "temperature": 0.7,
         "max_tokens": 4096,
@@ -717,6 +1250,7 @@ def test_create_custom_expert():
     assert resp2.status_code == 200
     assert resp2.json()["name"] == "悬疑大师"
     assert resp2.json()["is_builtin"] is False
+    assert resp2.json()["skill_dir"] == "plot-twister"
 
 
 def test_safety_validation():
@@ -761,6 +1295,8 @@ def test_generate_chapter_sse():
     assert resp3.status_code == 200
     text = resp3.text
     assert "event: progress" in text
+    assert "event: skill_pack" in text
+    assert '"skill_dir": "plot-twister"' in text
     assert "event: done" in text
 
 
@@ -810,6 +1346,40 @@ def test_full_pipeline_approve_persists_after_human_review():
     assert versions[0]["source"] == "ai_approve"
 
 
+def test_full_pipeline_records_skill_pack_metadata():
+    headers = _auth_headers("pipeline_skill_pack", "pipeline_skill_pack")
+    resp = client.post("/api/projects", json={"title": "Skill Pack 元信息测试"}, headers=headers)
+    project_id = resp.json()["id"]
+
+    client.post(f"/api/projects/{project_id}/chapters", json={
+        "title": "第一章", "sequence_number": 1,
+    }, headers=headers)
+
+    resp_generate = client.post(f"/api/projects/{project_id}/chapters/generate", json={
+        "chapter_num": 1,
+        "mode": "full_pipeline",
+    }, headers=headers)
+    assert resp_generate.status_code == 200
+    text = resp_generate.text
+    assert "event: skill_pack" in text
+    # v2 workflow 使用 chapter-writer / chapter-architect 等 v2 skill_dir
+    assert '"skill_dir": "chapter-writer"' in text
+    assert '"skill_dir": "chapter-architect"' in text
+    assert "event: generation_record" in text
+
+    record_match = re.search(r'event: generation_record\s+data: (\{[^\n]+\})', text)
+    assert record_match, text
+    record_id = json.loads(record_match.group(1))["id"]
+
+    resp_detail = client.get(f"/api/projects/{project_id}/generations/{record_id}", headers=headers)
+    assert resp_detail.status_code == 200
+    detail = resp_detail.json()
+    packs = detail["request_params"]["skill_packs"]
+    assert any(pack["skill_dir"] == "chapter-writer" for pack in packs)
+    assert any(pack["skill_dir"] == "chapter-architect" for pack in packs)
+    assert all("token_estimate" in pack for pack in packs)
+
+
 def test_full_pipeline_review_and_revise_cycle():
     """修改后采纳 should first return directions, then revise without losing workflow state."""
     headers = _auth_headers("pipeline_revise", "pipeline_revise")
@@ -844,6 +1414,9 @@ def test_full_pipeline_review_and_revise_cycle():
     )
     assert resp_revise.status_code == 200
     assert "工作流状态不存在或已过期" not in resp_revise.text
+    assert "event: editor_output" in resp_revise.text
+    editor_payloads = re.findall(r"event: editor_output\ndata: (.+?)\n\n", resp_revise.text)
+    assert any((json.loads(payload).get("content") or "").strip() for payload in editor_payloads)
     assert "等待人工审核" in resp_revise.text
 
 
@@ -856,6 +1429,7 @@ def test_revision_writer_rewrites_candidate_instead_of_continuing():
         result = await writer_node({
             "project_id": "00000000-0000-0000-0000-000000000000",
             "chapter_id": "00000000-0000-0000-0000-000000000001",
+            "chapter_num": 1,
             "mode": "full_pipeline",
             "context": "无",
             "draft": "已有候选稿到此结束。",
@@ -874,6 +1448,9 @@ def test_revision_writer_rewrites_candidate_instead_of_continuing():
             "selected_world_entry_ids": [],
             "selected_hidden_thread_ids": [],
             "target_words": 0,
+            "selected_direction": "",
+            "user_note": "",
+            "skill_packs": [],
         })
         return result["draft"]
 
@@ -883,6 +1460,46 @@ def test_revision_writer_rewrites_candidate_instead_of_continuing():
     assert "你来了" not in text
 
 
+def test_writer_node_returns_skill_pack_summary():
+    import asyncio
+    from agents.workflow import writer_node
+
+    async def _run():
+        return await writer_node({
+            "project_id": "00000000-0000-0000-0000-000000000000",
+            "chapter_id": "00000000-0000-0000-0000-000000000001",
+            "chapter_num": 1,
+            "mode": "full_pipeline",
+            "context": "## 角色资料\n- 莫凡(protagonist): 测试角色",
+            "draft": "",
+            "original_text": "",
+            "critiques": [],
+            "consistency_report": "",
+            "edited_draft": "",
+            "revision_count": 0,
+            "writer_prompt": "",
+            "critic_prompt": "",
+            "editor_prompt": "",
+            "consistency_prompt": "",
+            "llm_config": None,
+            "selected_outline_ids": [],
+            "selected_character_ids": [],
+            "selected_world_entry_ids": [],
+            "selected_hidden_thread_ids": [],
+            "target_words": 0,
+            "selected_direction": "",
+            "user_note": "",
+            "skill_packs": [],
+        })
+
+    result = asyncio.new_event_loop().run_until_complete(_run())
+    assert result["draft"]
+    assert result["skill_packs"][0]["skill_dir"] == "creative-master"
+    assert result["skill_packs"][0]["planner"] == "rule"
+    assert result["skill_packs"][0]["planner_reason"] == "workflow:writer"
+    assert result["skill_packs"][0]["token_estimate"] > 0
+
+
 def test_expert_test_sse():
     headers = _auth_headers()
     resp = client.post("/api/projects", json={"title": "专家SSE测试"}, headers=headers)
@@ -890,7 +1507,8 @@ def test_expert_test_sse():
 
     resp2 = client.get(f"/api/projects/{project_id}/experts", headers=headers)
     experts = resp2.json()
-    expert_id = experts[0]["id"]
+    # 选取旧 creative-master 专家（v2 + 旧并存）
+    expert_id = next(e["id"] for e in experts if e["skill_dir"] == "creative-master")
 
     resp3 = client.post(f"/api/projects/{project_id}/experts/{expert_id}/test", json={
         "test_text": "一段测试文本",
@@ -946,7 +1564,10 @@ def test_generate_does_not_persist_content():
     }, headers=headers)
 
     resp3 = client.get(f"/api/projects/{project_id}/experts", headers=headers)
-    writer_expert_id = resp3.json()[0]["id"]
+    # 选取旧 creative-master 专家（v2 + 旧并存，不能靠下标取）
+    writer_expert_id = next(
+        e["id"] for e in resp3.json() if e["skill_dir"] == "creative-master"
+    )
 
     # Generate with writer expert
     resp4 = client.post(f"/api/projects/{project_id}/chapters/generate", json={
@@ -954,6 +1575,8 @@ def test_generate_does_not_persist_content():
     }, headers=headers)
     assert resp4.status_code == 200
     assert "event: done" in resp4.text
+    assert "event: skill_pack" in resp4.text
+    assert '"skill_dir": "creative-master"' in resp4.text
 
     # Content must remain the original, not the generated candidate
     resp5 = client.get(f"/api/projects/{project_id}/chapters", headers=headers)
@@ -979,7 +1602,10 @@ def test_critic_generate_does_not_persist():
     }, headers=headers)
 
     resp3 = client.get(f"/api/projects/{project_id}/experts", headers=headers)
-    critic_expert_id = resp3.json()[1]["id"]
+    # 选取旧 brutal-critic 专家（v2 + 旧并存，不能靠下标取）
+    critic_expert_id = next(
+        e["id"] for e in resp3.json() if e["skill_dir"] == "brutal-critic"
+    )
 
     resp4 = client.post(f"/api/projects/{project_id}/chapters/generate", json={
         "chapter_num": 1, "mode": "continue", "expert_id": critic_expert_id,
@@ -1017,6 +1643,8 @@ def test_enhance_does_not_persist():
     assert resp4.status_code == 200
     assert "event: done" in resp4.text
     assert "待润色" in resp4.text
+    assert "event: skill_pack" in resp4.text
+    assert '"skill_dir": "professional-editor"' in resp4.text
     assert "命运的齿轮" not in resp4.text
 
     # Content must stay original
@@ -1028,6 +1656,28 @@ def test_enhance_does_not_persist():
     versions = resp_v.json()
     assert len(versions) == 1
     assert versions[0]["source"] == "manual"
+
+
+def test_novel_summarize_emits_summarizer_skill_pack():
+    headers = _auth_headers("novel_summarize_skill", "novel_summarize_skill")
+    resp = client.post("/api/projects", json={"title": "小说总结Skill测试"}, headers=headers)
+    project_id = resp.json()["id"]
+
+    client.post(f"/api/projects/{project_id}/chapters", json={
+        "title": "第一章", "sequence_number": 1,
+    }, headers=headers)
+    client.patch(f"/api/projects/{project_id}/chapters/1", json={
+        "content": "主角在雨夜发现了新的线索。",
+    }, headers=headers)
+
+    resp2 = client.post(f"/api/projects/{project_id}/chapters/generate", json={
+        "chapter_num": 1,
+        "mode": "summarize",
+    }, headers=headers)
+    assert resp2.status_code == 200
+    assert "event: skill_pack" in resp2.text
+    assert '"skill_dir": "summarizer"' in resp2.text
+    assert "event: done" in resp2.text
 
 
 def test_enhance_rejects_oversized_target_words():
@@ -1073,6 +1723,9 @@ def test_continue_does_not_persist():
     }, headers=headers)
     assert resp4.status_code == 200
     assert "event: done" in resp4.text
+    assert "event: skill_pack" in resp4.text
+    # v2 continue 使用 chapter-writer skill_dir
+    assert '"skill_dir": "chapter-writer"' in resp4.text
 
     # Content must stay original (no append)
     resp5 = client.get(f"/api/projects/{project_id}/chapters/1", headers=headers)
@@ -1105,6 +1758,8 @@ def test_generation_history_created_without_content_persist():
     }, headers=headers)
     assert resp_generate.status_code == 200
     assert "event: generation_record" in resp_generate.text
+    # v2 continue 使用 chapter-writer skill_dir
+    assert '"skill_dir": "chapter-writer"' in resp_generate.text
 
     resp_chapter = client.get(f"/api/projects/{project_id}/chapters/1", headers=headers)
     assert resp_chapter.json()["content"] == "当前章节原文。"
@@ -1129,6 +1784,8 @@ def test_generation_history_created_without_content_persist():
     detail = resp_detail.json()
     assert detail["content"]
     assert detail["word_count"] > 0
+    packs = detail["request_params"]["skill_packs"]
+    assert any(pack["skill_dir"] == "chapter-writer" for pack in packs)
 
     resp_update = client.patch(f"/api/projects/{project_id}/generations/{record_id}", json={
         "status": "applied",
@@ -1243,6 +1900,36 @@ def test_article_suggestions_are_not_story_turns():
     assert "受众" in resp2.text or "卖点" in resp2.text or "行动引导" in resp2.text
     assert "主角发现" not in resp2.text
     assert "新角色登场" not in resp2.text
+
+
+def test_article_continue_emits_skill_pack_metadata():
+    headers = _auth_headers("article_continue_skill", "article_continue_skill")
+    resp = client.post("/api/projects", json={"title": "文章Skill测试", "mode": "article"}, headers=headers)
+    project_id = resp.json()["id"]
+
+    resp_doc = client.post(f"/api/projects/{project_id}/documents", json={
+        "title": "第一篇", "position": 1,
+    }, headers=headers)
+    doc_id = resp_doc.json()["id"]
+    client.patch(f"/api/projects/{project_id}/documents/{doc_id}", json={
+        "content": "这是一篇原始文案。",
+    }, headers=headers)
+
+    resp2 = client.post(f"/api/projects/{project_id}/chapters/generate", json={
+        "chapter_id": doc_id,
+        "chapter_num": 1,
+        "mode": "continue",
+        "turn_direction": "强调价值与行动引导",
+        "content_type": "公众号文章",
+        "platform": "微信公众号",
+        "audience": "内容运营",
+        "content_goal": "提升转化",
+        "tone": "专业清晰",
+    }, headers=headers)
+    assert resp2.status_code == 200
+    assert "event: skill_pack" in resp2.text
+    assert '"skill_dir": "article-copywriter"' in resp2.text
+    assert "event: generation_record" in resp2.text
 
 
 # ==================== Export ====================
@@ -1370,7 +2057,8 @@ def test_upload_project_image_rejects_non_image():
         headers={**headers, "Content-Type": "text/plain"},
     )
 
-    assert upload.status_code == 415
+    # 0.6 起上传类型的拒绝统一用 400（原来是 415），与 /media 的类型白名单语义对齐
+    assert upload.status_code == 400
 
 
 # ==================== Chapter Version History ====================
@@ -1674,6 +2362,29 @@ def test_article_request_params_accepted():
     assert req.key_points == "成分、效果、价格"
 
 
+def test_generate_request_defaults_to_full_pipeline():
+    """Omitting mode should generate a chapter draft, not continue existing text."""
+    from schemas.api import GenerateRequest
+
+    assert GenerateRequest().mode == "full_pipeline"
+
+
+def test_writer_initial_prompt_is_chapter_generation_not_continue():
+    """Initial writer prompt should frame full_pipeline as chapter generation."""
+    from agents.workflow import _build_writer_user_prompt
+
+    prompt = _build_writer_user_prompt({
+        "context": "## 本章大纲\n根据资料写出本章事件。",
+        "draft": "已有片段",
+        "critiques": [],
+        "revision_count": 0,
+    })
+
+    assert "当前章节对应的完整正文" in prompt
+    assert "不是续写任务" in prompt
+    assert "不作为续写起点" in prompt
+
+
 def test_article_system_prompt_anti_novel():
     """_article_system_prompt must contain anti-novel directives"""
     prompt = _article_system_prompt("生成完整文章/文案")
@@ -1829,6 +2540,8 @@ def test_article_full_pipeline_emits_review_events():
     assert "event: article_review" in resp2.text
     # 必须包含内容输出
     assert "event: content_output" in resp2.text
+    assert "event: skill_pack" in resp2.text
+    assert '"skill_dir": "article-copywriter"' in resp2.text
     # 不落库
     resp3 = client.get(f"/api/projects/{project_id}/documents/{doc_id}", headers=headers)
     assert resp3.json()["content"] is None

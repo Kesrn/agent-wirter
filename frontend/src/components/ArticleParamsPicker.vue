@@ -56,7 +56,7 @@ function handleConfirm() {
 </script>
 
 <template>
-  <div class="picker-overlay" @click.self="emit('cancel')">
+  <div class="picker-overlay">
     <div class="picker-card">
       <div class="picker-header">
         <h3>{{ title }}</h3>
@@ -130,7 +130,8 @@ function handleConfirm() {
 .picker-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -145,7 +146,7 @@ function handleConfirm() {
   max-height: 85vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-modal);
 }
 .picker-header {
   padding: var(--sp-3) var(--sp-5);
@@ -165,7 +166,10 @@ function handleConfirm() {
 }
 .picker-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: var(--sp-3) var(--sp-5);
   display: flex;
   flex-direction: column;

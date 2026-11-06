@@ -1,0 +1,8 @@
+# 开发 / 测试依赖（在运行依赖之上追加）
+-r requirements.in
+
+pytest
+pytest-asyncio
+fpdf2>=2.8.8,<2.8.9       # tests/ 里生成 PDF 夹具用；2.8.8 修复 pip-audit 报告的漏洞
+pillow>=13.0.0,<13.1; python_full_version >= "3.11"  # 开发依赖；最高修复版本
+pillow>=12.3.0,<13; python_full_version < "3.11"    # 13.0.0 要求 Python >=3.11

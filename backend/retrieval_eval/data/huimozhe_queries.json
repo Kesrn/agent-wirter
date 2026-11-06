@@ -1,0 +1,16 @@
+{
+  "queries": [
+    {"query_id": "hmz-01", "category": "world_entry", "query": "程璇的宿舍是什么样子的？"},
+    {"query_id": "hmz-02", "category": "world_entry", "query": "《全职法师》这本小说讲的是什么？"},
+    {"query_id": "hmz-03", "category": "world_entry", "query": "魔法世界的基本设定是什么？"},
+    {"query_id": "hmz-04", "category": "world_entry", "query": "穿越过程中的五色光点是怎么回事？"},
+    {"query_id": "hmz-05", "category": "ability", "query": "唐月是什么等级？"},
+    {"query_id": "hmz-06", "category": "ability", "query": "唐月会什么魔法？"},
+    {"query_id": "hmz-07", "category": "ability", "query": "张小侯是什么系？"},
+    {"query_id": "hmz-08", "category": "ability", "query": "穆宁雪是什么系？"},
+    {"query_id": "hmz-09", "category": "character", "query": "介绍下程璇"},
+    {"query_id": "hmz-10", "category": "character", "query": "陈浩是什么样的人？"},
+    {"query_id": "hmz-11", "category": "character", "query": "心夏是谁？"},
+    {"query_id": "hmz-12", "category": "character", "query": "赵大牛是什么人？"}
+  ]
+}

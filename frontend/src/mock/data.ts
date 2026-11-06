@@ -1,4 +1,4 @@
-import type { Expert, Project, Chapter, OutlineItem, Character, CharacterRelation, WorldEntry, ReviewComment, HiddenThread } from '../api/types'
+import type { Expert, Project, Chapter, OutlineItem, Character, CharacterRelation, WorldEntry, ReviewComment, HiddenThread, StoryArc } from '../api/types'
 
 /** 6 个默认专家 */
 export const DEFAULT_EXPERTS: Expert[] = [
@@ -17,6 +17,9 @@ export const DEFAULT_EXPERTS: Expert[] = [
     is_builtin: true,
     is_enabled: true,
     color: '#6366f1',
+    expert_key: null,
+    version: 1,
+    deprecated: false,
   },
   {
     id: 'cruel',
@@ -33,6 +36,9 @@ export const DEFAULT_EXPERTS: Expert[] = [
     is_builtin: true,
     is_enabled: true,
     color: '#ef4444',
+    expert_key: null,
+    version: 1,
+    deprecated: false,
   },
   {
     id: 'twist',
@@ -49,6 +55,9 @@ export const DEFAULT_EXPERTS: Expert[] = [
     is_builtin: true,
     is_enabled: true,
     color: '#f59e0b',
+    expert_key: null,
+    version: 1,
+    deprecated: false,
   },
   {
     id: 'renderer',
@@ -65,6 +74,9 @@ export const DEFAULT_EXPERTS: Expert[] = [
     is_builtin: true,
     is_enabled: true,
     color: '#10b981',
+    expert_key: null,
+    version: 1,
+    deprecated: false,
   },
   {
     id: 'editor',
@@ -81,6 +93,9 @@ export const DEFAULT_EXPERTS: Expert[] = [
     is_builtin: true,
     is_enabled: true,
     color: '#3b82f6',
+    expert_key: null,
+    version: 1,
+    deprecated: false,
   },
   {
     id: 'summarizer',
@@ -97,6 +112,9 @@ export const DEFAULT_EXPERTS: Expert[] = [
     is_builtin: true,
     is_enabled: true,
     color: '#8b5cf6',
+    expert_key: null,
+    version: 1,
+    deprecated: false,
   },
 ]
 
@@ -110,6 +128,7 @@ export const MOCK_PROJECTS: Project[] = [
     status: 'writing',
     mode: 'novel',
     description: '一部关于星际文明的硬科幻长篇',
+    overall_outline: '林远追踪神秘信号，逐步发现外星建筑与人类文明起源之间的联系。',
     target_words: 200000,
     created_at: '2026-05-01T10:00:00Z',
     updated_at: '2026-05-14T08:30:00Z',
@@ -122,6 +141,7 @@ export const MOCK_PROJECTS: Project[] = [
     status: 'draft',
     mode: 'article',
     description: 'AI 工具在悬疑创作中的实战指南',
+    overall_outline: '',
     target_words: 30000,
     created_at: '2026-05-10T14:00:00Z',
     updated_at: '2026-05-13T16:00:00Z',
@@ -134,6 +154,7 @@ export const MOCK_PROJECTS: Project[] = [
     status: 'completed',
     mode: 'novel',
     description: '基于山海经的东方玄幻新编',
+    overall_outline: '古老山海异兽在现代世界重新现身，主角在追查中重建人与神怪的秩序。',
     target_words: 150000,
     created_at: '2026-04-20T09:00:00Z',
     updated_at: '2026-05-12T20:00:00Z',
@@ -188,17 +209,23 @@ export const MOCK_CHAPTERS: Chapter[] = [
 
 /** Mock 暗线 */
 export const MOCK_HIDDEN_THREADS: HiddenThread[] = [
-  { id: 'ht-1', project_id: 'proj-1', name: '外星文明的求救', description: '信号实际上是求救，而非威胁', chapter_nums: [1, 2], created_at: '2026-05-01T10:00:00Z', updated_at: '2026-05-14T08:30:00Z' },
-  { id: 'ht-2', project_id: 'proj-1', name: '建筑中的守卫AI', description: '外星建筑内沉睡的守卫AI', chapter_nums: [2, 3], created_at: '2026-05-01T10:00:00Z', updated_at: '2026-05-14T08:30:00Z' },
+  { id: 'ht-1', project_id: 'proj-1', name: '外星文明的求救', description: '信号实际上是求救，而非威胁', chapter_nums: [1, 2], status: 'PLANTED', thread_type: 'FORESHADOWING', planted_chapter: 1, reveal_chapter: 5, resolved_chapter: null, payoff_summary: null, risk_level: 'HIGH', created_at: '2026-05-01T10:00:00Z', updated_at: '2026-05-14T08:30:00Z' },
+  { id: 'ht-2', project_id: 'proj-1', name: '建筑中的守卫AI', description: '外星建筑内沉睡的守卫AI', chapter_nums: [2, 3], status: 'ACTIVE', thread_type: 'SECRET', planted_chapter: 2, reveal_chapter: 8, resolved_chapter: null, payoff_summary: null, risk_level: 'MEDIUM', created_at: '2026-05-01T10:00:00Z', updated_at: '2026-05-14T08:30:00Z' },
+]
+
+/** Mock 长线结构 */
+export const MOCK_STORY_ARCS: StoryArc[] = [
+  { id: 'arc-1', project_id: 'proj-1', parent_arc_id: null, arc_type: 'VOLUME', name: '第一卷：启航', summary: '主角收到神秘信号并前往未知星域', goal: '建立世界观，引出主线', main_conflict: '人类对未知的恐惧 vs 探索欲', start_chapter: 1, end_chapter: 5, order_index: 1, status: 'ACTIVE' },
+  { id: 'arc-2', project_id: 'proj-1', parent_arc_id: 'arc-1', arc_type: 'ARC', name: '信号追踪', summary: '追踪信号源', goal: '找到信号源头', main_conflict: '环境危险与资源有限', start_chapter: 1, end_chapter: 3, order_index: 2, status: 'ACTIVE' },
 ]
 
 /** Mock 大纲 */
 export const MOCK_OUTLINE: OutlineItem[] = [
-  { id: 'ol-1', project_id: 'proj-1', chapter_num: 1, title: '启航', summary: '主角收到神秘信号，决定前往未知星域', turning_point: '信号突然改变频率，暗示有意识', hidden_thread_ids: ['ht-1'] },
-  { id: 'ol-2', project_id: 'proj-1', chapter_num: 2, title: '信号源', summary: '追踪信号到达废弃行星，发现外星建筑', turning_point: '建筑仍在运转，不是废墟', hidden_thread_ids: ['ht-1', 'ht-2'] },
-  { id: 'ol-3', project_id: 'proj-1', chapter_num: 3, title: '第一接触', summary: '进入建筑，发现全息影像记录', turning_point: '影像中的文明与人类极其相似', hidden_thread_ids: ['ht-2'] },
-  { id: 'ol-4', project_id: 'proj-1', chapter_num: 4, title: '抉择', summary: '守卫AI苏醒，要求林远做出选择', turning_point: '选择将影响两个文明的命运', hidden_thread_ids: [] },
-  { id: 'ol-5', project_id: 'proj-1', chapter_num: 5, title: '归途', summary: '林远带着答案返回，但一切已不同', turning_point: '信号从未停止——它一直在等待回应', hidden_thread_ids: [] },
+  { id: 'ol-1', project_id: 'proj-1', chapter_num: 1, title: '启航', summary: '主角收到神秘信号，决定前往未知星域', turning_point: '信号突然改变频率，暗示有意识', hidden_thread_ids: ['ht-1'], story_arc_id: 'arc-2', arc_position: 'SETUP', pacing: null, tension_level: null, target_scene_count: null },
+  { id: 'ol-2', project_id: 'proj-1', chapter_num: 2, title: '信号源', summary: '追踪信号到达废弃行星，发现外星建筑', turning_point: '建筑仍在运转，不是废墟', hidden_thread_ids: ['ht-1', 'ht-2'], story_arc_id: 'arc-2', arc_position: 'BUILDUP', pacing: null, tension_level: null, target_scene_count: null },
+  { id: 'ol-3', project_id: 'proj-1', chapter_num: 3, title: '第一接触', summary: '进入建筑，发现全息影像记录', turning_point: '影像中的文明与人类极其相似', hidden_thread_ids: ['ht-2'], story_arc_id: 'arc-2', arc_position: 'CLIMAX', pacing: null, tension_level: null, target_scene_count: null },
+  { id: 'ol-4', project_id: 'proj-1', chapter_num: 4, title: '抉择', summary: '守卫AI苏醒，要求林远做出选择', turning_point: '选择将影响两个文明的命运', hidden_thread_ids: [], story_arc_id: null, arc_position: null, pacing: null, tension_level: null, target_scene_count: null },
+  { id: 'ol-5', project_id: 'proj-1', chapter_num: 5, title: '归途', summary: '林远带着答案返回，但一切已不同', turning_point: '信号从未停止——它一直在等待回应', hidden_thread_ids: [], story_arc_id: null, arc_position: null, pacing: null, tension_level: null, target_scene_count: null },
 ]
 
 /** Mock 角色关系 */
@@ -216,6 +243,7 @@ export const MOCK_CHARACTERS: Character[] = [
     project_id: 'proj-1',
     name: '林远',
     role_type: 'protagonist',
+    scope_type: 'core',
     profile: '冷静、执着、略带孤独感。对未知有强烈好奇心，但习惯独处。从逃避联系到主动建立连接。',
     faction: '民间探险家',
     appearance_count: 5,
@@ -226,6 +254,7 @@ export const MOCK_CHARACTERS: Character[] = [
     project_id: 'proj-1',
     name: 'AI-7',
     role_type: 'supporting',
+    scope_type: 'recurring',
     profile: '理性、守护、隐藏着创造者的情感记忆。从机械执行到觉醒自我意识。',
     faction: '外星建筑守卫',
     appearance_count: 3,
@@ -236,6 +265,7 @@ export const MOCK_CHARACTERS: Character[] = [
     project_id: 'proj-1',
     name: '陈薇',
     role_type: 'supporting',
+    scope_type: 'chapter',
     profile: '温暖、敏锐、有领导力。在后方等待中重新审视与林远的关系。',
     faction: '联合国太空署',
     appearance_count: 2,
@@ -250,6 +280,8 @@ export const MOCK_WORLD_ENTRIES: WorldEntry[] = [
     project_id: 'proj-1',
     title: '星际时代背景',
     category: '背景',
+    scope_type: 'global',
+    chapter_sequence_number: null,
     content: '2187年，人类已在太阳系建立多个空间站，但尚未实现星际航行。一艘改装的深空探测器意外截获了来自半人马座方向的规律信号，频率模式不符合任何已知自然现象。联合国太空署将信号列为最高机密，但消息还是泄露了出去。民间探险家开始私自追踪信号源……',
     rules: null,
     confidence: 'high',

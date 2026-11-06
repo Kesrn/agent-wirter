@@ -1,20 +1,74 @@
-"""数据库连接和会话管理"""
+"""数据库连接和会话管理。
+
+后端所有数据库访问都通过这里创建的 async SQLAlchemy engine/session。
+FastAPI 路由使用 get_db 作为依赖注入，每个请求拿到一个独立 AsyncSession；
+服务层函数只接收 session，不自己创建事务，这样调用方可以决定何时 commit/rollback。
+"""
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import event, text
+from pathlib import Path
 
 from config.settings import settings
 
-_engine = create_async_engine(settings.DATABASE_URL, echo=settings.DEBUG)
+# 全局 engine 在进程启动时创建。settings.DATABASE_URL 可以是 PostgreSQL asyncpg，
+# 也可以是桌面端覆盖后的 SQLite aiosqlite。
+def _create_engine(database_url: str, *, echo: bool):
+    """Create the engine with server-side pool settings only for non-SQLite DBs."""
+    if database_url.split(":", 1)[0].startswith("sqlite"):
+        # Keep the desktop SQLite call exactly as before: no pool-specific options.
+        return create_async_engine(database_url, echo=echo)
+    return create_async_engine(
+        database_url,
+        echo=echo,
+        pool_pre_ping=True,
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
+        pool_timeout=settings.DB_POOL_TIMEOUT,
+        pool_recycle=settings.DB_POOL_RECYCLE,
+    )
+
+
+_engine = _create_engine(settings.DATABASE_URL, echo=settings.SQL_ECHO)
 _session_factory = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
 async_session = _session_factory
 
 
+@event.listens_for(_engine.sync_engine, "connect")
+def _set_sqlite_pragmas(dbapi_connection, connection_record):
+    """SQLite：WAL 模式 + 长 busy_timeout。
+
+    桌面端是单进程多连接（每请求一个 AsyncSession），大资料删除/索引重建
+    等批量写会持有写锁；delete journal 模式下并发读写直接报
+    "database is locked"。WAL 允许读写并发，busy_timeout 30s 让写冲突
+    等待而不是立刻失败。仅对 SQLite 生效（PostgreSQL 无此概念）。
+    """
+    try:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
+        finally:
+            cursor.close()
+    except Exception:
+        # 非 SQLite（PostgreSQL）或只读连接：静默跳过，不影响连接
+        pass
+
+
 def get_engine():
+    """返回当前全局 engine。
+
+    测试和后台任务会用它判断数据库类型，例如 SQLite 内存库不适合跨 session 后台任务。
+    """
     return _engine
 
 
 def set_engine(new_engine):
-    """Replace the default engine (used by tests to inject SQLite)."""
+    """替换默认 engine，主要供测试注入 SQLite 内存数据库。
+
+    注意替换 engine 时必须同步刷新 session_factory 和 async_session，
+    否则后续请求仍会连到旧数据库。
+    """
     global _engine, _session_factory, async_session
     _engine = new_engine
     _session_factory = async_sessionmaker(new_engine, class_=AsyncSession, expire_on_commit=False)
@@ -22,7 +76,11 @@ def set_engine(new_engine):
 
 
 async def get_db() -> AsyncSession:
-    """FastAPI 依赖注入：获取数据库会话"""
+    """FastAPI 依赖注入：获取数据库会话。
+
+    每次请求进入路由时创建 session，请求结束后关闭。commit/rollback 不在这里做，
+    因为不同接口可能需要多次 flush、SSE 流中间保存候选记录，必须由业务显式控制。
+    """
     async with _session_factory() as session:
         try:
             yield session
@@ -31,9 +89,355 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db():
-    """初始化数据库：创建所有表"""
+    """初始化数据库：桌面 SQLite 可建表，服务器数据库由 Alembic 管理。
+
+    Alembic 是正式迁移方案，但桌面端/演示环境需要“开箱即用”，所以这里会根据
+    AUTO_CREATE_TABLES 决定是否按 SQLAlchemy metadata 创建缺失表。SQLite 桌面端
+    默认仍会创建缺失表并走 _ensure_incremental_columns，兼容既有用户数据文件。
+    PostgreSQL 默认不自动建表，而是要求数据库已升级到 Alembic head。
+    """
     from models.base import Base
-    from models import project, chapter, document, expert, world_entry, character, character_relation, outline, hidden_thread, user, llm_config, chapter_version, document_version, generation_record  # noqa: F401
+    from models import project, chapter, document, expert, world_entry, character, character_relation, character_event, outline, hidden_thread, user, llm_config, chapter_version, document_version, generation_record, chapter_review_note, evaluation, project_source, project_source_chunk, project_knowledge_fact, extraction_pipeline, split_generation, structured_knowledge, knowledge_qa_session, knowledge_qa_message, retrieval_index, retrieval_vector, retrieval_index_job, chat_conversation, change_set  # noqa: F401
+
+    if not settings.AUTO_CREATE_TABLES:
+        await _verify_alembic_head()
+        return
 
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _ensure_incremental_columns(conn)
+        await _validate_sqlite_schema(conn)
+
+
+async def _get_database_alembic_heads() -> set[str]:
+    """Read the applied Alembic revisions from the configured database."""
+    async with _engine.connect() as conn:
+        result = await conn.execute(text("SELECT version_num FROM alembic_version"))
+        return {str(row[0]) for row in result.fetchall()}
+
+
+async def _verify_alembic_head() -> None:
+    """Fail startup unless the configured database is at every script head."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    expected_heads = set(ScriptDirectory.from_config(config).get_heads())
+    try:
+        database_heads = await _get_database_alembic_heads()
+    except Exception:
+        database_heads = set()
+    if database_heads != expected_heads:
+        raise RuntimeError(
+            "数据库未处于 Alembic head；请先执行 `alembic upgrade head`"
+        )
+
+
+async def _ensure_incremental_columns(conn):
+    """为桌面端 SQLite 做增量字段补齐。
+
+    SQLite 没有像 Alembic 在线迁移那样完整的部署流程，老用户本地数据库可能缺字段。
+    这里只做安全的 ADD COLUMN，不删除/重命名字段，避免破坏用户已有数据。
+    """
+    if conn.dialect.name != "sqlite":
+        return
+
+    async def columns(table_name: str) -> set[str]:
+        result = await conn.execute(text(f"PRAGMA table_info({table_name})"))
+        return {row[1] for row in result.fetchall()}
+
+    async def add_missing_columns(table_name: str, additions: dict[str, str]) -> None:
+        existing = await columns(table_name)
+        for name, definition in additions.items():
+            if name not in existing:
+                await conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {name} {definition}"))
+
+    await add_missing_columns("projects", {
+        "overall_outline": "TEXT",
+    })
+
+    # 028：一个用户可保存多条 LLM 配置，旧 SQLite 表的 user_id 带 UNIQUE，
+    # 仅 ADD COLUMN 无法移除该约束，因此需要安全重建一次表。
+    await add_missing_columns("llm_configs", {
+        "name": "VARCHAR(100)",
+        "is_active": "BOOLEAN NOT NULL DEFAULT 0",
+    })
+    await conn.execute(text(
+        "UPDATE llm_configs SET name = COALESCE(NULLIF(name, ''), provider || ' 配置') "
+        "WHERE name IS NULL OR name = ''"
+    ))
+    await conn.execute(text("""
+        UPDATE llm_configs
+        SET is_active = 1
+        WHERE rowid IN (
+            SELECT MIN(candidate.rowid)
+            FROM llm_configs candidate
+            WHERE NOT EXISTS (
+                SELECT 1 FROM llm_configs active
+                WHERE active.user_id = candidate.user_id AND active.is_active = 1
+            )
+            GROUP BY candidate.user_id
+        )
+    """))
+    # 部分升级或旧预览版本可能曾允许同一用户出现多条 active。先确定性保留
+    # 每个用户最早的一条，再创建部分唯一索引，避免桌面端启动时迁移失败。
+    await conn.execute(text("""
+        UPDATE llm_configs
+        SET is_active = 0
+        WHERE is_active = 1
+          AND rowid NOT IN (
+              SELECT MIN(active.rowid)
+              FROM llm_configs active
+              WHERE active.is_active = 1
+              GROUP BY active.user_id
+          )
+    """))
+
+    unique_user_index = False
+    index_rows = (await conn.execute(text("PRAGMA index_list(llm_configs)"))).fetchall()
+    for index_row in index_rows:
+        index_name = index_row[1]
+        is_unique = bool(index_row[2])
+        if not is_unique or index_name == "uq_llm_configs_active_user":
+            continue
+        index_columns = (await conn.execute(text(f"PRAGMA index_info('{index_name}')"))).fetchall()
+        if [row[2] for row in index_columns] == ["user_id"]:
+            unique_user_index = True
+            break
+
+    if unique_user_index:
+        await conn.execute(text("DROP TABLE IF EXISTS llm_configs_profiles_tmp"))
+        await conn.execute(text("""
+            CREATE TABLE llm_configs_profiles_tmp (
+                id CHAR(36) NOT NULL PRIMARY KEY,
+                user_id CHAR(36) NOT NULL,
+                name VARCHAR(100) NOT NULL,
+                provider VARCHAR(20) NOT NULL DEFAULT 'openai',
+                encrypted_api_key VARCHAR(500),
+                base_url VARCHAR(500),
+                model_id VARCHAR(100),
+                is_active BOOLEAN NOT NULL DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        await conn.execute(text("""
+            INSERT INTO llm_configs_profiles_tmp (
+                id, user_id, name, provider, encrypted_api_key, base_url, model_id,
+                is_active, created_at, updated_at
+            )
+            SELECT id, user_id, COALESCE(NULLIF(name, ''), provider || ' 配置'), provider,
+                   encrypted_api_key, base_url, model_id, is_active, created_at, updated_at
+            FROM llm_configs
+        """))
+        await conn.execute(text("DROP TABLE llm_configs"))
+        await conn.execute(text("ALTER TABLE llm_configs_profiles_tmp RENAME TO llm_configs"))
+
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_llm_configs_user_id ON llm_configs (user_id)"))
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_llm_configs_is_active ON llm_configs (is_active)"))
+    await conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_configs_active_user "
+        "ON llm_configs (user_id) WHERE is_active = 1"
+    ))
+    await add_missing_columns("characters", {
+        "scope_type": "VARCHAR(20) DEFAULT 'recurring'",
+    })
+    await add_missing_columns("world_entries", {
+        "scope_type": "VARCHAR(20) DEFAULT 'global'",
+    })
+    await add_missing_columns("chapters", {
+        "final_version_id": "CHAR(36)",
+    })
+
+    # 015 / 023：旧项目的专家表没有技能目录和专家系统 v2 字段。缺列不仅会让
+    # 专家管理页失败，也会在生成工作流加载专家时触发 500。
+    await add_missing_columns("experts", {
+        "skill_dir": "VARCHAR(100)",
+        "expert_key": "VARCHAR(80)",
+        "version": "INTEGER NOT NULL DEFAULT 1",
+        "deprecated": "BOOLEAN NOT NULL DEFAULT 0",
+        "input_schema": "JSON",
+        "output_schema": "JSON",
+    })
+
+    # 021：版本审计与生成记录关联字段。保留历史行的 NULL，不回填或改写既有版本。
+    await add_missing_columns("chapter_versions", {
+        "project_id": "CHAR(36)",
+        "run_id": "CHAR(36)",
+        "parent_version_id": "CHAR(36)",
+        "rollback_from_version_id": "CHAR(36)",
+        "diff_from_parent": "JSON",
+    })
+    await add_missing_columns("generation_records", {
+        "run_id": "CHAR(36)",
+    })
+    # 030：桌面端已有 SQLite 表不会因为 create_all 自动补建新索引，因此这里
+    # 与 Alembic 迁移保持同样的去重策略，再创建 run_id 部分唯一索引。
+    # 优先保留已采用记录，其次保留最新记录；同一时间戳用 id 确定性打破平局。
+    generation_rows = (
+        await conn.execute(text("""
+            SELECT id, run_id
+            FROM generation_records
+            WHERE run_id IS NOT NULL
+            ORDER BY
+                run_id,
+                CASE
+                    WHEN status = 'applied' OR accepted_version_id IS NOT NULL THEN 0
+                    ELSE 1
+                END,
+                created_at DESC,
+                id DESC
+        """))
+    ).mappings()
+    seen_generation_run_ids: set[str] = set()
+    for row in generation_rows:
+        run_key = str(row["run_id"])
+        if run_key in seen_generation_run_ids:
+            await conn.execute(
+                text("DELETE FROM generation_records WHERE id = :record_id"),
+                {"record_id": row["id"]},
+            )
+        else:
+            seen_generation_run_ids.add(run_key)
+    await conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_generation_records_run_id "
+        "ON generation_records (run_id) WHERE run_id IS NOT NULL"
+    ))
+
+    # 长线与节奏功能（024 / 026）会给已有的大纲表追加字段。桌面端用户的
+    # SQLite 文件可能早于这些迁移；create_all 不会改动已存在的表，因此必须在
+    # 启动时补齐，否则读取 Outline 就会直接因缺列而报错。
+    await add_missing_columns("outlines", {
+        "story_arc_id": "CHAR(36)",
+        "arc_position": "VARCHAR(30)",
+        "pacing": "VARCHAR(30)",
+        "tension_level": "INTEGER",
+        "target_scene_count": "INTEGER",
+    })
+
+    # 伏笔生命周期（025）同样需要兼容旧的 hidden_threads 表。status 使用默认值，
+    # 既保证旧记录可读，也让后续新写入遵循模型的非空约束。
+    await add_missing_columns("hidden_threads", {
+        "status": "VARCHAR(20) NOT NULL DEFAULT 'PLANNED'",
+        "thread_type": "VARCHAR(30)",
+        "planted_chapter": "INTEGER",
+        "reveal_chapter": "INTEGER",
+        "resolved_chapter": "INTEGER",
+        "payoff_summary": "TEXT",
+        "risk_level": "VARCHAR(20)",
+    })
+
+    # 抽取任务控制字段（017）和角色出现统计（018）是 7 月下旬新增能力。
+    # 旧 SQLite 数据库已有表时 create_all 不会补列，必须在启动兼容迁移里显式 ADD COLUMN，
+    # 否则桌面端/本地 Web 会在 schema 校验阶段 fail-fast，表现为“后端未启动”。
+    await add_missing_columns("extraction_jobs", {
+        "current_chapter_no": "INTEGER",
+        "last_error": "TEXT",
+        "paused_at": "DATETIME",
+        "cancelled_at": "DATETIME",
+        "last_run_started_at": "DATETIME",
+        "last_run_finished_at": "DATETIME",
+    })
+    # 034：抽取任务锁定切分代（NULL = 迁移前旧任务，读取当前活动代）
+    await add_missing_columns("extraction_jobs", {
+        "split_generation_id": "CHAR(36)",
+    })
+    await conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_extraction_jobs_split_generation_id "
+        "ON extraction_jobs (split_generation_id)"
+    ))
+    await add_missing_columns("character_profile", {
+        "first_seen_chapter": "INTEGER",
+        "last_seen_chapter": "INTEGER",
+        "appearance_count": "INTEGER DEFAULT 0",
+    })
+    await add_missing_columns("world_entries", {
+        "chapter_sequence_number": "INTEGER",
+    })
+
+    # P-1 阶段四（033）：切分代列。旧 SQLite 表已有数据时 create_all 不会补列，
+    # 必须显式 ADD COLUMN，否则 _validate_sqlite_schema 会 fail-fast。
+    # SQLite ADD COLUMN 无法加 NOT NULL / UNIQUE 约束，模型声明 nullable 以保持一致，
+    # 数据非空由启动时的 legacy 回填（ensure_legacy_generation）保证。
+    await add_missing_columns("project_source_chapters", {
+        "split_generation_id": "CHAR(36)",
+        "source_ordinal": "INTEGER",
+        "display_chapter_no": "INTEGER",
+        "original_label": "VARCHAR(500)",
+        "start_offset": "INTEGER",
+        "end_offset": "INTEGER",
+        "content_hash": "CHAR(64)",
+    })
+    await conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_source_chapters_generation_ordinal "
+        "ON project_source_chapters (split_generation_id, source_ordinal)"
+    ))
+
+    # 与 Alembic 迁移保持一致；IF NOT EXISTS 使桌面端重复启动保持幂等。
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_outlines_story_arc_id ON outlines (story_arc_id)"))
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_outlines_pacing ON outlines (pacing)"))
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_world_entries_chapter_sequence_number ON world_entries (chapter_sequence_number)"))
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_hidden_threads_status ON hidden_threads (status)"))
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_hidden_threads_planted_chapter ON hidden_threads (planted_chapter)"))
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_hidden_threads_reveal_chapter ON hidden_threads (reveal_chapter)"))
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_experts_expert_key ON experts (expert_key)"))
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chapter_versions_project_id ON chapter_versions (project_id)"))
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chapter_versions_run_id ON chapter_versions (run_id)"))
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_generation_records_run_id ON generation_records (run_id)"))
+
+    # 035：对话式创作。四张新表由 create_all 创建（旧库无表 → 新建）；
+    # generation_records 是既有表，三列必须显式 ADD COLUMN，否则
+    # _validate_sqlite_schema 会 fail-fast。SQLite ADD COLUMN 无法带 UNIQUE，
+    # 与模型声明保持一致（nullable）。036：superseded_by_execution_id。
+    await add_missing_columns("generation_records", {
+        "conversation_id": "CHAR(36)",
+        "base_version_id": "CHAR(36)",
+        "task_card_id": "CHAR(36)",
+        "superseded_by_execution_id": "CHAR(36)",
+        "human_edit_metrics": "JSON",
+    })
+    # 038：请求号关联。新库由 metadata 建列，旧 SQLite 库需补列。
+    await add_missing_columns("ai_runs", {
+        "request_id": "VARCHAR(64)",
+    })
+    # 036：索引与列分别补齐（列存在但索引缺失的库也必须建索引）
+    await conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_generation_records_superseded_by "
+        "ON generation_records (superseded_by_execution_id)"
+    ))
+    await conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_ai_runs_request_id ON ai_runs (request_id)"
+    ))
+
+
+async def _missing_sqlite_model_columns(conn, table_names: set[str] | None = None) -> dict[str, list[str]]:
+    """返回 ORM 模型与 SQLite 物理表之间仍不一致的列。
+
+    这是桌面端迁移的最后一道防线：已知的安全增量迁移会在前面自动执行；如果未来
+    新增字段却忘记补迁移，服务会在启动阶段明确报错，而不是在用户操作中返回 500。
+    """
+    if conn.dialect.name != "sqlite":
+        return {}
+
+    from models.base import Base
+
+    missing: dict[str, list[str]] = {}
+    for table in Base.metadata.sorted_tables:
+        if table_names is not None and table.name not in table_names:
+            continue
+        result = await conn.execute(text(f"PRAGMA table_info({table.name})"))
+        actual = {row[1] for row in result.fetchall()}
+        absent = [column.name for column in table.columns if column.name not in actual]
+        if absent:
+            missing[table.name] = absent
+    return missing
+
+
+async def _validate_sqlite_schema(conn) -> None:
+    """确保桌面端启动后所有 ORM 查询都有对应的物理列。"""
+    missing = await _missing_sqlite_model_columns(conn)
+    if missing:
+        details = "; ".join(
+            f"{table}: {', '.join(columns)}" for table, columns in sorted(missing.items())
+        )
+        raise RuntimeError(f"桌面端 SQLite 数据库迁移不完整，缺少字段：{details}")

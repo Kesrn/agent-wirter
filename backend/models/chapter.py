@@ -1,20 +1,22 @@
 """章节模型"""
 
 from sqlalchemy import String, Text, Integer
-from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .base import Base, UUIDMixin, TimestampMixin
+from .base import Base, GUID, JSONValue, UUIDMixin, TimestampMixin
 
 
 class Chapter(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "chapters"
 
-    project_id: Mapped[str] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    project_id: Mapped[str] = mapped_column(GUID(), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     outline: Mapped[str | None] = mapped_column(Text, nullable=True)
     sequence_number: Mapped[int] = mapped_column(Integer, default=0)
     word_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="draft")
-    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
+    # 定稿时指向 ChapterVersion 的不可变快照。下一章上下文从这份快照读取，
+    # 而不是直接读取可能后来又被编辑过的 chapter.content。
+    final_version_id: Mapped[str | None] = mapped_column(GUID(), nullable=True, index=True)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONValue(), nullable=True)

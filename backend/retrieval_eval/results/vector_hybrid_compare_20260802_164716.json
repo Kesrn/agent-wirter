@@ -1,0 +1,90 @@
+{
+  "meta": {
+    "created_at": "2026-08-02T16:47:16+00:00",
+    "top_k": 5
+  },
+  "datasets": {
+    "regression": {
+      "dataset_path": "/Users/zcx/ai-creative-platform/backend/retrieval_eval/datasets/regression_candidates.json",
+      "summaries": {
+        "ilike": {
+          "n_samples": 76,
+          "recall_at_k": 0.1316,
+          "mrr": 0.1316,
+          "precision_at_k": 0.1316,
+          "false_recall_rate": 0.8684,
+          "p95_latency_ms": 84.4,
+          "total_runtime_sec": 4.45
+        },
+        "lexical": {
+          "n_samples": 76,
+          "recall_at_k": 0.8158,
+          "mrr": 0.8158,
+          "precision_at_k": 0.8158,
+          "false_recall_rate": 0.1842,
+          "p95_latency_ms": 35.0,
+          "total_runtime_sec": 2.25
+        },
+        "vector": {
+          "n_samples": 76,
+          "recall_at_k": 0.8158,
+          "mrr": 0.8158,
+          "precision_at_k": 0.8158,
+          "false_recall_rate": 0.1842,
+          "p95_latency_ms": 1487.4,
+          "total_runtime_sec": 94.02
+        },
+        "hybrid": {
+          "n_samples": 76,
+          "recall_at_k": 0.8158,
+          "mrr": 0.8158,
+          "precision_at_k": 0.8158,
+          "false_recall_rate": 0.1842,
+          "p95_latency_ms": 1446.8,
+          "total_runtime_sec": 97.26
+        }
+      }
+    },
+    "natural": {
+      "dataset_path": "/Users/zcx/ai-creative-platform/backend/retrieval_eval/datasets/natural_queries.json",
+      "summaries": {
+        "ilike": {
+          "n_samples": 28,
+          "recall_at_k": 0.6071,
+          "mrr": 0.6071,
+          "precision_at_k": 0.6071,
+          "false_recall_rate": 0.3929,
+          "p95_latency_ms": 168.6,
+          "total_runtime_sec": 1.88
+        },
+        "lexical": {
+          "n_samples": 28,
+          "recall_at_k": 0.8571,
+          "mrr": 0.8571,
+          "precision_at_k": 0.8571,
+          "false_recall_rate": 0.1429,
+          "p95_latency_ms": 257.5,
+          "total_runtime_sec": 3.28
+        },
+        "vector": {
+          "n_samples": 28,
+          "recall_at_k": 0.8571,
+          "mrr": 0.8571,
+          "precision_at_k": 0.8571,
+          "false_recall_rate": 0.1429,
+          "p95_latency_ms": 1677.5,
+          "total_runtime_sec": 35.94
+        },
+        "hybrid": {
+          "n_samples": 28,
+          "recall_at_k": 0.8571,
+          "mrr": 0.8571,
+          "precision_at_k": 0.8571,
+          "false_recall_rate": 0.1429,
+          "p95_latency_ms": 1599.7,
+          "total_runtime_sec": 36.03
+        }
+      }
+    }
+  }
+}

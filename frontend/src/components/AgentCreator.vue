@@ -4,6 +4,7 @@ import { useExpertStore, useUiStore, friendlyError } from '../stores'
 import type { RoleType, WorkflowPosition, ContextScope, TriggerMode, ExpertCreatePayload } from '../api/types'
 import { MAX_SYSTEM_PROMPT_LENGTH, MAX_TOKENS_LIMIT } from '../api/types'
 import { useRoute } from 'vue-router'
+import BaseSelect from './BaseSelect.vue'
 
 const route = useRoute()
 const store = useExpertStore()
@@ -179,9 +180,7 @@ function resetForm() {
       <div class="form-row">
         <div class="form-group flex-1">
           <label>工作流位置</label>
-          <select v-model="workflowPosition">
-            <option v-for="opt in workflowPositionOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </select>
+          <BaseSelect v-model="workflowPosition" :options="workflowPositionOptions" />
         </div>
         <div class="form-group flex-1">
           <label>触发方式</label>

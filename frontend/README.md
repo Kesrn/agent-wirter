@@ -13,6 +13,32 @@ npm run dev
 npm run build
 ```
 
+## 桌面端
+
+桌面端使用 Electron 封装同一套 Vue/Vite 前端，并自动启动内置 FastAPI 后端。Web 端开发与构建命令保持不变。
+
+```bash
+npm run desktop:dev
+```
+
+构建安装包：
+
+```bash
+npm run desktop:build
+```
+
+按平台构建安装包：
+
+```bash
+npm run desktop:build:mac   # macOS: 输出 .dmg / .zip
+npm run desktop:build:win   # Windows: 输出 NSIS .exe
+npm run desktop:build:linux # Linux: 输出 AppImage
+```
+
+Windows 版 `.exe` 需要在 Windows 机器上构建，因为桌面包会内置 PyInstaller 生成的后端二进制；PyInstaller 不能在 macOS 上直接产出可用的 Windows 后端。Windows 构建前请确保已准备好 `backend\venv\Scripts\python.exe` 并安装后端依赖。
+
+桌面端构建会输出到 `dist-desktop`，Web 构建仍然输出到 `dist`。桌面端默认连接 `http://127.0.0.1:8765/api`，应用启动时会自动拉起内置后端，并把数据写入系统用户数据目录下的本地 SQLite 数据库。
+
 ## 环境变量
 
 复制 `.env.example` 为 `.env`，按需修改：
@@ -24,6 +50,7 @@ cp .env.example .env
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `VITE_API_BASE_URL` | 后端 API 地址 | `http://localhost:8000/api` |
+| `VITE_DESKTOP` | 是否启用桌面端构建兼容 | `false` |
 
 ## Mock 模式
 

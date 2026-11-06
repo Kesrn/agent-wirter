@@ -12,7 +12,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="confirm-overlay" @click.self="emit('cancel')">
+  <div class="confirm-overlay">
     <div class="confirm-modal">
       <div class="confirm-mark" :class="{ danger }">!</div>
       <p class="confirm-message">{{ message }}</p>
@@ -28,13 +28,13 @@ const emit = defineEmits<{
 .confirm-overlay {
   position: fixed;
   inset: 0;
-  background: color-mix(in srgb, #020617 58%, transparent);
+  background: var(--bg-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: var(--sp-4);
   z-index: 3000;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(8px);
 }
 .confirm-modal {
   background: var(--bg-panel);
@@ -100,6 +100,6 @@ const emit = defineEmits<{
   background: var(--status-error);
 }
 .btn-confirm.danger:hover {
-  background: color-mix(in srgb, var(--status-error) 82%, #000);
+  opacity: 0.9;
 }
 </style>

@@ -1,10 +1,10 @@
-import { defineStore } from 'pinia'
+import { defineStore, getActivePinia } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Project, Chapter, DocumentUnit, Expert, WorkflowStep, ReviewComment, CharacterRelation, ProjectMode, ExpertCreatePayload, WorldEntry, Character, OutlineItem, HiddenThread, ChapterVersion, DocumentRevision, DiffHunk, GenerationRecord } from '../api/types'
-import type { ApiProject, ApiChapter, ApiDocument, ApiExpert, ApiWorldEntry, ApiCharacter, ApiCharacterRelation, ApiOutline, ApiHiddenThread, ApiChapterVersion, ApiDocumentVersion, ApiGenerationRecordListItem, ApiGenerationRecord } from '../api/types'
-import type { CharacterRelationCreatePayload, CharacterRelationUpdatePayload, OutlineUpdatePayload, HiddenThreadUpdatePayload, WorldEntryCreatePayload, WorldEntryUpdatePayload, CharacterCreatePayload, CharacterUpdatePayload } from '../api/types'
+import type { Project, Chapter, DocumentUnit, Expert, WorkflowStep, ReviewComment, ChapterReviewNote, ChapterReviewNoteCreatePayload, CharacterRelation, CharacterEvent, ProjectMode, ExpertCreatePayload, WorldEntry, Character, OutlineItem, HiddenThread, StoryArc, ChapterVersion, DocumentRevision, DiffHunk, GenerationRecord, SkillPackPayload } from '../api/types'
+import type { ApiProject, ApiChapter, ApiDocument, ApiExpert, ApiWorldEntry, ApiCharacter, ApiCharacterRelation, ApiOutline, ApiHiddenThread, ApiStoryArc, ApiChapterVersion, ApiDocumentVersion, ApiGenerationRecordListItem, ApiGenerationRecord } from '../api/types'
+import type { CharacterRelationCreatePayload, CharacterRelationUpdatePayload, CharacterEventUpsertPayload, OutlineCreatePayload, OutlineUpdatePayload, HiddenThreadUpdatePayload, StoryArcCreatePayload, StoryArcUpdatePayload, WorldEntryCreatePayload, WorldEntryUpdatePayload, CharacterCreatePayload, CharacterUpdatePayload, CharacterMergePayload, ProjectUpdatePayload } from '../api/types'
 import { api, ApiError } from '../api/client'
-import { MOCK_PROJECTS, MOCK_CHAPTERS, DEFAULT_EXPERTS, MOCK_REVIEW_COMMENTS, MOCK_CHARACTER_RELATIONS, MOCK_WORLD_ENTRIES, MOCK_CHARACTERS, MOCK_OUTLINE, MOCK_HIDDEN_THREADS } from '../mock/data'
+import { MOCK_PROJECTS, MOCK_CHAPTERS, DEFAULT_EXPERTS, MOCK_REVIEW_COMMENTS, MOCK_CHARACTER_RELATIONS, MOCK_WORLD_ENTRIES, MOCK_CHARACTERS, MOCK_OUTLINE, MOCK_HIDDEN_THREADS, MOCK_STORY_ARCS } from '../mock/data'
 
 // ─── API → UI conversion helpers ───
 
@@ -12,8 +12,9 @@ function apiProjectToProject(ap: ApiProject): Project {
   return {
     id: ap.id,
     title: ap.title,
-    genre: '',
-    style: '',
+    genre: ap.genre ?? '',
+    style: ap.style ?? '',
+    overall_outline: ap.overall_outline ?? '',
     status: ap.status,
     mode: ap.mode as ProjectMode,
     description: ap.description ?? '',
@@ -63,12 +64,30 @@ function apiDocumentToDocumentUnit(doc: ApiDocument, projectId: string): Documen
   }
 }
 
+function reviewNoteToComment(note: ChapterReviewNote): ReviewComment {
+  const metadata = note.metadata ?? {}
+  const expertId = typeof metadata.expert_id === 'string' ? metadata.expert_id : note.source_type
+  return {
+    id: note.id,
+    chapter_id: `${note.project_id}:${note.chapter_sequence_number}`,
+    expert_id: expertId,
+    comment: note.content,
+    severity: note.severity,
+    resolved: note.resolved,
+    source_type: note.source_type,
+    created_at: note.created_at,
+    updated_at: note.updated_at,
+    metadata: note.metadata,
+  }
+}
+
 function apiExpertToExpert(ae: ApiExpert): Expert {
   return {
     id: ae.id,
     role: ae.role_type,
     name: ae.name,
     role_type: ae.role_type,
+    skill_dir: ae.skill_dir,
     description: ae.description,
     system_prompt: ae.system_prompt,
     temperature: ae.temperature,
@@ -79,6 +98,9 @@ function apiExpertToExpert(ae: ApiExpert): Expert {
     is_builtin: ae.is_builtin,
     is_enabled: ae.is_enabled,
     color: ae.color,
+    expert_key: ae.expert_key ?? null,
+    version: ae.version ?? 1,
+    deprecated: ae.deprecated ?? false,
   }
 }
 
@@ -116,6 +138,8 @@ export const useProjectStore = defineStore('project', () => {
     const ap = await api.createProject({
       title: payload.title,
       description: payload.description,
+      genre: payload.genre,
+      style: payload.style,
       target_words: payload.target_words,
       mode: payload.mode,
     })
@@ -130,15 +154,30 @@ export const useProjectStore = defineStore('project', () => {
     if (currentProjectId.value === projectId) currentProjectId.value = null
   }
 
+  async function updateProjectRemote(projectId: string, payload: ProjectUpdatePayload): Promise<Project> {
+    const updated = apiProjectToProject(await api.updateProject(projectId, payload))
+    const idx = projects.value.findIndex(p => p.id === projectId)
+    if (idx !== -1) projects.value[idx] = updated
+    return updated
+  }
+
+  function reset() {
+    projects.value = [...MOCK_PROJECTS]
+    currentProjectId.value = null
+    loadError.value = ''
+  }
+
   return {
     projects, currentProjectId, currentProject, loadError,
-    setCurrent, addProject, createProject, loadProjects, createProjectRemote, deleteProjectRemote,
+    setCurrent, addProject, createProject, loadProjects, createProjectRemote, updateProjectRemote, deleteProjectRemote,
+    reset,
   }
 })
 
 export const useChapterStore = defineStore('chapter', () => {
   const chapters = ref<Chapter[]>([...MOCK_CHAPTERS])
   const reviewComments = ref<ReviewComment[]>([...MOCK_REVIEW_COMMENTS])
+  const reviewNotes = ref<ChapterReviewNote[]>([])
   const currentChapterNum = ref(1)
   const loadError = ref('')
   const saving = ref(false)
@@ -154,7 +193,84 @@ export const useChapterStore = defineStore('chapter', () => {
   function reviewCommentsForChapter(chapterId: string): ReviewComment[] {
     const chapter = chapters.value.find(c => c.id === chapterId)
     if (!chapter) return []
+    const notes = reviewNotes.value.filter(note =>
+      note.project_id === chapter.project_id && note.chapter_sequence_number === chapter.chapter_num,
+    )
+    if (notes.length) return notes.map(reviewNoteToComment)
     return reviewComments.value.filter(rc => chapter.review_comment_ids.includes(rc.id))
+  }
+
+  function reviewCommentsForProjectChapter(projectId: string, sequenceNumber: number): ReviewComment[] {
+    const notes = reviewNotes.value.filter(note =>
+      note.project_id === projectId && note.chapter_sequence_number === sequenceNumber,
+    )
+    if (notes.length) return notes.map(reviewNoteToComment)
+    const chapter = chapters.value.find(c => c.project_id === projectId && c.chapter_num === sequenceNumber)
+    return chapter ? reviewCommentsForChapter(chapter.id) : []
+  }
+
+  function upsertReviewNote(note: ChapterReviewNote) {
+    const idx = reviewNotes.value.findIndex(n => n.id === note.id)
+    if (idx === -1) {
+      reviewNotes.value.push(note)
+    } else {
+      reviewNotes.value[idx] = note
+    }
+  }
+
+  function removeReviewNote(projectId: string, sequenceNumber: number, noteId: string) {
+    reviewNotes.value = reviewNotes.value.filter(note =>
+      !(note.project_id === projectId && note.chapter_sequence_number === sequenceNumber && note.id === noteId),
+    )
+  }
+
+  async function loadReviewNotes(projectId: string, sequenceNumber: number) {
+    try {
+      const list = await api.listChapterReviewNotes(projectId, sequenceNumber)
+      reviewNotes.value = reviewNotes.value.filter(note =>
+        !(note.project_id === projectId && note.chapter_sequence_number === sequenceNumber),
+      )
+      reviewNotes.value.push(...list)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载审核意见失败'
+      loadError.value = msg
+    }
+  }
+
+  async function createReviewNote(projectId: string, sequenceNumber: number, payload: ChapterReviewNoteCreatePayload): Promise<ChapterReviewNote | null> {
+    try {
+      const note = await api.createChapterReviewNote(projectId, sequenceNumber, payload)
+      upsertReviewNote(note)
+      return note
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '保存审核意见失败'
+      loadError.value = msg
+      return null
+    }
+  }
+
+  async function markReviewCommentResolved(projectId: string, sequenceNumber: number, noteId: string) {
+    const note = reviewNotes.value.find(n =>
+      n.id === noteId && n.project_id === projectId && n.chapter_sequence_number === sequenceNumber,
+    )
+    if (note) note.resolved = true
+    const mockComment = reviewComments.value.find(rc => rc.id === noteId)
+    if (mockComment) mockComment.resolved = true
+    if (!note) return
+    try {
+      const updated = await api.updateChapterReviewNote(projectId, sequenceNumber, noteId, { resolved: true })
+      upsertReviewNote(updated)
+    } catch (e: unknown) {
+      note.resolved = false
+      const msg = e instanceof Error ? e.message : '标记审核意见失败'
+      loadError.value = msg
+      throw e
+    }
+  }
+
+  async function deleteReviewNote(projectId: string, sequenceNumber: number, noteId: string) {
+    await api.deleteChapterReviewNote(projectId, sequenceNumber, noteId)
+    removeReviewNote(projectId, sequenceNumber, noteId)
   }
 
   function setCurrentChapter(num: number) {
@@ -163,7 +279,11 @@ export const useChapterStore = defineStore('chapter', () => {
 
   function updateDraft(projectId: string, text: string) {
     const ch = currentChapterForProject(projectId)
-    if (ch) ch.draft = text
+    if (ch) {
+      // 定稿后的任何手动改动都必须重新人工确认，不能继续沿用旧定稿上下文。
+      if (ch.status === 'final' && ch.draft !== text) ch.status = 'draft'
+      ch.draft = text
+    }
   }
 
   function nextChapterNum(projectId: string): number {
@@ -219,10 +339,33 @@ export const useChapterStore = defineStore('chapter', () => {
     }
   }
 
+  async function finalizeCurrentChapter(projectId: string, content: string) {
+    const ch = currentChapterForProject(projectId)
+    if (!ch) throw new Error('请选择要定稿的章节')
+    if (!content.trim()) throw new Error('章节正文为空，无法定稿')
+    saving.value = true
+    try {
+      const updated = apiChapterToChapter(
+        await api.finalizeChapter(projectId, ch.chapter_num, { content }),
+        projectId,
+      )
+      const idx = chapters.value.findIndex(c => c.id === ch.id)
+      if (idx !== -1) chapters.value[idx] = updated
+      return updated
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '章节定稿失败'
+      loadError.value = msg
+      throw e
+    } finally {
+      saving.value = false
+    }
+  }
+
   async function updateChapterTitle(projectId: string, chapterNum: number, title: string) {
     const updated = apiChapterToChapter(await api.updateChapter(projectId, chapterNum, { title }), projectId)
     const idx = chapters.value.findIndex(c => c.chapter_num === chapterNum && c.project_id === projectId)
     if (idx !== -1) chapters.value[idx] = updated
+    useOutlineStore().syncTitleForChapter(projectId, chapterNum, title)
   }
 
   async function deleteChapterRemote(projectId: string, chapterNum: number) {
@@ -233,11 +376,22 @@ export const useChapterStore = defineStore('chapter', () => {
     }
   }
 
+  function reset() {
+    chapters.value = [...MOCK_CHAPTERS]
+    reviewComments.value = [...MOCK_REVIEW_COMMENTS]
+    reviewNotes.value = []
+    currentChapterNum.value = 1
+    loadError.value = ''
+    saving.value = false
+  }
+
   return {
-    chapters, reviewComments, currentChapterNum, loadError, saving,
-    chaptersForProject, currentChapterForProject, reviewCommentsForChapter,
+    chapters, reviewComments, reviewNotes, currentChapterNum, loadError, saving,
+    chaptersForProject, currentChapterForProject, reviewCommentsForChapter, reviewCommentsForProjectChapter,
     setCurrentChapter, updateDraft, nextChapterNum,
-    loadChapters, createChapterRemote, saveCurrentChapter, updateChapterTitle, deleteChapterRemote,
+    loadChapters, createChapterRemote, saveCurrentChapter, finalizeCurrentChapter, updateChapterTitle, deleteChapterRemote,
+    loadReviewNotes, createReviewNote, markReviewCommentResolved, deleteReviewNote,
+    reset,
   }
 })
 
@@ -346,30 +500,44 @@ export const useDocumentStore = defineStore('document', () => {
     }
   }
 
+  function reset() {
+    documents.value = []
+    currentDocumentPosition.value = 1
+    loadError.value = ''
+    saving.value = false
+  }
+
   return {
     documents, currentDocumentPosition, loadError, saving,
     documentsForProject, currentDocumentForProject, setCurrentDocument, updateDraft,
     nextDocumentPosition, loadDocuments, createDocumentRemote, saveCurrentDocument,
     updateDocumentTitle, deleteDocumentRemote,
+    reset,
   }
 })
 
 export interface ExpertProjectState {
   isGenerating: boolean
+  generationError: string
   streamOutput: string
+  initialDraft: string
   finalDraft: string
   workflowSteps: WorkflowStep[]
   expertSkills: Record<string, string>
+  expertSkillPacks: Record<string, SkillPackPayload>
   revisionCount: number
   maxRevisions: number
 }
 
 const EMPTY_EXPERT_STATE: ExpertProjectState = {
   isGenerating: false,
+  generationError: '',
   streamOutput: '',
+  initialDraft: '',
   finalDraft: '',
   workflowSteps: [],
   expertSkills: {},
+  expertSkillPacks: {},
   revisionCount: 0,
   maxRevisions: 3,
 }
@@ -394,12 +562,12 @@ export const useExpertStore = defineStore('expert', () => {
   // ─── Per-project generation state ───
 
   function getState(pid: string): ExpertProjectState {
-    return states.value[pid] ?? { ...EMPTY_EXPERT_STATE, workflowSteps: [] }
+    return states.value[pid] ?? { ...EMPTY_EXPERT_STATE, workflowSteps: [], expertSkills: {}, expertSkillPacks: {} }
   }
 
   function ensureState(pid: string): ExpertProjectState {
     if (!states.value[pid]) {
-      states.value[pid] = { ...EMPTY_EXPERT_STATE, workflowSteps: [] }
+      states.value[pid] = { ...EMPTY_EXPERT_STATE, workflowSteps: [], expertSkills: {}, expertSkillPacks: {} }
     }
     return states.value[pid]
   }
@@ -407,10 +575,13 @@ export const useExpertStore = defineStore('expert', () => {
   function startGenerating(pid: string) {
     const s = ensureState(pid)
     s.isGenerating = true
+    s.generationError = ''
     s.streamOutput = ''
+    s.initialDraft = ''
     s.finalDraft = ''
     s.workflowSteps = []
     s.expertSkills = {}
+    s.expertSkillPacks = {}
     s.revisionCount = 0
     s.maxRevisions = 3
   }
@@ -427,6 +598,14 @@ export const useExpertStore = defineStore('expert', () => {
     }
   }
 
+  function setGenerating(pid: string, isGenerating: boolean) {
+    ensureState(pid).isGenerating = isGenerating
+  }
+
+  function setGenerationError(pid: string, message: string) {
+    ensureState(pid).generationError = message
+  }
+
   function appendOutput(pid: string, text: string) {
     ensureState(pid).streamOutput += text
   }
@@ -435,8 +614,16 @@ export const useExpertStore = defineStore('expert', () => {
     ensureState(pid).finalDraft += token
   }
 
+  function appendInitialDraft(pid: string, token: string) {
+    ensureState(pid).initialDraft += token
+  }
+
   function setDraft(pid: string, text: string) {
     ensureState(pid).finalDraft = text
+  }
+
+  function setInitialDraft(pid: string, text: string) {
+    ensureState(pid).initialDraft = text
   }
 
   function setWorkflowSteps(pid: string, steps: WorkflowStep[]) {
@@ -454,6 +641,12 @@ export const useExpertStore = defineStore('expert', () => {
 
   function setExpertSkill(pid: string, expert: string, skill: string) {
     ensureState(pid).expertSkills[expert] = skill
+  }
+
+  function setExpertSkillPack(pid: string, pack: SkillPackPayload) {
+    const s = ensureState(pid)
+    s.expertSkills[pack.expert] = pack.skill
+    s.expertSkillPacks[pack.expert] = pack
   }
 
   function setRevisionInfo(pid: string, revisionCount: number, maxRevisions: number) {
@@ -515,13 +708,23 @@ export const useExpertStore = defineStore('expert', () => {
     }
   }
 
+  function reset() {
+    experts.value = []
+    activeExpertId.value = null
+    states.value = {}
+    loading.value = false
+    loadError.value = ''
+  }
+
   return {
     experts, activeExpertId, activeExpert, states, loading, loadError,
     getExpertName, setActive,
-    getState, startGenerating, stopGenerating, appendOutput, appendDraft, setDraft,
+    getState, startGenerating, stopGenerating, setGenerating, setGenerationError, appendOutput,
+    appendDraft, appendInitialDraft, setDraft, setInitialDraft,
     setWorkflowSteps, updateStepStatus, clearProjectState,
-      setExpertSkill, setRevisionInfo,
+      setExpertSkill, setExpertSkillPack, setRevisionInfo,
     loadExperts, addExpert, addCustomExpert, toggleExpert,
+    reset,
   }
 })
 
@@ -604,7 +807,13 @@ export const useRelationStore = defineStore('relation', () => {
     }
   }
 
-  return { relations, loading, loadError, getRelationsForProject, getRelationsForCharacter, loadRelations, addRelation, removeRelation, updateRelation }
+  function reset() {
+    relations.value = [...MOCK_CHARACTER_RELATIONS]
+    loading.value = false
+    loadError.value = ''
+  }
+
+  return { relations, loading, loadError, getRelationsForProject, getRelationsForCharacter, loadRelations, addRelation, removeRelation, updateRelation, reset }
 })
 
 // ─── WorldEntry store ───
@@ -615,6 +824,8 @@ function apiWorldEntryToWorldEntry(awe: ApiWorldEntry): WorldEntry {
     project_id: awe.project_id,
     title: awe.title,
     category: awe.category,
+    scope_type: awe.scope_type === 'chapter' ? 'chapter' : 'global',
+    chapter_sequence_number: awe.chapter_sequence_number ?? null,
     content: awe.content,
     rules: awe.rules,
     confidence: (awe.confidence === 'low' || awe.confidence === 'medium' || awe.confidence === 'high')
@@ -688,7 +899,13 @@ export const useWorldEntryStore = defineStore('worldEntry', () => {
     }
   }
 
-  return { worldEntries, loading, loadError, entriesForProject, loadWorldEntries, addWorldEntry, updateWorldEntry, removeWorldEntry }
+  function reset() {
+    worldEntries.value = [...MOCK_WORLD_ENTRIES]
+    loading.value = false
+    loadError.value = ''
+  }
+
+  return { worldEntries, loading, loadError, entriesForProject, loadWorldEntries, addWorldEntry, updateWorldEntry, removeWorldEntry, reset }
 })
 
 // ─── Character store ───
@@ -699,6 +916,12 @@ const ROLE_TYPE_MAP: Record<string, Character['role_type']> = {
   supporting: 'supporting',
   minor: 'minor',
 }
+const CHARACTER_SCOPE_MAP: Record<string, Character['scope_type']> = {
+  core: 'core',
+  recurring: 'recurring',
+  chapter: 'chapter',
+  cameo: 'cameo',
+}
 
 function apiCharacterToCharacter(ac: ApiCharacter): Character {
   return {
@@ -706,6 +929,7 @@ function apiCharacterToCharacter(ac: ApiCharacter): Character {
     project_id: ac.project_id,
     name: ac.name,
     role_type: ROLE_TYPE_MAP[ac.role_type] ?? 'minor',
+    scope_type: CHARACTER_SCOPE_MAP[ac.scope_type] ?? 'recurring',
     profile: ac.profile,
     faction: ac.faction,
     appearance_count: ac.appearance_count,
@@ -765,6 +989,22 @@ export const useCharacterStore = defineStore('character', () => {
     }
   }
 
+  async function mergeCharacter(projectId: string, characterId: string, payload: CharacterMergePayload) {
+    try {
+      const ac = await api.mergeCharacter(projectId, characterId, payload)
+      const merged = apiCharacterToCharacter(ac)
+      characters.value = characters.value.filter(c => c.id !== characterId)
+      const idx = characters.value.findIndex(c => c.id === merged.id)
+      if (idx !== -1) characters.value[idx] = merged
+      else characters.value.push(merged)
+      return merged
+    } catch (e: unknown) {
+      const msg = e instanceof ApiError ? e.message : '合并角色失败'
+      loadError.value = msg
+      throw e
+    }
+  }
+
   async function removeCharacter(projectId: string, characterId: string) {
     try {
       await api.deleteCharacter(projectId, characterId)
@@ -776,7 +1016,68 @@ export const useCharacterStore = defineStore('character', () => {
     }
   }
 
-  return { characters, loading, loadError, charactersForProject, loadCharacters, addCharacter, updateCharacter, removeCharacter }
+  function reset() {
+    characters.value = [...MOCK_CHARACTERS]
+    loading.value = false
+    loadError.value = ''
+  }
+
+  return { characters, loading, loadError, charactersForProject, loadCharacters, addCharacter, updateCharacter, mergeCharacter, removeCharacter, reset }
+})
+
+// ─── Character event store ───
+export const useCharacterEventStore = defineStore('characterEvent', () => {
+  const events = ref<CharacterEvent[]>([])
+  const loading = ref(false)
+  const loadError = ref('')
+
+  function eventsForProject(projectId: string): CharacterEvent[] {
+    return events.value.filter(event => event.project_id === projectId)
+  }
+
+  function eventsForCharacter(projectId: string, characterId: string): CharacterEvent[] {
+    return events.value
+      .filter(event => event.project_id === projectId && event.character_id === characterId)
+      .sort((a, b) => a.chapter_sequence_number - b.chapter_sequence_number)
+  }
+
+  async function loadCharacterEvents(projectId: string) {
+    loading.value = true
+    loadError.value = ''
+    try {
+      const list = await api.listCharacterEvents(projectId)
+      const others = events.value.filter(event => event.project_id !== projectId)
+      events.value = [...others, ...list]
+    } catch (e: unknown) {
+      loadError.value = e instanceof ApiError ? e.message : '加载角色事件失败'
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function upsertCharacterEvent(projectId: string, characterId: string, sequenceNumber: number, payload: CharacterEventUpsertPayload) {
+    const updated = await api.upsertCharacterEvent(projectId, characterId, sequenceNumber, payload)
+    const idx = events.value.findIndex(event => event.id === updated.id)
+    if (idx !== -1) events.value[idx] = updated
+    else events.value.push(updated)
+    return updated
+  }
+
+  async function removeCharacterEvent(projectId: string, characterId: string, sequenceNumber: number) {
+    await api.deleteCharacterEvent(projectId, characterId, sequenceNumber)
+    events.value = events.value.filter(event => {
+      return !(event.project_id === projectId && event.character_id === characterId && event.chapter_sequence_number === sequenceNumber)
+    })
+  }
+
+  function reset() {
+    events.value = []
+    loading.value = false
+    loadError.value = ''
+  }
+
+  return { events, loading, loadError, eventsForProject, eventsForCharacter, loadCharacterEvents, upsertCharacterEvent, removeCharacterEvent, reset }
 })
 
 // ─── Outline store ───
@@ -790,6 +1091,11 @@ function apiOutlineToOutlineItem(ao: ApiOutline): OutlineItem {
     summary: ao.summary ?? '',
     turning_point: ao.turning_point ?? null,
     hidden_thread_ids: ao.hidden_thread_ids ?? [],
+    story_arc_id: ao.story_arc_id ?? null,
+    arc_position: ao.arc_position ?? null,
+    pacing: ao.pacing ?? null,
+    tension_level: ao.tension_level ?? null,
+    target_scene_count: ao.target_scene_count ?? null,
   }
 }
 
@@ -818,7 +1124,7 @@ export const useOutlineStore = defineStore('outline', () => {
     }
   }
 
-  async function createOutlineItem(projectId: string, payload: { sequence_number: number; title: string; summary?: string; turning_point?: string }): Promise<OutlineItem | null> {
+  async function createOutlineItem(projectId: string, payload: OutlineCreatePayload): Promise<OutlineItem | null> {
     try {
       const ao = await api.createOutline(projectId, payload)
       const item = apiOutlineToOutlineItem(ao)
@@ -845,6 +1151,13 @@ export const useOutlineStore = defineStore('outline', () => {
     }
   }
 
+  function syncTitleForChapter(projectId: string, chapterNum: number, title: string) {
+    const item = outlines.value.find(
+      outline => outline.project_id === projectId && outline.chapter_num === chapterNum,
+    )
+    if (item) item.title = title
+  }
+
   async function deleteOutlineItem(projectId: string, outlineId: string) {
     try {
       await api.deleteOutline(projectId, outlineId)
@@ -856,7 +1169,13 @@ export const useOutlineStore = defineStore('outline', () => {
     }
   }
 
-  return { outlines, loading, loadError, entriesForProject, loadOutlines, createOutlineItem, updateOutlineItem, deleteOutlineItem }
+  function reset() {
+    outlines.value = [...MOCK_OUTLINE]
+    loading.value = false
+    loadError.value = ''
+  }
+
+  return { outlines, loading, loadError, entriesForProject, loadOutlines, createOutlineItem, updateOutlineItem, syncTitleForChapter, deleteOutlineItem, reset }
 })
 
 // ─── HiddenThread store ───
@@ -868,6 +1187,13 @@ function apiHiddenThreadToHiddenThread(aht: ApiHiddenThread): HiddenThread {
     name: aht.name,
     description: aht.description ?? '',
     chapter_nums: aht.chapter_nums ?? [],
+    status: aht.status ?? 'PLANNED',
+    thread_type: aht.thread_type ?? null,
+    planted_chapter: aht.planted_chapter ?? null,
+    reveal_chapter: aht.reveal_chapter ?? null,
+    resolved_chapter: aht.resolved_chapter ?? null,
+    payoff_summary: aht.payoff_summary ?? null,
+    risk_level: aht.risk_level ?? null,
     created_at: aht.created_at,
     updated_at: aht.updated_at,
   }
@@ -936,7 +1262,105 @@ export const useHiddenThreadStore = defineStore('hiddenThread', () => {
     }
   }
 
-  return { hiddenThreads, loading, loadError, threadsForProject, loadHiddenThreads, createHiddenThreadItem, updateHiddenThreadItem, deleteHiddenThreadItem }
+  function reset() {
+    hiddenThreads.value = [...MOCK_HIDDEN_THREADS]
+    loading.value = false
+    loadError.value = ''
+  }
+
+  return { hiddenThreads, loading, loadError, threadsForProject, loadHiddenThreads, createHiddenThreadItem, updateHiddenThreadItem, deleteHiddenThreadItem, reset }
+})
+
+// ─── StoryArc store ───
+
+function apiStoryArcToStoryArc(a: ApiStoryArc): StoryArc {
+  return {
+    id: a.id,
+    project_id: a.project_id,
+    parent_arc_id: a.parent_arc_id ?? null,
+    arc_type: a.arc_type as StoryArc['arc_type'],
+    name: a.name,
+    summary: a.summary ?? '',
+    goal: a.goal ?? '',
+    main_conflict: a.main_conflict ?? '',
+    start_chapter: a.start_chapter ?? null,
+    end_chapter: a.end_chapter ?? null,
+    order_index: a.order_index,
+    status: a.status,
+  }
+}
+
+export const useStoryArcStore = defineStore('storyArc', () => {
+  const arcs = ref<StoryArc[]>([...MOCK_STORY_ARCS])
+  const loading = ref(false)
+  const loadError = ref('')
+
+  function arcsForProject(projectId: string): StoryArc[] {
+    return arcs.value
+      .filter(a => a.project_id === projectId)
+      .sort((a, b) => a.order_index - b.order_index)
+  }
+
+  async function loadStoryArcs(projectId: string) {
+    loading.value = true
+    loadError.value = ''
+    try {
+      const list = await api.listStoryArcs(projectId)
+      const other = arcs.value.filter(a => a.project_id !== projectId)
+      arcs.value = [...other, ...list.map(apiStoryArcToStoryArc)]
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '加载长线结构失败'
+      loadError.value = msg
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function createStoryArcItem(projectId: string, payload: StoryArcCreatePayload): Promise<StoryArc | null> {
+    try {
+      const a = await api.createStoryArc(projectId, payload)
+      const item = apiStoryArcToStoryArc(a)
+      arcs.value.push(item)
+      return item
+    } catch (e: unknown) {
+      const msg = e instanceof ApiError ? e.message : '创建长线结构失败'
+      loadError.value = msg
+      throw e
+    }
+  }
+
+  async function updateStoryArcItem(projectId: string, arcId: string, payload: StoryArcUpdatePayload) {
+    try {
+      const a = await api.updateStoryArc(projectId, arcId, payload)
+      const updated = apiStoryArcToStoryArc(a)
+      const idx = arcs.value.findIndex(item => item.id === arcId)
+      if (idx !== -1) arcs.value[idx] = updated
+      return updated
+    } catch (e: unknown) {
+      const msg = e instanceof ApiError ? e.message : '更新长线结构失败'
+      loadError.value = msg
+      throw e
+    }
+  }
+
+  async function deleteStoryArcItem(projectId: string, arcId: string) {
+    try {
+      await api.deleteStoryArc(projectId, arcId)
+      arcs.value = arcs.value.filter(a => a.id !== arcId)
+    } catch (e: unknown) {
+      const msg = e instanceof ApiError ? e.message : '删除长线结构失败'
+      loadError.value = msg
+      throw e
+    }
+  }
+
+  function reset() {
+    arcs.value = [...MOCK_STORY_ARCS]
+    loading.value = false
+    loadError.value = ''
+  }
+
+  return { arcs, loading, loadError, arcsForProject, loadStoryArcs, createStoryArcItem, updateStoryArcItem, deleteStoryArcItem, reset }
 })
 
 // ─── Chapter Version History store ───
@@ -1036,7 +1460,11 @@ export const useChapterVersionStore = defineStore('chapterVersion', () => {
     diffResult.value = null
   }
 
-  return { versions, loading, loadError, diffResult, loadVersions, getVersionContent, loadDiff, loadDiffWithCurrent, clearState }
+  function reset() {
+    clearState()
+  }
+
+  return { versions, loading, loadError, diffResult, loadVersions, getVersionContent, loadDiff, loadDiffWithCurrent, clearState, reset }
 })
 
 // ─── Document Revision History store ───
@@ -1147,10 +1575,26 @@ export const useDocumentRevisionStore = defineStore('documentRevision', () => {
     diffResult.value = null
   }
 
-  return { revisions, loading, loadError, diffResult, loadRevisions, getRevisionContent, restoreRevision, loadDiff, loadDiffWithCurrent, clearState }
+  function reset() {
+    clearState()
+  }
+
+  return { revisions, loading, loadError, diffResult, loadRevisions, getRevisionContent, restoreRevision, loadDiff, loadDiffWithCurrent, clearState, reset }
 })
 
 // ─── AI Generation History store ───
+
+function skillPacksFromRequestParams(params: Record<string, unknown> | null | undefined): SkillPackPayload[] {
+  const packs = params?.skill_packs
+  if (!Array.isArray(packs)) return []
+  return packs.filter((item): item is SkillPackPayload => {
+    if (!item || typeof item !== 'object') return false
+    const pack = item as Partial<SkillPackPayload>
+    return typeof pack.expert === 'string'
+      && typeof pack.skill === 'string'
+      && typeof pack.skill_dir === 'string'
+  })
+}
 
 function apiGenerationRecordToRecord(record: ApiGenerationRecordListItem | ApiGenerationRecord): GenerationRecord {
   return {
@@ -1163,8 +1607,12 @@ function apiGenerationRecordToRecord(record: ApiGenerationRecordListItem | ApiGe
     direction: record.direction,
     wordCount: record.word_count,
     status: record.status,
+    langfuseTraceId: record.langfuse_trace_id ?? null,
+    runId: record.run_id ?? null,
     createdAt: record.created_at,
     content: 'content' in record ? record.content : null,
+    skillPacks: 'request_params' in record ? skillPacksFromRequestParams(record.request_params) : [],
+    humanEditMetrics: record.human_edit_metrics ?? null,
   }
 }
 
@@ -1263,8 +1711,11 @@ export const useGenerationHistoryStore = defineStore('generationHistory', () => 
       direction: null,
       wordCount: 0,
       status: 'candidate',
+      langfuseTraceId: null,
+      runId: null,
       createdAt: new Date().toISOString(),
       content: null,
+      skillPacks: [],
     })
   }
 
@@ -1275,10 +1726,15 @@ export const useGenerationHistoryStore = defineStore('generationHistory', () => 
     diffResult.value = null
   }
 
+  function reset() {
+    clearState()
+  }
+
   return {
     records, loading, loadError, diffResult,
     loadChapterRecords, loadDocumentRecords, getRecordContent,
     updateRecordStatus, markLatestRecord, loadDiffWithCurrent, upsertCandidate, clearState,
+    reset,
   }
 })
 
@@ -1296,11 +1752,19 @@ export const useUiStore = defineStore('ui', () => {
     const id = nextId++
     toasts.value.push({ id, message, type })
     setTimeout(() => {
-      toasts.value = toasts.value.filter(t => t.id !== id)
+      dismissToast(id)
     }, 4000)
   }
 
-  return { toasts, showToast }
+  function dismissToast(id: number) {
+    toasts.value = toasts.value.filter(t => t.id !== id)
+  }
+
+  function reset() {
+    toasts.value = []
+  }
+
+  return { toasts, showToast, dismissToast, reset }
 })
 
 /** Helper: extract friendly message from ApiError or generic Error */
@@ -1314,4 +1778,30 @@ export function friendlyError(e: unknown, fallback: string): string {
   return fallback
 }
 
+import { useLLMSettingsStore } from './llmSettings'
+import { useConversationStore } from './useConversationStore'
+
 export { useLLMSettingsStore } from './llmSettings'
+export { useConversationStore } from './useConversationStore'
+
+export function resetAllStores(): void {
+  const pinia = getActivePinia()
+  if (!pinia) return
+  useProjectStore(pinia).reset()
+  useChapterStore(pinia).reset()
+  useDocumentStore(pinia).reset()
+  useExpertStore(pinia).reset()
+  useRelationStore(pinia).reset()
+  useWorldEntryStore(pinia).reset()
+  useCharacterStore(pinia).reset()
+  useCharacterEventStore(pinia).reset()
+  useOutlineStore(pinia).reset()
+  useHiddenThreadStore(pinia).reset()
+  useStoryArcStore(pinia).reset()
+  useChapterVersionStore(pinia).reset()
+  useDocumentRevisionStore(pinia).reset()
+  useGenerationHistoryStore(pinia).reset()
+  useUiStore(pinia).reset()
+  useLLMSettingsStore(pinia).reset()
+  useConversationStore(pinia).reset()
+}

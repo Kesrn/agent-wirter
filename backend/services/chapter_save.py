@@ -9,11 +9,13 @@
 """
 
 import re
+import uuid
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.chapter import Chapter
+from models.chapter_version import ChapterVersion
 from services.content_sanitizer import sanitize_chapter_content
 from services.version_service import create_version
 
@@ -31,6 +33,10 @@ async def save_chapter_content(
     raw_content: str,
     source: str = "manual",
     set_status: str | None = None,
+    *,
+    run_id: str | uuid.UUID | None = None,
+    parent_version_id: str | uuid.UUID | None = None,
+    rollback_from_version_id: str | uuid.UUID | None = None,
 ) -> Chapter:
     """保存章节正文内容（统一入口）
 
@@ -40,6 +46,9 @@ async def save_chapter_content(
         raw_content: 原始内容（未经清洗）
         source: 版本来源 ("manual" | "ai_approve" | "ai_enhance" | "ai_continue")
         set_status: 若非 None，将 chapter.status 设为此值
+        run_id: 关联的 AI Run ID（可选，写入 ChapterVersion.run_id）
+        parent_version_id: 父版本 ID（可选，写入 ChapterVersion.parent_version_id）
+        rollback_from_version_id: 回滚来源版本 ID（可选，写入 ChapterVersion.rollback_from_version_id）
 
     Returns:
         已更新但尚未提交的 Chapter 对象。
@@ -54,6 +63,71 @@ async def save_chapter_content(
         chapter.status = set_status
 
     if content_changed and clean_content:
-        await create_version(db, chapter.id, clean_content, source=source)
+        await create_version(
+            db, chapter.id, clean_content, source=source,
+            run_id=run_id, parent_version_id=parent_version_id,
+            rollback_from_version_id=rollback_from_version_id,
+        )
+
+    return chapter
+
+
+async def finalize_chapter_content(
+    db: AsyncSession,
+    chapter: Chapter,
+    raw_content: str | None = None,
+    *,
+    run_id: str | uuid.UUID | None = None,
+) -> Chapter:
+    """将章节定稿为不可变版本，并把该快照作为后续章节的可信上文。
+
+    若传入 ``run_id``，则定稿版本关联该 AI run（用于 finalize 动作，避免重复
+    创建 ai_approve 版本）。相同内容重复定稿是幂等的；若内容变化，则创建新的
+    ``finalize`` 版本并更新 ``final_version_id``。事务仍由路由层统一提交。
+    """
+    clean_content = sanitize_chapter_content(raw_content if raw_content is not None else (chapter.content or ""))
+    if not clean_content.strip():
+        raise ValueError("章节正文为空，无法定稿")
+
+    existing_final: ChapterVersion | None = None
+    if chapter.final_version_id:
+        existing_final = await db.get(ChapterVersion, chapter.final_version_id)
+
+    chapter.content = clean_content
+    chapter.word_count = _count_non_space_chars(clean_content)
+    chapter.status = "final"
+
+    # 防止重复点击“定稿”时不断新增相同的版本。
+    if existing_final and existing_final.content == clean_content:
+        return chapter
+
+    version = await create_version(
+        db,
+        chapter.id,
+        clean_content,
+        source="finalize",
+        run_id=run_id,
+        project_id=chapter.project_id,
+    )
+    if version is None:  # clean_content 已校验非空，这里仅保留防御性分支。
+        raise RuntimeError("定稿版本创建失败")
+    chapter.final_version_id = version.id
+
+    # ── 检索索引接入（阶段二，P0 闭环：request_* 按方言分流）──
+    # 定稿成功（不可变版本已建立）后，把版本同步进检索索引。SQLite 同步增量 /
+    # PG 异步（outbox + Worker）的具体行为由 services.retrieval_indexer 的
+    # request_chapter_index 按方言决定。
+    # - 延迟导入：该模块尚未实现时 ImportError 降级为告警，不阻断定稿；
+    # - 任何异常（导入失败 / 运行期失败）都仅记录日志，索引可重建（D2）；
+    # - 事务由路由层在调用方提交；create_version 已 flush，同 session 内可读到
+    #   新版本。若路由层后续回滚，最多留下一条可重建的过期索引记录，不影响定稿。
+    try:
+        from services.retrieval_indexer import request_chapter_index  # noqa: PLC0415 — 延迟导入（D2）
+        await request_chapter_index(db, chapter.project_id, version.id)
+    except Exception as exc:  # noqa: BLE001 — 索引为 best-effort，任何失败都不得阻断定稿
+        logger.warning(
+            "章节检索索引触发失败（不阻断定稿，索引可重建）: chapter=%s version=%s err=%s",
+            chapter.id, version.id, exc,
+        )
 
     return chapter

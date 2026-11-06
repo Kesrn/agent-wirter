@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { ProjectMode } from '../api/types'
 
 const props = defineProps<{
@@ -16,18 +16,46 @@ const emit = defineEmits<{
 
 const isNovel = computed(() => props.projectMode !== 'article')
 const unitLabel = computed(() => isNovel.value ? '章节' : '稿件')
-const loadingHint = computed(() => isNovel.value ? 'Agent 正在审核候选稿...' : 'Agent 正在审核候选内容...')
+const emptyHint = computed(() => isNovel.value
+  ? 'AI 没有返回可用的修改建议，你可以直接填写本章的修改要求。'
+  : 'AI 没有返回可用的修改建议，你可以直接填写稿件的修改要求。')
 
+const selectedMode = ref<'suggestion' | 'custom'>(props.directions.length ? 'suggestion' : 'custom')
 const selectedDirection = ref(props.directions[0] ?? '')
+const customDirection = ref('')
 const userNote = ref('')
 
+watch(
+  () => props.directions,
+  (directions) => {
+    if (directions.length) {
+      if (!directions.includes(selectedDirection.value)) {
+        selectedDirection.value = directions[0]
+      }
+      if (!customDirection.value.trim()) selectedMode.value = 'suggestion'
+    } else {
+      selectedDirection.value = ''
+      selectedMode.value = 'custom'
+    }
+  },
+)
+
+const finalDirection = computed(() => {
+  return selectedMode.value === 'custom'
+    ? customDirection.value.trim()
+    : selectedDirection.value.trim()
+})
+
+const canConfirm = computed(() => Boolean(finalDirection.value))
+
 function handleConfirm() {
-  emit('confirm', selectedDirection.value, userNote.value)
+  if (!canConfirm.value) return
+  emit('confirm', finalDirection.value, userNote.value)
 }
 </script>
 
 <template>
-  <div class="picker-overlay" @click.self="emit('cancel')">
+  <div class="picker-overlay">
     <div class="picker-card">
       <div class="picker-header">
         <h3>选择修改方向</h3>
@@ -35,24 +63,34 @@ function handleConfirm() {
       </div>
 
       <div class="picker-body">
-        <div v-if="!directions.length" class="loading-hint">
-          <span class="spinner"></span>
-          <span>{{ loadingHint }}</span>
+        <div v-if="!directions.length" class="empty-hint" role="status">
+          <span>{{ emptyHint }}</span>
         </div>
         <div v-else class="direction-list">
           <div
             v-for="(dir, i) in directions"
             :key="i"
             class="direction-item"
-            :class="{ selected: selectedDirection === dir }"
-            @click="selectedDirection = dir"
+            :class="{ selected: selectedMode === 'suggestion' && selectedDirection === dir }"
+            @click="selectedMode = 'suggestion'; selectedDirection = dir"
           >
             <span class="dir-index">{{ i + 1 }}</span>
             <span class="dir-text">{{ dir }}</span>
           </div>
         </div>
 
-        <div v-if="directions.length" class="note-section">
+        <div class="note-section">
+          <label class="note-label">自定义修改方向</label>
+          <textarea
+            v-model="customDirection"
+            class="note-input custom-direction-input"
+            :class="{ active: selectedMode === 'custom' }"
+            rows="3"
+            placeholder="也可以不选上面的建议，直接写你自己的修改方向..."
+            @focus="selectedMode = 'custom'"
+            @input="selectedMode = 'custom'"
+          ></textarea>
+
           <label class="note-label">补充说明</label>
           <textarea v-model="userNote" class="note-input" rows="2" placeholder="补充你希望这次重点修改的地方..."></textarea>
         </div>
@@ -60,7 +98,7 @@ function handleConfirm() {
 
       <div class="picker-footer">
         <button class="btn-cancel" @click="emit('cancel')">取消</button>
-        <button class="btn-confirm" :disabled="!selectedDirection" @click="handleConfirm">开始修改</button>
+        <button class="btn-confirm" :disabled="!canConfirm" @click="handleConfirm">开始修改</button>
       </div>
     </div>
   </div>
@@ -70,7 +108,8 @@ function handleConfirm() {
 .picker-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -85,7 +124,7 @@ function handleConfirm() {
   max-height: 85vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-modal);
 }
 .picker-header {
   padding: var(--sp-4) var(--sp-5);
@@ -111,21 +150,16 @@ function handleConfirm() {
   gap: var(--sp-3);
   min-height: 0;
 }
-.loading-hint {
+.empty-hint {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-4);
   font-size: var(--text-sm);
   color: var(--text-secondary);
-}
-.spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-hover);
 }
 .direction-list {
   display: flex;
@@ -193,6 +227,10 @@ function handleConfirm() {
   transition: border-color var(--transition);
 }
 .note-input:focus { border-color: var(--border-focus); outline: none; }
+.custom-direction-input.active {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
 .picker-footer {
   display: flex;
   justify-content: flex-end;
@@ -225,7 +263,4 @@ function handleConfirm() {
 .btn-confirm:hover { background: var(--accent-hover); }
 .btn-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
 </style>

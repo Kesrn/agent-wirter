@@ -1,0 +1,11 @@
+venv
+.venv
+uploads
+*.sqlite*
+checkpoints.*
+logs
+eval_out
+retrieval_eval
+tests
+__pycache__
+.env*

@@ -29,5 +29,35 @@ Thumbs.db
 # Runtime uploads
 backend/uploads/
 
+# Dev databases and backups
+backend/dev-web.sqlite3*
+backend/dev-*.sqlite3*
+backend/*.sqlite3*
+backend/*.sqlite3.bak*
+backend/checkpoints.sqlite*
+backend/retrieval_eval/data/*.sqlite3*
+backend/retrieval_eval/data/*.db*
+*.sqlite3.bak*
+
 # Build
 *.pyc
+frontend/.pyinstaller-build/
+frontend/.pyinstaller-spec/
+frontend/backend-dist/
+frontend/build-assets/
+frontend/dist-desktop/
+frontend/release/
+backend/.vite/
+
+# Local runtime diagnostics
+backend/logs/
+
+# Local-only: production DB backups, run logs, generated outputs, assistant tool state
+tmp/
+output/
+.claude/
+.zcode/
+.workbuddy/
+*.sqlite3
+*.sqlite3-*
+backend/agent_demo/runs/

@@ -63,7 +63,7 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
 </script>
 
 <template>
-  <div class="diff-overlay" @click.self="emit('close')">
+  <div class="diff-overlay">
     <div class="diff-modal">
       <div class="diff-header">
         <span class="diff-title">版本对比</span>
@@ -116,10 +116,29 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
 <style scoped>
 /* ─── Overlay ─── */
 .diff-overlay {
+  --diff-modal-bg: var(--bg-panel);
+  --diff-chrome-bg: var(--bg-sidebar);
+  --diff-header-bg: var(--bg-panel);
+  --diff-border: var(--border);
+  --diff-title: var(--text);
+  --diff-muted: var(--text-secondary);
+  --diff-page-bg: var(--paper-bg);
+  --diff-page-title-bg: var(--bg-hover);
+  --diff-page-title: var(--text-secondary);
+  --diff-text: var(--text);
+  --diff-line-no: var(--text-tertiary);
+  --diff-delete-bg: var(--diff-del-bg);
+  --diff-delete-border: var(--diff-del-fg);
+  --diff-delete-decoration: var(--diff-del-fg);
+  --diff-insert-bg: var(--diff-ins-bg);
+  --diff-insert-border: var(--diff-ins-fg);
+  --diff-replace-bg: color-mix(in srgb, var(--status-reviewing) 18%, transparent);
+  --diff-replace-border: var(--status-reviewing);
+  --diff-empty-bg: transparent;
   position: fixed;
   inset: 0;
-  background: rgba(30, 30, 40, 0.5);
-  backdrop-filter: blur(2px);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -129,12 +148,13 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   width: 94vw;
   max-width: 1140px;
   max-height: 88vh;
-  background: #f0ede8;
-  border-radius: 10px;
+  background: var(--diff-modal-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 16px 56px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-lg);
 }
 
 /* ─── Header ─── */
@@ -143,58 +163,62 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   align-items: center;
   justify-content: space-between;
   padding: 14px 24px;
-  background: #e8e4de;
-  border-bottom: 1px solid #d5d0c8;
+  background: var(--diff-header-bg);
+  border-bottom: 1px solid var(--diff-border);
   flex-shrink: 0;
 }
 .diff-title {
   font-weight: 700;
   font-size: 15px;
-  color: #3a3632;
+  color: var(--diff-title);
   letter-spacing: 0.02em;
 }
 .btn-close {
   background: none;
   border: none;
   font-size: 24px;
-  color: #8a8580;
+  color: var(--diff-muted);
   cursor: pointer;
   padding: 0 4px;
   line-height: 1;
   transition: color 0.15s;
 }
 .btn-close:hover {
-  color: #3a3632;
+  color: var(--diff-title);
 }
 
 /* ─── Desk (holds two pages) ─── */
 .diff-desk {
   flex: 1;
+  min-height: 0;
   display: flex;
   gap: 20px;
   padding: 20px;
   overflow: auto;
-  background: #e8e4de;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  background: var(--diff-chrome-bg);
 }
 
 /* ─── Single page ─── */
 .diff-page {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--paper-bg);
+  background: var(--diff-page-bg);
   border-radius: var(--paper-radius);
-  box-shadow: var(--paper-shadow), 0 0 0 1px rgba(0,0,0,0.03);
+  box-shadow: var(--paper-shadow);
   overflow: hidden;
 }
 .page-title {
   padding: 10px 20px;
   font-size: 12px;
   font-weight: 700;
-  color: #6b6560;
-  background: linear-gradient(to bottom, #faf8f4, #f5f2ec);
-  border-bottom: 1px solid #e8e4de;
+  color: var(--diff-page-title);
+  background: var(--diff-page-title-bg);
+  border-bottom: 1px solid var(--diff-border);
   text-align: center;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -202,12 +226,15 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
 }
 .page-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: 16px 0;
   font-family: var(--font-serif);
   font-size: 14px;
   line-height: 1.85;
-  color: #2c2825;
+  color: var(--diff-text);
   background-image: repeating-linear-gradient(
     transparent,
     transparent calc(1.85em - 1px),
@@ -227,23 +254,27 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   transition: background 0.1s;
 }
 .page-line.line-delete {
-  background: rgba(220, 50, 47, 0.10);
-  border-left-color: #dc322f;
+  background: var(--diff-delete-bg);
+  border-left-color: var(--diff-delete-border);
 }
 .page-line.line-delete .line-text {
+  color: var(--diff-delete-border);
   text-decoration: line-through;
-  text-decoration-color: rgba(220, 50, 47, 0.45);
+  text-decoration-color: var(--diff-delete-decoration);
 }
 .page-line.line-insert {
-  background: rgba(40, 160, 60, 0.10);
-  border-left-color: #28a03c;
+  background: var(--diff-insert-bg);
+  border-left-color: var(--diff-insert-border);
+}
+.page-line.line-insert .line-text {
+  color: var(--diff-insert-border);
 }
 .page-line.line-replace {
-  background: rgba(200, 160, 20, 0.12);
-  border-left-color: #c8a014;
+  background: var(--diff-replace-bg);
+  border-left-color: var(--diff-replace-border);
 }
 .page-line.line-empty {
-  background: rgba(0, 0, 0, 0.025);
+  background: var(--diff-empty-bg);
 }
 
 .line-no {
@@ -251,7 +282,7 @@ function splitDiff(diff: DiffHunk[]): { left: DiffLine[]; right: DiffLine[] } {
   width: 3.2em;
   text-align: right;
   padding-right: 12px;
-  color: #b0a8a0;
+  color: var(--diff-line-no);
   user-select: none;
   flex-shrink: 0;
   font-family: var(--font-mono);
